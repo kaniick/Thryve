@@ -1,0 +1,40 @@
+name: Share pod codes
+description: Add the yCube dot codes you confirmed to the shared code → plant table (#259).
+title: "Pod codes: "
+labels: [pod-codes]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Label pods → Pod codes → Share pod codes** on your unit fills this in. A bot merges the pairs into `src/vision/podCodes.json` and opens a pull request. A pair is published as confirmed once two units agree, or once a maintainer has checked a crop.
+
+        Put in only what is listed below: no location, name or IP address.
+  - type: textarea
+    id: pairs
+    attributes:
+      label: Pairs
+      description: "One `code → plant` per line. A code is four of `o | / h`, and the plant is a name from the plant catalog."
+      placeholder: "oo|| → Green Bok Choy"
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: App version
+      description: The seedypod core version that confirmed them. Share pod codes fills it in.
+    validations:
+      required: true
+  - type: input
+    id: fingerprint
+    attributes:
+      label: Unit fingerprint
+      description: A one-way hash of your unit's id, so two units that agree aren't counted as one unit submitting twice. Optional.
+    validations:
+      required: false
+  - type: textarea
+    id: crops
+    attributes:
+      label: Crops
+      description: Optional. Drag in the pod crops that Share pod codes offers, so a maintainer can check the tags.
+    validations:
+      required: false

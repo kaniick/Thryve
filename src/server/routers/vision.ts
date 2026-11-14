@@ -5,6 +5,8 @@ import { localTime } from '../../scheduler/time'
 import { LABEL_SOURCES, POD_CODE, POD_LABELS, type Pod, type PodLabel, type PodLabelCursor, type PodLabelSource } from '../../store/types'
 import { podCodeViews } from '../../vision/podCodes'
 import { podOrder, swapPodRecords } from '../../vision/podOrder'
+import { shareablePairs, shareUrl, unitFingerprint } from '../../vision/shareCodes'
+import { CATALOG } from '../../components/Grow/plants/catalog'
 import { podTrends } from '../../vision/analyze'
 import { POD_STATE_ID } from '../../vision/podState'
 import { suggestLabel, type Suggestion } from '../../vision/suggestLabel'
@@ -28,6 +30,13 @@ const CodeView = z.object({
 })
 const CodePair = z.object({ code: z.string(), plant: z.string(), confirmedAt: z.string() })
 const CodesOut = z.object({ available: z.boolean(), pods: z.array(CodeView), pairs: z.array(CodePair) })
+const Plain = z.object({ code: z.string(), plant: z.string() })
+const ShareOut = z.object({
+  url: z.string().nullable(),
+  pairs: z.array(Plain),
+  skipped: z.array(Plain),
+  crops: z.array(z.object({ slot: z.number(), code: z.string(), plant: z.string() })),
+})
 const Swap = z.tuple([z.number(), z.number()])
 const OrderOut = z.object({
   slots: z.array(z.object({ slot: z.number(), code: z.string(), tower: z.string(), from: z.enum(['own', 'shared']), record: z.string().nullable(), plan: z.string().nullable() })),
@@ -363,6 +372,17 @@ export const visionRouter = router({
       const pair = ctx.podCodes.confirm(input.code, input.plant, (ctx.now?.() ?? new Date()).toISOString())
       ctx.events.emit({ kind: 'mutation', path: 'podCodes' })
       return pair
+    }),
+  podCodeShare: publicProcedure
+    .meta({ openapi: { method: 'GET', path: '/vision/pod-codes/share', tags: ['vision'], summary: 'Share pod codes (#259): a link to the pod-codes issue form pre-filled with the confirmed pairs whose plant is in the catalog, the app version and a one-way hash of the unit id, for the owner\'s browser to open; and the read pods whose crops can go with it. Core never contacts GitHub' } })
+    .output(ShareOut)
+    .query(async ({ ctx }) => {
+      const { pairs, skipped } = shareablePairs(ctx.store.podCodes.pairs(), CATALOG.map(c => c.name))
+      const unitId = ctx.hal.snapshot().system?.unitId
+      const fingerprint = unitId ? await unitFingerprint(unitId) : null
+      const plant = new Map(pairs.map(p => [p.code, p.plant]))
+      const crops = ctx.store.podCodes.reads().flatMap(r => (r.code && plant.has(r.code) ? [{ slot: r.slot, code: r.code, plant: plant.get(r.code) as string }] : []))
+      return { url: pairs.length ? shareUrl({ pairs, version: ctx.version, fingerprint }) : null, pairs, skipped, crops }
     }),
   forgetPodCode: publicProcedure
     .meta({ openapi: { method: 'DELETE', path: '/vision/pod-codes/{code}', tags: ['vision'], summary: 'Forget a confirmed dot code → plant pair (#224)' } })

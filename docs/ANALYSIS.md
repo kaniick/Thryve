@@ -238,6 +238,37 @@ shared entry, then the pod record. A known code is still only a suggestion:
 it needs **Confirm**, which saves your own pair, before anything counts it as
 yours. The dataset export carries your confirmed pairs in `pod_codes.json`.
 
+#### Share pod codes
+
+Once you have confirmed a code, **Share pod codes** in Pod codes opens a
+GitHub issue form in your browser, filled in with:
+
+- your confirmed pairs, one `code → plant` per line. A pair whose plant isn't
+  in the plant catalog is left out, and the panel names it;
+- the app version;
+- a unit fingerprint: the first 16 hex digits of a SHA-256 of the unit's id.
+  It lets the bot tell two units that agree from one unit submitting twice.
+  Nothing else about the unit goes in: no location, name or IP address.
+
+You sign in to GitHub and submit the form yourself. The unit only builds the
+link and never contacts GitHub. A form can't be filled in with files, so the
+panel also offers each confirmed pod's crop as a download (from the pod-ID
+still, else the newest still) to drag into **Crops**. Scripts use
+`GET /api/vision/pod-codes/share` and
+`GET /api/vision/pod-codes/crops/pod-<slot>.jpg`.
+
+The pod-codes bot (`.github/workflows/pod-codes.yml`, running
+`scripts/pod-codes-merge.ts`) picks up an issue labelled `pod-codes`. It
+checks each line's code and plant, and comments on any line it rejects. It
+merges the rest into the table, counting each fingerprint once per code (or
+the GitHub account, without a fingerprint), and opens a pull request into
+`dev` that links back to the issue. A unit that names another plant for a
+code it named before moves its vote. A maintainer who has checked a crop adds
+`pod-codes-verified` to the issue, and the bot confirms the issue's pairs
+with one unit. The bot never commits to `dev` or `main`. GitHub doesn't run
+CI on a pull request that `GITHUB_TOKEN` opens, so close and reopen it before
+merging.
+
 ### Pods out of order
 
 The owner moves yCubes by hand, so the tower can drift from the pod records

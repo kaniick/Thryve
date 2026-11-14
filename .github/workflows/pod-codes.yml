@@ -1,0 +1,98 @@
+name: Pod codes
+
+# The pod-codes bot (#259). When an issue from the Share pod codes form is
+# opened, or labelled `pod-codes` or `pod-codes-verified`, it merges the pairs
+# into src/vision/podCodes.json with scripts/pod-codes-merge.ts, pushes a
+# `pod-codes/issue-<n>` branch, opens (or updates) a pull request into dev and
+# comments on the issue. It never pushes to dev or main.
+#
+# Only GITHUB_TOKEN is used. GitHub doesn't start workflows for a pull request
+# GITHUB_TOKEN opens, so a maintainer runs CI by closing and reopening the PR
+# (or pushing to it) before merging. The repo setting "Allow GitHub Actions to
+# create and approve pull requests" must be on for `gh pr create` to work.
+
+on:
+  issues:
+    types: [opened, labeled]
+
+# One merge at a time, so two issues never race on the table.
+concurrency:
+  group: pod-codes
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  merge:
+    if: >-
+      contains(github.event.issue.labels.*.name, 'pod-codes') &&
+      (github.event.action == 'opened' || github.event.label.name == 'pod-codes' || github.event.label.name == 'pod-codes-verified')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # push the pod-codes/issue-<n> branch
+      pull-requests: write
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      ISSUE_NUMBER: ${{ github.event.issue.number }}
+      BRANCH: pod-codes/issue-${{ github.event.issue.number }}
+    steps:
+      - name: Checkout dev
+        uses: actions/checkout@v6
+        with:
+          ref: dev
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          run_install: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: '.node-version'
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      # The issue's text only ever reaches the script through the environment, never the shell.
+      - name: Merge the pairs
+        id: merge
+        env:
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          ISSUE_AUTHOR: ${{ github.event.issue.user.login }}
+          ISSUE_LABELS: ${{ toJSON(github.event.issue.labels.*.name) }}
+        run: pnpm exec tsx scripts/pod-codes-merge.ts src/vision/podCodes.json "$RUNNER_TEMP/comment.md" >> "$GITHUB_OUTPUT"
+
+      # A form's issue fires both `opened` and `labeled`: the second run finds the branch already holds this table and stays quiet.
+      - name: Open or update the pull request
+        id: pr
+        if: steps.merge.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          if git fetch --quiet origin "$BRANCH" 2>/dev/null && git diff --quiet FETCH_HEAD -- src/vision/podCodes.json; then
+            echo "same=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$BRANCH"
+          git add src/vision/podCodes.json
+          git commit -m "feat(analysis): add the pod codes from #$ISSUE_NUMBER to the shared table"
+          git push --force origin "HEAD:refs/heads/$BRANCH"
+          url=$(gh pr view "$BRANCH" --json url,state --jq 'select(.state == "OPEN") | .url' 2>/dev/null || true)
+          if [ -z "$url" ]; then
+            url=$(gh pr create --base dev --head "$BRANCH" \
+              --title "feat(analysis): add the pod codes from #$ISSUE_NUMBER to the shared table" \
+              --body "Merges the pairs from #$ISSUE_NUMBER into \`src/vision/podCodes.json\` (opened by the pod-codes bot, #259).
+
+          ## Test plan
+          - [ ] Close and reopen this PR so CI runs; the schema test in \`src/vision/tests/sharedPodCodes.test.ts\` checks the table
+          - [ ] A maintainer adds \`pod-codes-verified\` to the issue only after checking a crop")
+          fi
+          printf '\n\nPull request: %s\n' "$url" >> "$RUNNER_TEMP/comment.md"
+
+      - name: Comment on the issue
+        if: steps.pr.outputs.same != 'true'
+        run: gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/comment.md"
