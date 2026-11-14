@@ -2,7 +2,7 @@
 // Pre-renders the SSH login logo into logo.frames, so a Pi Zero W only has to
 // printf it. Output is deterministic: same icon, same bytes.
 //
-//   pnpm logo:generate              # from web/public/brand/icon-192.png
+//   pnpm logo:generate              # from web/public/brand/thryve-icon-192.png
 //   pnpm logo:generate <icon.png>   # from any RGBA PNG of the same artwork
 //
 // logo.frames has one record per line, each a run of raw terminal bytes that
@@ -15,7 +15,7 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { inflateSync } from 'node:zlib'
 
-const ICON = fileURLToPath(new URL('../../web/public/brand/icon-192.png', import.meta.url))
+const ICON = fileURLToPath(new URL('../../web/public/brand/thryve-icon-192.png', import.meta.url))
 const OUT = fileURLToPath(new URL('logo.frames', import.meta.url))
 
 // Two pixels per cell. The crop is in 1024-px icon units, picked so the

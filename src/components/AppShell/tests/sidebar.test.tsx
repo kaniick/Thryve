@@ -46,7 +46,7 @@ describe('Sidebar', () => {
     const { container } = render(<Sidebar status={online} />)
     const home = screen.getByText('thryve').closest('a') as HTMLElement
     expect(home.getAttribute('href')).toBe('/')
-    expect(container.querySelector('a[href="/"] img')?.getAttribute('src')).toBe('/brand/icon-64.png')
+    expect(container.querySelector('a[href="/"] img')?.getAttribute('src')).toBe('/brand/thryve-icon-64.png')
   })
 
   it('shows light, tank and air on every page, each linking to its page', () => {

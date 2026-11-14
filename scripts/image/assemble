@@ -68,7 +68,7 @@ cp -f /etc/resolv.conf "$root/etc/resolv.conf"
 in_image bash /tmp/thryve/image/bake "$BRANCH" "$COMMIT"
 in_image dpkg-query -W -f '${Package} ${Version}\n' > "$work/packages.txt"
 cp -f "$root/usr/local/share/thryve/image" "$work/image-info"
-tar xzf "$src/assets/thryve-core.tar.gz" -C "$work" ./web/dist/brand/icon-64.png
+tar xzf "$src/assets/thryve-core.tar.gz" -C "$work" ./web/dist/brand/thryve-icon-192.png
 
 rm -f "$root/usr/sbin/policy-rc.d" "$root/etc/resolv.conf"
 mv -f "$root/etc/resolv.conf.thryve-bak" "$root/etc/resolv.conf"
@@ -100,7 +100,7 @@ extract_sha256="$(sha256sum "$img" | cut -d' ' -f1)"
 xz -T0 -6 -c "$img" > "$src/out/thryve-os.img.xz"
 cd "$src/out"
 sha256sum thryve-os.img.xz > thryve-os.img.xz.sha256
-cp -f "$work/web/dist/brand/icon-64.png" thryve-os-icon.png
+cp -f "$work/web/dist/brand/thryve-icon-192.png" thryve-os-icon.png
 { cat "$work/image-info"; echo; cat "$work/packages.txt"; } > thryve-os-manifest.txt
 jq -n --arg url "$URL_BASE/thryve-os.img.xz" --arg icon "$URL_BASE/thryve-os-icon.png" \
   --arg date "$(date -u +%F)" --arg branch "$BRANCH" --arg commit "${COMMIT:0:7}" \
