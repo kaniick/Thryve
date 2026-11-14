@@ -77,6 +77,31 @@ describe('TankLog', () => {
     expect(calls.invalidate).toHaveBeenCalled()
   })
 
+  it('calculates a manual feed from fresh water and growth stage before saving it', () => {
+    render(<TankLog />)
+    fireEvent.click(screen.getByRole('button', { name: 'Calculate feed dose' }))
+    const review = screen.getByRole<HTMLButtonElement>('button', { name: 'Review feed log' })
+    const stage = screen.getByLabelText('Growth stage')
+    const water = screen.getByLabelText('Fresh water added (US gal)')
+
+    fireEvent.change(water, { target: { value: '1,5' } })
+    expect(review.disabled).toBe(true)
+    fireEvent.change(stage, { target: { value: 'early' } })
+    expect(screen.getByText('0.75 tsp')).toBeTruthy()
+    fireEvent.change(stage, { target: { value: 'mature' } })
+    expect(screen.getByText('1.5 tsp')).toBeTruthy()
+
+    fireEvent.change(water, { target: { value: '5.1' } })
+    expect(review.disabled).toBe(true)
+    fireEvent.change(water, { target: { value: '5' } })
+    expect(screen.getByText('5 tsp')).toBeTruthy()
+    fireEvent.click(review)
+    expect(calls.logAction).not.toHaveBeenCalled()
+    expect(screen.getByLabelText<HTMLInputElement>('Amount (optional)').value).toBe('5')
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    expect(calls.logAction).toHaveBeenCalledWith({ kind: 'feed', amount: 5, unit: 'tsp', product: 'Gardyn Plant Food', note: '' })
+  })
+
   it('logs a feed with its amount, unit and product', () => {
     render(<TankLog />)
     fireEvent.click(screen.getByRole('button', { name: 'Log action' }))
