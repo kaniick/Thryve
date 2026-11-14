@@ -52,4 +52,17 @@ describe('green area', () => {
     const dying = series.map((p, i) => ({ ...p, green: 0.5 - i * 0.01 }))
     expect(growthTrend(dying).verdict).toBe('declining')
   })
+
+  it('calls a pod sprouting from bare growing, and specks on a bare pod stalled', () => {
+    const points = (green: number[]) => green.map((g, i) => ({ ts: `t${i}`, slot: 1, green: g }))
+    // Pods 6 and 9 on the unit, visibly sprouted: under a point of cover gained.
+    expect(growthTrend(points([0, 0, 0, 0, 0.001, 0, 0, 0, 0.01, 0.015, 0.016, 0.018]))).toMatchObject({ verdict: 'growing', slope: expect.closeTo(0.0097, 4) })
+    expect(growthTrend(points([0, 0, 0, 0, 0, 0, 0, 0, 0, 0.003, 0.003, 0.004])).verdict).toBe('growing')
+    // Pod 3's specks and empty pod 20: nothing in the newest points.
+    expect(growthTrend(points([0, 0.005, 0.001, 0.003, 0.011, 0, 0, 0, 0, 0, 0, 0])).verdict).toBe('stalled')
+    expect(growthTrend(points([0, 0, 0.002, 0.003, 0, 0, 0, 0, 0, 0, 0, 0])).verdict).toBe('stalled')
+    expect(growthTrend(points(Array.from({ length: 12 }, () => 0))).verdict).toBe('stalled')
+    // Small steady cover that hasn't doubled.
+    expect(growthTrend(points([0.004, 0.004, 0.004, 0.004, 0.004, 0.004, 0.005, 0.005, 0.005, 0.006, 0.006, 0.006])).verdict).toBe('stalled')
+  })
 })
