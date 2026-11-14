@@ -78,10 +78,10 @@ function LabelChips({ value, onPick, clear, counts, ariaLabel }: { value: Brush 
   return (
     <div role="group" aria-label={ariaLabel} className="flex flex-wrap gap-1.5">
       {POD_LABELS.map(l => (
-        <Pill key={l} selected={value === l} title={LABEL_MEANING[l]} aria-label={counts ? `${name(l)}, ${counts[l] ?? 0} labelled` : undefined} className="flex items-center gap-1.5 px-2.5 py-1 text-xs" onClick={() => onPick(l)}>
+        <Pill key={l} selected={value === l} title={LABEL_MEANING[l]} aria-label={counts ? `${name(l)}, ${counts[l]} labelled` : undefined} className="flex items-center gap-1.5 px-2.5 py-1 text-xs" onClick={() => onPick(l)}>
           <Dot label={l} />
           {name(l)}
-          {counts && <span className="font-mono text-[11px] text-fg-3">{counts[l] ?? 0}</span>}
+          {counts && <span className="font-mono text-[11px] text-fg-3">{counts[l]}</span>}
         </Pill>
       ))}
       {clear && (
