@@ -41,7 +41,7 @@ vi.mock('@/src/utils/trpc', () => {
     apiBase: () => '',
     trpc: {
       useUtils: () => ({ vision: { invalidate } }),
-      vision: { analyzers: query('analyzers'), status: query('status'), podTrends: query('podTrends'), compare: query('compare'), capture: query('capture'), regions: query('regions'), setPrimary: mutation('setPrimary'), rerun: mutation('rerun'), setRegions: mutation('setRegions') },
+      vision: { analyzers: query('analyzers'), status: query('status'), podTrends: query('podTrends'), allPodSeries: query('allPodSeries'), compare: query('compare'), capture: query('capture'), regions: query('regions'), setPrimary: mutation('setPrimary'), rerun: mutation('rerun'), setRegions: mutation('setRegions') },
       camera: { list: query('frames') },
       grow: { pods: query('pods') },
       datasets: { summary: query('summary') },
@@ -112,6 +112,8 @@ describe('AnalysisPage', () => {
 
   it('compares the chosen pod across analysers', () => {
     render(<AnalysisPage />)
+    fireEvent.change(screen.getByLabelText('Pod'), { target: { value: '1' } })
+    expect(screen.getByText('One pod over time')).toBeTruthy()
     expect(screen.getByRole('img', { name: 'green-threshold@1, exg-otsu@1' })).toBeTruthy()
     expect(screen.getByText('52%')).toBeTruthy()
     fireEvent.change(screen.getByLabelText('Pod'), { target: { value: '7' } })
@@ -130,6 +132,7 @@ describe('AnalysisPage', () => {
     expect(podRows()[0]?.textContent).toContain('growing')
     expect(podRows()[0]?.querySelector('td[title="growing · 87%"]')).toBeTruthy()
     expect(podRows()[1]?.textContent).toContain('empty')
+    fireEvent.change(screen.getByLabelText('Pod'), { target: { value: '1' } })
     expect(screen.getByText('sprouted')).toBeTruthy()
     fireEvent.change(screen.getByLabelText('Analyser'), { target: { value: 'pod-state@1' } })
     expect(screen.queryByText('Make primary')).toBeNull()
@@ -182,6 +185,38 @@ describe('AnalysisPage', () => {
     fireEvent.click(screen.getByText('Edit boxes'))
     expect(screen.queryByTestId('pod-hits')).toBeNull()
     expect(screen.queryByTestId('pod-card')).toBeNull()
+  })
+
+  it('starts on every planted pod side by side, on one scale, and charts one when it is picked', () => {
+    data.set('pods', [
+      { slot: 6, plant: 'Cilantro', status: 'seeded', plantedAt: '2026-01-01', notes: '' },
+      { slot: 1, plant: 'Chives', status: 'seeded', plantedAt: '2026-01-01', notes: '' },
+      { slot: 9, plant: null, status: 'growing', plantedAt: null, notes: '' },
+      { slot: 11, plant: null, status: 'empty', plantedAt: null, notes: '' },
+    ])
+    data.set('podTrends', [{ slot: 6, green: 0.018, verdict: 'growing', slope: 0.01, samples: 4, recent: [] }, { slot: 1, green: 0, verdict: 'unknown', slope: 0, samples: 1, recent: [] }])
+    const pts = (...v: number[]) => v.map((green, i) => ({ ts: `2026-01-0${i + 1}T00:00:00Z`, green }))
+    data.set('allPodSeries', [{ slot: 1, points: pts(0) }, { slot: 6, points: pts(0, 0.01, 0.018) }, { slot: 11, points: pts(0.5, 0.6) }])
+    render(<AnalysisPage />)
+    expect(screen.getByText('All pods over time')).toBeTruthy()
+    const grid = screen.getByTestId('all-pods')
+    expect([...grid.querySelectorAll('button')].map(b => b.getAttribute('aria-label'))).toEqual(['Pod 1, Chives', 'Pod 6, Cilantro', 'Pod 9, unnamed'])
+    const six = screen.getByRole('button', { name: 'Pod 6, Cilantro' })
+    expect(six.textContent).toContain('2%')
+    expect(six.textContent).toContain('Growing')
+    expect(screen.getByRole('button', { name: 'Pod 1, Chives' }).textContent).toContain('No photos scored yet')
+    expect(screen.getByRole('button', { name: 'Pod 9, unnamed' }).textContent).toContain('—No photos scored yetNo trend yet')
+    // The empty pod's 60 % stays out of the scale.
+    expect(screen.getByText(/all on one scale from 0 to 5%/)).toBeTruthy()
+    fireEvent.click(six)
+    expect(screen.getByText('One pod over time')).toBeTruthy()
+    expect(calls.compare).toHaveBeenLastCalledWith({ slot: 6, metric: 'pod_state', limit: 1 })
+  })
+
+  it('says when no pods are planted', () => {
+    data.set('pods', [{ slot: 1, plant: null, status: 'empty', plantedAt: null, notes: '' }])
+    render(<AnalysisPage />)
+    expect(screen.getByText('No pods are planted.')).toBeTruthy()
   })
 
   it('says when an on-device analyser is off, and offers no re-run', () => {

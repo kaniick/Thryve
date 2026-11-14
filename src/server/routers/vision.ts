@@ -112,6 +112,17 @@ export const visionRouter = router({
     .output(z.array(z.object({ ts: z.string(), green: z.number(), captureId: z.string() })))
     .query(({ ctx, input }) => ctx.store.analyses.series({ analyzer: ctx.store.settings.get().primaryAnalyzer, slot: input.slot, metric: 'green_fraction' })
       .map(p => ({ ts: p.ts, green: p.value, captureId: p.captureId }))),
+  allPodSeries: publicProcedure
+    .meta({ openapi: { method: 'GET', path: '/vision/series', tags: ['vision'], summary: 'Every pod\'s green-area series from the primary analyser, for comparing pods side by side' } })
+    .input(z.object({ limit: z.number().int().min(1).max(1000).default(200) }).optional())
+    .output(z.array(z.object({ slot: z.number(), points: z.array(z.object({ ts: z.string(), green: z.number() })) })))
+    .query(({ ctx, input }) => {
+      const analyzer = ctx.store.settings.get().primaryAnalyzer
+      return Array.from({ length: 30 }, (_, i) => ({
+        slot: i + 1,
+        points: ctx.store.analyses.series({ analyzer, slot: i + 1, metric: 'green_fraction', limit: input?.limit ?? 200 }).map(p => ({ ts: p.ts, green: p.value })),
+      })).filter(s => s.points.length > 0)
+    }),
   analyzers: publicProcedure
     .meta({ openapi: { method: 'GET', path: '/vision/analyzers', tags: ['vision'], summary: 'Analysers on the unit and any that posted results, with row counts and which is primary' } })
     .output(z.array(Analyzer))

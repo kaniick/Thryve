@@ -58,6 +58,16 @@ describe('vision router (ADR-0019)', () => {
     expect((await c.vision.podTrends({ analyzer: 'green-threshold' }))[0]?.samples).toBe(3)
   })
 
+  it('gives every scored pod\'s series from the primary analyser, newest last, up to the limit', async () => {
+    const { c } = await scored()
+    const all = await c.vision.allPodSeries()
+    expect(all.map(s => s.slot)).toEqual(Array.from({ length: 15 }, (_, i) => i + 1))
+    expect(all[0]?.points.map(p => p.ts)).toEqual(['2026-01-01T00:00:00Z', '2026-01-02T00:00:00Z', '2026-01-03T00:00:00Z'])
+    expect((await c.vision.allPodSeries({ limit: 2 }))[0]?.points.map(p => p.ts)).toEqual(['2026-01-02T00:00:00Z', '2026-01-03T00:00:00Z'])
+    const { c: none } = await scored(0)
+    expect(await none.vision.allPodSeries()).toEqual([])
+  })
+
   it('re-runs an analyser in the background and refuses remote ones', async () => {
     const { ctx, c } = await scored()
     expect(await c.vision.rerun({ analyzer: 'exg-otsu', limit: 10 })).toEqual({ captures: 3 })
