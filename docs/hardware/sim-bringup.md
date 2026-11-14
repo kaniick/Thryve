@@ -42,7 +42,7 @@ CI runs it as **Sim Bring-up** on `dev` and on PRs touching `hal/`, `src/`,
 | 3 | Telemetry flows from `hald` through MQTT into core (air, water distance, pH) | `GET /api/sensors` |
 | 4 | Home Assistant discovery is retained for every entity, including `dose_fault` | `homeassistant/#` |
 | 5 | A light command round-trips and `hald` echoes the new state | `POST /api/light` |
-| 6 | Pump duty is clamped to the guard (30 %) and the run stops at its bound | `POST /api/pump/run-once` |
+| 6 | The pump runs at the default full duty (100 %), and the run stops at its bound; a sagging supply (`POST /sim/supply`) trips the brown-out guard, which waits for an acknowledge | `POST /api/pump/run-once` |
 | 7 | A still is fetched over `hald`'s HTTP server and stored | `POST /api/camera/upper/capture` |
 | 8 | Both on-device analysers score that still on the worker thread | `GET /api/vision/captures/{id}`, `/api/vision/status` |
 | 9 | The dataset export streams a tar with the manifest, tables and stills | `GET /api/datasets/export` |

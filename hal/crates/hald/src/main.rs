@@ -21,6 +21,7 @@ mod mdns;
 mod mqtt;
 mod notify;
 mod overlay;
+mod pi_power;
 mod pump_pin;
 mod pump_trace;
 mod recording;
@@ -231,7 +232,18 @@ async fn main() -> anyhow::Result<()> {
             sensors.contains(&hal_core::SensorId::PumpA),
             cfg.limits.water_low_cm.is_some(),
         );
-        let warnings: Vec<&str> = guard.warn.then_some(guard.why.as_str()).into_iter().collect();
+        let pump_v = sensors.contains(&hal_core::SensorId::PumpV);
+        let pi_flag = cfg.limits.pump_brownout_pi
+            && pi_power::under_voltage(std::path::Path::new(config::PI_THROTTLED)).is_some();
+        let brownout_v = (cfg.limits.pump_brownout_v > 0.0).then_some(cfg.limits.pump_brownout_v);
+        let brownout =
+            hal_core::safety::describe_brownout(brownout_v, cfg.limits.pump_brownout_ms, pump_v, pi_flag);
+        let warnings: Vec<&str> = guard
+            .warn
+            .then_some(guard.why.as_str())
+            .into_iter()
+            .chain((brownout_v.is_none() || !pump_v).then_some(brownout.as_str()))
+            .collect();
         println!(
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
@@ -252,7 +264,10 @@ async fn main() -> anyhow::Result<()> {
                             "pump_dry_grace_min_ms": cfg.limits.pump_dry_grace_min_ms,
                             "pump_dry_grace_max_ms": cfg.limits.pump_dry_grace_max_ms,
                             "pump_dry_guard": guard.mode, "pump_dry_guard_asked": cfg.limits.pump_dry_guard,
-                            "pump_dry_guard_why": guard.why },
+                            "pump_dry_guard_why": guard.why,
+                            "pump_brownout_v": brownout_v, "pump_brownout_ms": cfg.limits.pump_brownout_ms,
+                            "pump_brownout_pi": cfg.limits.pump_brownout_pi, "pump_brownout_pi_readable": pi_flag,
+                            "pump_brownout_guard": brownout },
                 "dosing_enabled": cfg.dosing.enabled,
             }))?
         );
@@ -320,6 +335,8 @@ async fn main() -> anyhow::Result<()> {
             button_pump_run_s: cfg.button.pump_run_s,
             ha_prefix: cfg.ha.discovery.then(|| cfg.ha.prefix.clone()),
             dry_grace_bounds: (cfg.limits.pump_dry_grace_min_ms, cfg.limits.pump_dry_grace_max_ms),
+            pi_throttled: (cfg.limits.pump_brownout_pi && !cli.sim)
+                .then(|| std::path::PathBuf::from(config::PI_THROTTLED)),
         },
         built.registry,
         built.over_temp,
@@ -633,6 +650,7 @@ mod tests {
             button_pump_run_s: 300,
             ha_prefix: None,
             dry_grace_bounds: (300, 5000),
+            pi_throttled: None,
         };
         Engine::new(system, cfg, Registry::default(), None, None, Arc::default())
     }

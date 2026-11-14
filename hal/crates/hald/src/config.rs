@@ -81,6 +81,9 @@ pub struct I2c {
 #[serde(default, deny_unknown_fields)]
 pub struct Limits {
     pub pump_max_run_s: u64,
+    /// The pump's duty cap (%). 100, the default, holds the pin high with no
+    /// software PWM, as the stock firmware does. Lower it only for a board that
+    /// browns out; pumps differ between units.
     pub pump_max_duty: f64,
     pub water_low_cm: Option<f64>,
     pub over_temp_c: Option<f64>,
@@ -106,6 +109,15 @@ pub struct Limits {
     pub pump_dry_after_s: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pump_dry_grace_s: Option<u64>,
+    /// Below this pump supply (V, the INA219's bus voltage), past the spin-up
+    /// grace, for `pump_brownout_ms`, the pump stops and latches a brown-out.
+    /// 0 turns the voltage check off; it's off without an INA219 too.
+    pub pump_brownout_v: f64,
+    /// How long the supply must stay low (at least three reads, 100 ms apart).
+    pub pump_brownout_ms: u64,
+    /// Also stop on the Pi's own under-voltage flag ([`PI_THROTTLED`]), read once
+    /// a second while the pump runs, when it's readable.
+    pub pump_brownout_pi: bool,
     pub distance_samples: usize,
     pub distance_timeout_ms: u64,
     /// Quiet time between pings, so one doesn't hear the last one's echo.
@@ -391,7 +403,8 @@ impl Default for Limits {
     fn default() -> Self {
         Self {
             pump_max_run_s: 900,
-            pump_max_duty: 30.0,
+            // Stock drives the pump plain on/off; ADR-0009's 30 % was never measured on a 3.0.
+            pump_max_duty: 100.0,
             water_low_cm: Some(16.0),
             // The board runs ~47 °C with the lights at 100 %; stock sets the
             // PCT2075 alert at 70 °C.
@@ -404,6 +417,9 @@ impl Default for Limits {
             pump_dry_guard: DryGuard::Both,
             pump_dry_after_s: None,
             pump_dry_grace_s: None,
+            pump_brownout_v: PUMP_BROWNOUT_V,
+            pump_brownout_ms: PUMP_BROWNOUT_MS,
+            pump_brownout_pi: true,
             distance_samples: 5,
             distance_timeout_ms: 60,
             distance_gap_ms: 60,
@@ -484,6 +500,8 @@ impl From<&Limits> for PumpLimits {
             dry_grace_ms: l.dry_grace_ms(),
             // What hal.toml asks for; the engine resolves what the unit can run.
             dry_guard: l.pump_dry_guard,
+            brownout_v: (l.pump_brownout_v > 0.0).then_some(l.pump_brownout_v),
+            brownout_ms: l.pump_brownout_ms,
         }
     }
 }
@@ -494,6 +512,18 @@ pub const PUMP_DRY_AFTER_MS: u64 = 300;
 pub const PUMP_DRY_GRACE_MS: u64 = 1000;
 /// No setting may hold the current guard off longer than this after a start.
 pub const PUMP_DRY_MAX_MS: u64 = 10_000;
+/// The brown-out cutoff: a 12 V supply 10 % low, the bottom of its usual
+/// tolerance. The supply idles at ~12.6 V, and a healthy one under the pump's
+/// 0.95 A reads ~12 V or more past the shunt, so this is ≥ 1.2 V clear of it.
+pub const PUMP_BROWNOUT_V: f64 = 10.8;
+/// Three reads at the guard's 100 ms, as for the current guard.
+pub const PUMP_BROWNOUT_MS: u64 = 300;
+/// The range `pump_brownout_v` may be set in (besides 0, off): above 12 V a
+/// healthy supply under load would trip it.
+pub const PUMP_BROWNOUT_RANGE: std::ops::RangeInclusive<f64> = 6.0..=12.0;
+/// The Pi's throttling flags (bit 0: under-voltage now), readable without root.
+/// The same as `vcgencmd get_throttled`, without the subprocess.
+pub const PI_THROTTLED: &str = "/sys/devices/platform/soc/soc:firmware/get_throttled";
 
 impl Limits {
     /// `pump_dry_after_ms`, or the older `pump_dry_after_s`, or the default.
@@ -680,6 +710,17 @@ impl Config {
                 "limits.pump_dry_grace_max_ms must be ≤ {PUMP_DRY_MAX_MS}"
             ));
         }
+        let v = l.pump_brownout_v;
+        if v != 0.0 && !PUMP_BROWNOUT_RANGE.contains(&v) {
+            errs.push(format!(
+                "limits.pump_brownout_v must be {}–{} V, or 0 for off",
+                PUMP_BROWNOUT_RANGE.start(),
+                PUMP_BROWNOUT_RANGE.end()
+            ));
+        }
+        if !(100..=PUMP_DRY_MAX_MS).contains(&l.pump_brownout_ms) {
+            errs.push(format!("limits.pump_brownout_ms must be 100–{PUMP_DRY_MAX_MS}"));
+        }
         if self.limits.distance_samples == 0 {
             errs.push("limits.distance_samples must be ≥ 1".into());
         }
@@ -794,7 +835,9 @@ pub const DEFAULT_CONFIG_TOML: &str = r##"# seedypod hald configuration. Every p
 
 [limits]
 # pump_max_run_s = 900    # every pump run is bounded (ADR-0009)
-# pump_max_duty = 30.0    # the board browns out above ~30 %
+# pump_max_duty = 100.0   # stock runs the pump at 100 % (the pin held high, no PWM).
+#                          # Lower it only if your board browns out; pumps differ between
+#                          # units, and below 100 a weak one may not lift to the top.
 # water_low_cm = 16.0     # dry-run interlock; comment out to disable
 # over_temp_c = 65.0      # PCB cutoff; comment out to disable
 # pump_dry_current_a = 1.2 # pump current guard: off until set (needs the ina219). Stops a running
@@ -810,6 +853,10 @@ pub const DEFAULT_CONFIG_TOML: &str = r##"# seedypod hald configuration. Every p
 #                          # (pump current) or "both". Only here, never from the app.
 #                          # "current" needs pump_dry_current_a and the ina219, else it falls
 #                          # back to "level"; there, and in "both", a low tank refuses a start.
+# pump_brownout_v = 10.8   # brown-out guard: a running pump whose supply (ina219 bus voltage)
+# pump_brownout_ms = 300   # stays below this, past the grace, stops and latches. 6–12 V, 0 = off.
+#                          # The supply idles ~12.6 V; 10.8 is a 12 V supply 10 % low.
+# pump_brownout_pi = true  # also stop on the Pi's under-voltage flag (get_throttled), if readable
 # distance_samples = 5    # median of N pings
 # distance_timeout_ms = 60
 # distance_gap_ms = 60    # between pings, so one doesn't hear the last one's echo
@@ -1069,6 +1116,8 @@ pump_dry_grace_ms = 10001
 pump_dry_grace_max_ms = 20000
 pump_dry_grace_min_ms = 12000
 pump_dry_grace_s = 1
+pump_brownout_v = 12.5
+pump_brownout_ms = 50
 [tank]
 full_cm = 30
 [[sensor]]
@@ -1109,6 +1158,8 @@ kind = "pwm_pump"
             "pump_dry_grace_min_ms (12000) ≤ pump_dry_grace_ms (10001) ≤ pump_dry_grace_max_ms (20000) must hold",
             "pump_dry_grace_max_ms must be ≤ 10000",
             "set pump_dry_grace_ms or the older pump_dry_grace_s, not both",
+            "pump_brownout_v must be 6–12 V, or 0 for off",
+            "pump_brownout_ms must be 100–10000",
             "tank.full_cm",
             "unknown kind \"bme280\"",
             "(ina219): addr required",
@@ -1143,7 +1194,12 @@ kind = "pwm_pump"
     fn limits_convert_to_guard_types() {
         let c = Config::default();
         let p: PumpLimits = (&c.limits).into();
-        assert_eq!(p.max_duty, 30.0);
+        assert_eq!(p.max_duty, 100.0);
+        assert_eq!((p.brownout_v, p.brownout_ms), (Some(10.8), 300));
+        assert!(c.limits.pump_brownout_pi);
+        let off: Config = toml::from_str("[limits]\npump_brownout_v = 0\n").unwrap();
+        assert_eq!(PumpLimits::from(&off.limits).brownout_v, None);
+        assert!(off.validate().is_empty());
         // No baseline yet: the current guard ships off, with the guard's own timings.
         let guard = PumpLimits::default();
         assert_eq!(p.dry_current_a, None);

@@ -15,7 +15,8 @@ use std::time::{Duration, Instant};
 use hal_core::device::{now_epoch_s, rfc3339_from_epoch};
 use hal_core::registry::Registry;
 use hal_core::safety::{
-    is_dry_run, resolve_dry_guard, Decision, DoseGuard, DoseLimits, Env, PumpGuard, PumpLimits, DRY_RUN,
+    describe_brownout, is_dry_run, resolve_dry_guard, Decision, DoseGuard, DoseLimits, Env, PumpGuard,
+    PumpLimits, DRY_RUN,
 };
 use hal_core::{
     topics, ActuatorCommand, ActuatorId, ActuatorState, Alert, AlertKind, BinarySensor, ButtonEvent,
@@ -138,6 +139,10 @@ pub struct EngineConfig {
     /// The bounds (ms) a grace from the app is clamped into: hal.toml's
     /// `pump_dry_grace_min_ms` and `pump_dry_grace_max_ms`.
     pub dry_grace_bounds: (u64, u64),
+    /// Where the Pi's under-voltage flag is read for the brown-out guard
+    /// (`config::PI_THROTTLED`); `None` doesn't read it (`--sim`, or
+    /// `pump_brownout_pi = false`).
+    pub pi_throttled: Option<std::path::PathBuf>,
 }
 
 /// A grace from the app, held to hal.toml's bounds.
@@ -159,6 +164,8 @@ pub const PUMP_WATCH_TAIL: Duration = Duration::from_secs(2);
 /// How often the ranger is read for the guard while the pump runs. Its median of
 /// pings holds the engine for ~0.3 s, so it can't keep up with the current.
 const LEVEL_READ_EVERY: Duration = Duration::from_secs(1);
+/// How often the Pi's under-voltage flag is read while the pump runs.
+const PI_FLAG_READ_EVERY: Duration = Duration::from_secs(1);
 
 fn key<T: Serialize>(v: &T) -> String {
     serde_json::to_value(v)
@@ -184,6 +191,8 @@ pub struct Engine {
     next_pump_sample: Option<Instant>,
     /// When the guard's next read of the ranger is due, while the pump runs.
     next_level_read: Option<Instant>,
+    /// When the guard's next read of the Pi's under-voltage flag is due, while the pump runs.
+    next_pi_flag_read: Option<Instant>,
     /// A stop the pump driver refused, retried until it takes.
     stop_pending: bool,
     doses: BTreeMap<ActuatorId, DoseGuard>,
@@ -335,6 +344,29 @@ impl Engine {
         system.limits.pump_dry_grace_ms = Some(cfg.pump.dry_grace_ms);
         system.limits.pump_dry_grace_min_ms = Some(cfg.dry_grace_bounds.0);
         system.limits.pump_dry_grace_max_ms = Some(cfg.dry_grace_bounds.1);
+        // The brown-out guard: the supply needs a pump monitor, the Pi's flag a readable file.
+        let monitor = system.caps.sensors.contains(&SensorId::PumpV);
+        let pi_flag = match cfg.pi_throttled.as_deref() {
+            Some(p) if crate::pi_power::under_voltage(p).is_some() => true,
+            Some(p) => {
+                warn!(path = %p.display(), "the Pi's under-voltage flag can't be read; the brown-out guard goes without it");
+                false
+            }
+            None => false,
+        };
+        let brownout = describe_brownout(cfg.pump.brownout_v, cfg.pump.brownout_ms, monitor, pi_flag);
+        if cfg.pump.brownout_v.is_none() || !monitor {
+            cfg.pump.brownout_v = None;
+            warn!(why = %brownout, "pump brown-out guard");
+        } else {
+            info!(why = %brownout, "pump brown-out guard");
+        }
+        if !pi_flag {
+            cfg.pi_throttled = None;
+        }
+        system.limits.pump_brownout_v = cfg.pump.brownout_v;
+        system.limits.pump_brownout_ms = Some(cfg.pump.brownout_ms);
+        system.limits.pump_brownout_pi = Some(pi_flag);
         let mut doses = BTreeMap::new();
         for id in &system.caps.actuators {
             if matches!(id, ActuatorId::Dose1 | ActuatorId::Dose2 | ActuatorId::Dose3) {
@@ -354,6 +386,7 @@ impl Engine {
             watch_until: None,
             next_pump_sample: None,
             next_level_read: None,
+            next_pi_flag_read: None,
             stop_pending: false,
             doses,
             dose_since: BTreeMap::new(),
@@ -714,6 +747,7 @@ impl Engine {
         let mut has_ranger = false;
         let mut pcb = None;
         let mut pump_a = None;
+        let mut pump_v = None;
         let mut readings = Vec::new();
         for s in self.registry.sensors_mut() {
             has_ranger |= s.id() == SensorId::WaterDistance;
@@ -728,6 +762,7 @@ impl Engine {
                         }
                         SensorId::PcbTemp => pcb = Some(r.value),
                         SensorId::PumpA => pump_a = Some(r.value),
+                        SensorId::PumpV => pump_v = Some(r.value),
                         _ => {}
                     }
                     readings.push((s.id(), r));
@@ -746,6 +781,7 @@ impl Engine {
         }
         self.env.pcb_temp_c = pcb;
         self.env.pump_current_a = pump_a;
+        self.env.supply_v = pump_v;
         if let Some(low) = self.cfg.pump.water_low_cm {
             self.water.observe(trusted_distance, low);
         }
@@ -799,14 +835,32 @@ impl Engine {
     }
 
     /// A fresh read of the pump monitor: the facets' cache would hand the guard
-    /// one number for 500 ms. A failed read is `None`, which the current guard
-    /// doesn't count as dry.
+    /// one number for 500 ms. The supply voltage comes from the same
+    /// transaction, which the current's fresh read just cached. A failed read is
+    /// `None`, which neither the current guard nor the brown-out guard trips on.
     fn read_pump_current(&mut self) {
         self.env.pump_current_a = self
             .registry
             .sensor_mut(SensorId::PumpA)
             .and_then(|s| s.read_fresh().ok())
             .map(|r| r.value);
+        self.env.supply_v = self
+            .registry
+            .sensor_mut(SensorId::PumpV)
+            .and_then(|s| s.read().ok())
+            .map(|r| r.value);
+    }
+
+    /// The Pi's under-voltage flag, at most once a second while the pump runs.
+    fn read_pi_flag(&mut self, now: Now) {
+        let Some(path) = &self.cfg.pi_throttled else {
+            return;
+        };
+        if self.next_pi_flag_read.is_some_and(|t| now.instant < t) {
+            return;
+        }
+        self.env.under_voltage = crate::pi_power::under_voltage(path);
+        self.next_pi_flag_read = Some(now.instant + PI_FLAG_READ_EVERY);
     }
 
     /// The pump is (or may still be) driven, or stopped less than [`PUMP_WATCH_TAIL`] ago.
@@ -844,6 +898,9 @@ impl Engine {
             self.read_level(now, false);
             self.read_pcb_temp();
         }
+        if self.pump.is_running(now.instant) {
+            self.read_pi_flag(now);
+        }
         self.env.over_temp_signal = self.read_over_temp_signal();
         // Late reads don't bunch up: the next is a whole step from this one.
         self.next_pump_sample = Some(now.instant + PUMP_SAMPLE_EVERY);
@@ -860,6 +917,8 @@ impl Engine {
         }
         let env = self.env;
         self.env.water_fresh = false;
+        // One read of the Pi's flag counts once, like a ranger reading.
+        self.env.under_voltage = None;
         let Some(Decision::Stop) = self.pump.tick(env, now.instant) else {
             return false;
         };
@@ -1389,7 +1448,7 @@ mod tests {
             },
             limits: Limits {
                 pump_max_run_s: 900,
-                pump_max_duty: 30.0,
+                pump_max_duty: 100.0,
                 water_low_cm: Some(16.0),
                 ..Limits::default()
             },
@@ -1408,6 +1467,7 @@ mod tests {
             button_pump_run_s: 300,
             ha_prefix: ha.then(|| "homeassistant".to_owned()),
             dry_grace_bounds: (300, 5000),
+            pi_throttled: None,
         }
     }
 
@@ -1594,14 +1654,14 @@ mod tests {
         let mut r = rig(vec![ActuatorId::Pump], false, "pump");
         r.engine.boot(r.now);
         let out = r.engine.handle(
-            Inbound::ActuatorSet(ActuatorId::Pump, on(Some(100.0), Some(20))),
+            Inbound::ActuatorSet(ActuatorId::Pump, on(Some(150.0), Some(20))),
             r.now,
         );
         let st = payload(&out, "seedypod/u1/actuator/pump/state");
         assert_eq!(st["on"], true);
-        assert_eq!(st["level"], 30.0, "clamped to max duty");
+        assert_eq!(st["level"], 100.0, "clamped to max duty");
         assert_eq!(st["remainingS"], 20);
-        assert_eq!(r.world.lock().unwrap().pump_level, 30.0);
+        assert_eq!(r.world.lock().unwrap().pump_level, 100.0);
         assert!(
             topics_of(&out).iter().all(|t| !t.starts_with("seedypod/u1/ha/")),
             "no HA mirror without prefix"
@@ -1621,14 +1681,14 @@ mod tests {
         r.engine.boot(r.now);
         r.engine
             .handle(Inbound::ActuatorSet(ActuatorId::Pump, on(None, None)), r.now);
-        assert_eq!(r.world.lock().unwrap().pump_level, 30.0);
+        assert_eq!(r.world.lock().unwrap().pump_level, 100.0);
         // Drain the tank past the threshold; once it has stayed low for DRY_CONFIRM, the guard trips.
         r.world.lock().unwrap().water_distance_cm = 17.0;
         r.now.advance(Duration::from_secs(10));
         let first = r.engine.tick(r.now);
         assert_eq!(
             r.world.lock().unwrap().pump_level,
-            30.0,
+            100.0,
             "one low read is not enough"
         );
         assert_eq!(payload(&first, "seedypod/u1/alert/water_low")["active"], true);
@@ -1714,7 +1774,7 @@ mod tests {
 
     fn current_cfg() -> EngineConfig {
         let mut c = cfg(false);
-        // The sim draws 0.22 A wet at 30 % and a quarter of that pulling air.
+        // The sim draws 0.5 A wet at 100 % and a quarter of that pulling air.
         c.pump.dry_current_a = Some(0.15);
         c
     }
@@ -1824,7 +1884,7 @@ mod tests {
         }
         assert_eq!(
             r.world.lock().unwrap().pump_level,
-            30.0,
+            100.0,
             "the tank doesn't stop it"
         );
         // Asked for current with no monitor, it runs on the tank level instead.
@@ -1846,7 +1906,7 @@ mod tests {
         for _ in 0..120 {
             assert!(!topics_of(&step(&mut r)).contains(&"seedypod/u1/actuator/pump/state"));
         }
-        assert_eq!(r.world.lock().unwrap().pump_level, 30.0);
+        assert_eq!(r.world.lock().unwrap().pump_level, 100.0);
         // The intake comes out of the water: the tank still reads full, the current falls.
         r.world.lock().unwrap().intake_dry = true;
         let mut tripped = None;
@@ -1860,7 +1920,7 @@ mod tests {
         let (after, out) = tripped.expect("the current guard never tripped");
         // The first low read comes 100 ms in, then 0.3 s of them.
         assert_eq!(after, 400, "tripped {after} ms after the intake went dry");
-        let why = "dry-run: pump drew 0.05 A, below 0.15 A for 0.3 s: it's pulling air";
+        let why = "dry-run: pump drew 0.12 A, below 0.15 A for 0.3 s: it's pulling air";
         assert_eq!(payload(&out, "seedypod/u1/actuator/pump/state")["fault"], why);
         let alert = payload(&out, "seedypod/u1/alert/pump_fault");
         assert_eq!(alert["active"], true);
@@ -1884,6 +1944,113 @@ mod tests {
         let cleared = cleared.expect("the dry-run never cleared");
         assert!((60..=70).contains(&cleared), "cleared {cleared} s after the trip");
         assert_eq!(r.engine.dry_hold_until, None);
+        let _ = std::fs::remove_dir_all(&r.dir);
+    }
+
+    /// Runs the rig in 100 ms steps until the pump stops: how long after the start, and the last publishes.
+    fn run_until_stopped(r: &mut Rig, steps: u64) -> Option<(u64, Vec<Outbound>)> {
+        (1..=steps).find_map(|n| {
+            let out = step(r);
+            (r.world.lock().unwrap().pump_level == 0.0).then(|| (n * 100, out))
+        })
+    }
+
+    #[test]
+    fn a_sagging_supply_stops_the_pump_past_the_grace_and_waits_for_a_person() {
+        let mut r = current_rig("brownout", true);
+        let out = r.engine.boot(r.now);
+        let limits = &payload(&out, "seedypod/u1/system")["limits"];
+        assert_eq!(limits["pumpBrownoutV"], 10.8);
+        assert_eq!(limits["pumpBrownoutMs"], 300);
+        assert_eq!(limits["pumpBrownoutPi"], false);
+        // A healthy run sees 12.1 V and runs on.
+        r.engine
+            .handle(Inbound::ActuatorSet(ActuatorId::Pump, on(None, Some(5))), r.now);
+        assert_eq!(r.engine.env.supply_v, Some(12.3), "read idle, before the start");
+        step(&mut r);
+        assert_eq!(
+            r.engine.env.supply_v,
+            Some(12.1),
+            "read with the current, every 100 ms"
+        );
+        let (ended, _) = run_until_stopped(&mut r, 60).expect("the run ends");
+        assert_eq!(ended + 100, 5000, "on its deadline");
+        assert_eq!(r.engine.pump.fault(), None);
+        // The supply sags under the pump: past the 1 s grace, 0.3 s of it stops the pump.
+        r.world.lock().unwrap().supply_sag_v = Some(10.2);
+        r.engine
+            .handle(Inbound::ActuatorSet(ActuatorId::Pump, on(None, Some(60))), r.now);
+        let (after, out) = run_until_stopped(&mut r, 50).expect("the brown-out guard never tripped");
+        assert_eq!(after, 1300);
+        let why = "brown-out: supply fell to 10.2 V for 0.3 s";
+        assert_eq!(payload(&out, "seedypod/u1/actuator/pump/state")["fault"], why);
+        assert_eq!(
+            payload(&out, "seedypod/u1/alert/pump_fault")["detail"],
+            format!("pump: {why}")
+        );
+        // Unlike a dry-run it doesn't clear itself on a full tank: it waits for an acknowledge.
+        r.world.lock().unwrap().supply_sag_v = None;
+        for _ in 0..(2 * WATER_WINDOW as u64 * 10) {
+            r.now.advance(Duration::from_secs(1));
+            r.engine.tick(r.now);
+        }
+        assert_eq!(r.engine.pump.fault(), Some(why));
+        r.engine.handle(Inbound::AlertAck(AlertKind::PumpFault), r.now);
+        let out = r
+            .engine
+            .handle(Inbound::ActuatorSet(ActuatorId::Pump, on(None, Some(30))), r.now);
+        assert_eq!(payload(&out, "seedypod/u1/actuator/pump/state")["on"], true);
+        let _ = std::fs::remove_dir_all(&r.dir);
+    }
+
+    #[test]
+    fn without_a_pump_monitor_the_supply_isnt_judged_and_isnt_reported() {
+        let r = current_rig("brownout-bare", false);
+        assert_eq!(r.engine.pump.limits().brownout_v, None);
+        assert_eq!(r.engine.system.limits.pump_brownout_v, None);
+        assert_eq!(r.engine.system.limits.pump_brownout_ms, Some(300));
+        let mut c = current_cfg();
+        c.pump.brownout_v = None;
+        let off = current_engine(&r, c, true);
+        assert_eq!(off.system.limits.pump_brownout_v, None);
+        let _ = std::fs::remove_dir_all(&r.dir);
+    }
+
+    #[test]
+    fn the_pis_under_voltage_flag_stops_the_pump_when_it_can_be_read() {
+        let r0 = current_rig("pi-flag", true);
+        let flag = r0.dir.join("get_throttled");
+        std::fs::create_dir_all(&r0.dir).unwrap();
+        std::fs::write(&flag, "0\n").unwrap();
+        let mut c = current_cfg();
+        c.pi_throttled = Some(flag.clone());
+        let mut r = Rig {
+            engine: current_engine(&r0, c.clone(), true),
+            ..r0
+        };
+        assert_eq!(r.engine.system.limits.pump_brownout_pi, Some(true));
+        r.engine.boot(r.now);
+        r.engine
+            .handle(Inbound::ActuatorSet(ActuatorId::Pump, on(None, Some(60))), r.now);
+        // Clear, it runs on.
+        for _ in 0..30 {
+            step(&mut r);
+        }
+        assert_eq!(r.world.lock().unwrap().pump_level, 100.0);
+        std::fs::write(&flag, "50005\n").unwrap();
+        let (after, out) = run_until_stopped(&mut r, 50).expect("the Pi's flag never tripped it");
+        // Read once a second: the second read in a row that says so trips it.
+        assert!(
+            (1000..=2100).contains(&after),
+            "tripped {after} ms after the flag went up"
+        );
+        let fault = payload(&out, "seedypod/u1/actuator/pump/state")["fault"].clone();
+        assert_eq!(fault, "brown-out: the Pi reported under-voltage for 1 s");
+        // A flag that can't be read leaves the guard without it, and says so.
+        c.pi_throttled = Some(r.dir.join("missing"));
+        let without = current_engine(&r, c, true);
+        assert_eq!(without.system.limits.pump_brownout_pi, Some(false));
+        assert_eq!(without.cfg.pi_throttled, None);
         let _ = std::fs::remove_dir_all(&r.dir);
     }
 
@@ -1923,7 +2090,7 @@ mod tests {
             r.now.advance(Duration::from_secs(1));
             r.engine.tick(r.now);
         }
-        assert_eq!(r.world.lock().unwrap().pump_level, 30.0);
+        assert_eq!(r.world.lock().unwrap().pump_level, 100.0);
         assert_eq!(r.engine.pump.fault(), None);
         assert!(current_rig("with-monitor", true)
             .engine
@@ -1943,7 +2110,7 @@ mod tests {
             .handle(Inbound::ActuatorSet(ActuatorId::Pump, on(None, Some(60))), r.now);
         assert!(r.engine.pump_on(r.now));
         let s = r.engine.pump_sample();
-        assert_eq!((s.duty, s.v, s.a), (30.0, Some(12.1), Some(0.22)));
+        assert_eq!((s.duty, s.v, s.a), (100.0, Some(12.1), Some(0.5)));
         assert!(s.w.is_some());
         let mut bare = current_rig("sample-bare", false);
         let s = bare.engine.pump_sample();
@@ -1976,7 +2143,7 @@ mod tests {
                 stopped = Some(r.steps);
                 break;
             }
-            assert_eq!(r.engine.env.pump_current_a, Some(0.22));
+            assert_eq!(r.engine.env.pump_current_a, Some(0.5));
         }
         // The 3 s run ends on its deadline, not up to a tick late.
         assert_eq!(stopped, Some(30));
@@ -2019,7 +2186,7 @@ mod tests {
         r.engine
             .handle(Inbound::ActuatorSet(ActuatorId::Pump, on(None, Some(60))), r.now);
         assert_eq!(rounds(&mut r), (3, 0));
-        assert_eq!(r.world.lock().unwrap().pump_level, 30.0);
+        assert_eq!(r.world.lock().unwrap().pump_level, 100.0);
         let _ = std::fs::remove_dir_all(&r.dir);
     }
 
@@ -2105,7 +2272,7 @@ mod tests {
         r.engine.boot(r.now);
         r.engine
             .handle(Inbound::ActuatorSet(ActuatorId::Pump, on(None, Some(60))), r.now);
-        assert_eq!(r.world.lock().unwrap().pump_level, 30.0);
+        assert_eq!(r.world.lock().unwrap().pump_level, 100.0);
         stuck.store(true, Ordering::Relaxed);
         let out = r
             .engine
@@ -2119,7 +2286,7 @@ mod tests {
             step(&mut r);
             assert!(r.engine.pump_watch_due(r.now).is_some());
         }
-        assert_eq!(r.world.lock().unwrap().pump_level, 30.0);
+        assert_eq!(r.world.lock().unwrap().pump_level, 100.0);
         // Acknowledged too soon: the next refused stop latches it again.
         r.engine.handle(Inbound::AlertAck(AlertKind::PumpFault), r.now);
         step(&mut r);
@@ -2596,7 +2763,7 @@ mod tests {
         f.set(100.0);
         f.r.engine
             .handle(Inbound::ActuatorSet(ActuatorId::Pump, on(None, None)), f.r.now);
-        assert_eq!(f.r.world.lock().unwrap().pump_level, 30.0);
+        assert_eq!(f.r.world.lock().unwrap().pump_level, 100.0);
         f.r.world.lock().unwrap().water_distance_cm = 17.0;
         f.r.now.advance(Duration::from_secs(10));
         f.r.engine.tick(f.r.now);

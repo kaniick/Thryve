@@ -4,8 +4,9 @@
 //! through [`PumpGuard::request`]. The guard is pure and clock-injected so the
 //! whole policy is unit-testable without hardware:
 //!
-//! 1. **Duty clamp** — `level` is clamped to `max_duty` (Gardyn's board browns
-//!    out above ~30 %).
+//! 1. **Duty clamp** — `level` is clamped to `max_duty`: 100 % by default, the
+//!    pin held high as the stock firmware drives it. A unit whose board browns
+//!    out lowers it in hal.toml.
 //! 2. **Bounded runs** — every start carries a deadline ≤ `max_run_s`; there is
 //!    no unbounded "on".
 //! 3. **Dry-run interlock** — a start is refused when the water distance (median
@@ -18,9 +19,14 @@
 //!    `dry_current_a` (#220). It raises the same dry-run fault. hald feeds the
 //!    guard fast while the pump runs (the current every 100 ms), so the guard
 //!    counts reads as well as time.
-//! 4. **Over-temperature cutoff** — a start is refused, and a running pump is
+//! 4. **Brown-out** — past the same spin-up grace, at least
+//!    [`DRY_MIN_READS`] reads in a row of the pump supply (the INA219's bus
+//!    voltage) below `brownout_v`, covering `brownout_ms`, stop the pump. So do
+//!    two reads in a row of the Pi's own under-voltage flag, `brownout_ms` or
+//!    more apart. A missing read never trips it.
+//! 5. **Over-temperature cutoff** — a start is refused, and a running pump is
 //!    stopped, when the PCB temperature is above `over_temp_c`.
-//! 5. **Latched faults** — a stop caused by (3) or (4) while running latches
+//! 6. **Latched faults** — a stop caused by (3), (4) or (5) while running latches
 //!    the pump off until [`PumpGuard::acknowledge`] is called. Auto-recovery is
 //!    deliberately not offered: a pump that tripped is a hardware signal, not
 //!    something to retry at 3 a.m. (sleepypod ADR-0022).
@@ -50,19 +56,27 @@ pub struct PumpLimits {
     /// start: the one in effect, from [`resolve_dry_guard`]. `Current` ignores
     /// the tank level; `Level` ignores the current.
     pub dry_guard: DryGuard,
+    /// Below this supply voltage (V), past the spin-up grace, the pump is
+    /// browning the board out. `None` turns the voltage check off.
+    pub brownout_v: Option<f64>,
+    /// How long the supply must stay below `brownout_v`, or the Pi report
+    /// under-voltage, to trip; at least [`DRY_MIN_READS`] voltage reads.
+    pub brownout_ms: u64,
 }
 
 impl Default for PumpLimits {
     fn default() -> Self {
         Self {
             max_run_s: 900,
-            max_duty: 30.0,
+            max_duty: 100.0,
             water_low_cm: Some(16.0),
             over_temp_c: Some(36.0),
             dry_current_a: None,
             dry_after_ms: 300,
             dry_grace_ms: 1000,
             dry_guard: DryGuard::Both,
+            brownout_v: Some(10.8),
+            brownout_ms: 300,
         }
     }
 }
@@ -117,6 +131,25 @@ pub fn resolve_dry_guard(
     ResolvedGuard { mode, why, warn }
 }
 
+/// What the brown-out guard watches, in words, for `hald --check` and the log:
+/// the supply voltage needs the cutoff and a pump monitor; the Pi's flag, a
+/// readable `get_throttled`.
+pub fn describe_brownout(v: Option<f64>, ms: u64, monitor: bool, pi_flag: bool) -> String {
+    let secs = amps(ms as f64 / 1000.0);
+    let supply = v
+        .filter(|_| monitor)
+        .map(|v| format!("supply below {} V for {secs} s", amps(v)));
+    match (supply, pi_flag) {
+        (Some(s), true) => format!("{s}, or the Pi's under-voltage flag"),
+        (Some(s), false) => s,
+        (None, true) => format!("the Pi's under-voltage flag for {secs} s only"),
+        (None, false) if v.is_none() => "off: pump_brownout_v = 0".to_owned(),
+        (None, false) => {
+            "off: no pump monitor (ina219), and the Pi's under-voltage flag isn't read".to_owned()
+        }
+    }
+}
+
 /// Why a command was refused. Serialised into `ActuatorState.fault` / error replies.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum Refusal {
@@ -144,6 +177,12 @@ pub struct Env {
     pub over_temp_signal: bool,
     /// Pump current (A) from the pump monitor, `None` if there is none or the read failed.
     pub pump_current_a: Option<f64>,
+    /// The pump supply (V), the monitor's bus voltage from the same read as the
+    /// current; `None` if there is none or the read failed.
+    pub supply_v: Option<f64>,
+    /// The Pi's under-voltage flag, on the tick it was read: `None` between
+    /// reads (it's read once a second) and when it can't be read.
+    pub under_voltage: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -177,6 +216,9 @@ pub const MONITOR_LOST: &str = "monitor-lost";
 /// The fault a dry pump latches, from either guard. The current guard adds why.
 pub const DRY_RUN: &str = "dry-run";
 
+/// The fault a sagging supply latches. It waits for a person.
+pub const BROWN_OUT: &str = "brown-out";
+
 /// Whether a latched fault is a dry-run (from the level or the current), which
 /// clears itself once the water reads good, unlike the others.
 pub fn is_dry_run(fault: &str) -> bool {
@@ -207,6 +249,16 @@ pub struct PumpGuard {
     starved_reads: u32,
     /// The last reading of the pump current this run, or its start.
     current_seen: Option<Instant>,
+    /// When the supply first read below `brownout_v`, in this run of such reads.
+    sag_since: Option<Instant>,
+    /// How many voltage reads in this run of them have been below `brownout_v`.
+    sag_reads: u32,
+    /// The lowest supply voltage in this run of low reads.
+    sag_low: f64,
+    /// When the Pi first reported under-voltage, in this run of such reads.
+    uv_since: Option<Instant>,
+    /// How many reads of the Pi's flag in a row have reported under-voltage.
+    uv_reads: u32,
 }
 
 impl PumpGuard {
@@ -222,6 +274,11 @@ impl PumpGuard {
             starved_since: None,
             starved_reads: 0,
             current_seen: None,
+            sag_since: None,
+            sag_reads: 0,
+            sag_low: f64::INFINITY,
+            uv_since: None,
+            uv_reads: 0,
         }
     }
 
@@ -273,6 +330,7 @@ impl PumpGuard {
             self.level = 0.0;
             self.started = None;
             self.reset_starved();
+            self.reset_brownout();
             return Ok(Decision::Stop);
         }
 
@@ -302,6 +360,7 @@ impl PumpGuard {
             self.started = Some(now);
             self.current_seen = Some(now);
             self.reset_starved();
+            self.reset_brownout();
         }
         self.level = level;
         self.running_until = Some(now + deadline_in);
@@ -320,6 +379,7 @@ impl PumpGuard {
                 self.level = 0.0;
                 self.started = None;
                 self.reset_starved();
+                self.reset_brownout();
                 return Some(Decision::Stop);
             }
             return None;
@@ -328,6 +388,10 @@ impl PumpGuard {
             return Some(self.trip(DRY_RUN));
         }
         if let Some(why) = self.monitor_lost(env, now) {
+            return Some(self.trip(&why));
+        }
+        // Before the current guard: a sagging supply draws less too, and should be named for what it is.
+        if let Some(why) = self.browning_out(env, now) {
             return Some(self.trip(&why));
         }
         if let Some(why) = self.pulling_air(env, now) {
@@ -424,6 +488,72 @@ impl PumpGuard {
         self.starved_reads = 0;
     }
 
+    /// Past the spin-up grace, which has the inrush in it.
+    fn past_grace(&self, now: Instant) -> bool {
+        self.started
+            .is_some_and(|s| now.duration_since(s) >= Duration::from_millis(self.limits.dry_grace_ms))
+    }
+
+    /// The brown-out guard: at least [`DRY_MIN_READS`] reads of the supply below
+    /// `brownout_v`, covering `brownout_ms`, or two reads in a row of the Pi's
+    /// under-voltage flag at least `brownout_ms` apart. A good read starts the
+    /// count again. A missing read neither counts nor clears it: a supply
+    /// sagging far enough can take the monitor's reads with it, and a read that
+    /// didn't come is no evidence either way.
+    fn browning_out(&mut self, env: Env, now: Instant) -> Option<String> {
+        if !self.past_grace(now) {
+            return None;
+        }
+        let after = Duration::from_millis(self.limits.brownout_ms);
+        match (self.limits.brownout_v, env.supply_v) {
+            (Some(min), Some(v)) if v < min => {
+                let since = *self.sag_since.get_or_insert(now);
+                self.sag_reads += 1;
+                self.sag_low = self.sag_low.min(v);
+                if self.sag_reads >= DRY_MIN_READS && now.duration_since(since) >= after {
+                    return Some(format!(
+                        "{BROWN_OUT}: supply fell to {:.1} V for {} s",
+                        self.sag_low,
+                        amps(after.as_secs_f64())
+                    ));
+                }
+            }
+            (_, Some(_)) => {
+                self.sag_since = None;
+                self.sag_reads = 0;
+                self.sag_low = f64::INFINITY;
+            }
+            (_, None) => {}
+        }
+        match env.under_voltage {
+            Some(true) => {
+                let since = *self.uv_since.get_or_insert(now);
+                self.uv_reads += 1;
+                let held = now.duration_since(since);
+                (self.uv_reads >= 2 && held >= after).then(|| {
+                    format!(
+                        "{BROWN_OUT}: the Pi reported under-voltage for {} s",
+                        amps(held.as_secs_f64())
+                    )
+                })
+            }
+            Some(false) => {
+                self.uv_since = None;
+                self.uv_reads = 0;
+                None
+            }
+            None => None,
+        }
+    }
+
+    fn reset_brownout(&mut self) {
+        self.sag_since = None;
+        self.sag_reads = 0;
+        self.sag_low = f64::INFINITY;
+        self.uv_since = None;
+        self.uv_reads = 0;
+    }
+
     /// Latch a fault the guard didn't see itself (the driver wouldn't stop the
     /// pump), ending the run. It clears only via [`PumpGuard::acknowledge`].
     pub fn latch(&mut self, reason: &str) {
@@ -441,6 +571,7 @@ impl PumpGuard {
         self.low_since = None;
         self.started = None;
         self.reset_starved();
+        self.reset_brownout();
         self.running_until = None;
         self.level = 0.0;
         Decision::Stop
@@ -496,6 +627,8 @@ mod tests {
             pcb_temp_c: Some(30.0),
             over_temp_signal: false,
             pump_current_a: Some(1.87),
+            supply_v: Some(12.2),
+            under_voltage: None,
         }
     }
     fn at(d: Option<f64>) -> Env {
@@ -1175,6 +1308,185 @@ mod tests {
         assert_eq!(amps(1.25), "1.25");
         assert_eq!(amps(0.0), "0");
         assert_eq!(amps(2.0), "2");
+    }
+
+    // ---- duty and brown-out ---------------------------------------------------
+
+    #[test]
+    fn by_default_the_pump_runs_at_full_duty_as_stock_does() {
+        let mut g = PumpGuard::new(PumpLimits::default());
+        let t0 = Instant::now();
+        assert!(matches!(
+            g.request(&on(None, Some(60)), wet(), t0),
+            Ok(Decision::Run { level, .. }) if level == 100.0
+        ));
+        assert!(matches!(
+            g.request(&on(Some(150.0), Some(60)), wet(), t0),
+            Ok(Decision::Run { level, .. }) if level == 100.0
+        ));
+        assert!(matches!(
+            g.request(&on(Some(40.0), Some(60)), wet(), t0),
+            Ok(Decision::Run { level, .. }) if level == 40.0
+        ));
+    }
+
+    fn supply(v: Option<f64>) -> Env {
+        Env { supply_v: v, ..wet() }
+    }
+
+    fn pi(flag: Option<bool>) -> Env {
+        Env {
+            under_voltage: flag,
+            ..wet()
+        }
+    }
+
+    #[test]
+    fn a_sagging_supply_stops_the_pump_past_the_grace_and_latches_until_acknowledged() {
+        let mut g = PumpGuard::new(PumpLimits::default());
+        let t0 = Instant::now();
+        let ms = |n| t0 + Duration::from_millis(n);
+        g.request(&on(None, Some(60)), wet(), t0).unwrap();
+        // The inrush in the spin-up grace isn't judged, however deep.
+        for n in (100..1000).step_by(100) {
+            assert_eq!(g.tick(supply(Some(9.0)), ms(n)), None, "{n} ms");
+        }
+        assert_eq!(g.tick(supply(Some(10.4)), ms(1000)), None);
+        assert_eq!(g.tick(supply(Some(10.2)), ms(1100)), None);
+        assert_eq!(g.tick(supply(Some(10.5)), ms(1200)), None);
+        assert_eq!(g.tick(supply(Some(10.6)), ms(1300)), Some(Decision::Stop));
+        let f = g.fault().unwrap();
+        assert_eq!(f, "brown-out: supply fell to 10.2 V for 0.3 s");
+        assert!(!is_dry_run(f), "it waits for a person");
+        assert!(matches!(
+            g.request(&on(None, None), wet(), ms(2000)),
+            Err(Refusal::Latched(f)) if f.starts_with(BROWN_OUT)
+        ));
+        g.acknowledge();
+        assert!(g.request(&on(None, None), wet(), ms(3000)).is_ok());
+    }
+
+    #[test]
+    fn a_good_read_starts_the_sag_count_again_and_a_missing_one_never_trips_it() {
+        let mut g = PumpGuard::new(PumpLimits::default());
+        let t0 = Instant::now();
+        let ms = |n| t0 + Duration::from_millis(n);
+        g.request(&on(None, Some(60)), wet(), t0).unwrap();
+        assert_eq!(g.tick(supply(Some(10.0)), ms(1000)), None);
+        assert_eq!(g.tick(supply(Some(10.0)), ms(1100)), None);
+        assert_eq!(g.tick(supply(Some(12.1)), ms(1200)), None);
+        assert_eq!(g.tick(supply(Some(10.0)), ms(1300)), None);
+        assert_eq!(g.tick(supply(Some(10.0)), ms(1400)), None);
+        // A lost read neither counts nor clears: the next low one is the third.
+        assert_eq!(g.tick(supply(None), ms(1500)), None);
+        assert_eq!(g.tick(supply(None), ms(1600)), None);
+        assert_eq!(g.tick(supply(Some(10.0)), ms(1700)), Some(Decision::Stop));
+        g.acknowledge();
+        // A monitor that reads nothing never trips it.
+        g.request(&on(None, Some(60)), wet(), ms(5000)).unwrap();
+        for n in (5100..30_000).step_by(100) {
+            assert_eq!(g.tick(supply(None), ms(n)), None, "{n} ms");
+        }
+        assert_eq!(g.fault(), None);
+    }
+
+    #[test]
+    fn it_takes_three_low_supply_reads_however_long_they_take_and_a_new_run_counts_afresh() {
+        let mut g = PumpGuard::new(PumpLimits {
+            brownout_ms: 100,
+            ..PumpLimits::default()
+        });
+        let t0 = Instant::now();
+        let s = |n| t0 + Duration::from_secs(n);
+        g.request(&on(None, Some(60)), wet(), t0).unwrap();
+        assert_eq!(g.tick(supply(Some(10.0)), s(2)), None);
+        assert_eq!(g.tick(supply(Some(10.0)), s(3)), None);
+        // Stopped mid-count: the next run spins up and counts from nothing.
+        g.request(&off(), wet(), s(4)).unwrap();
+        g.request(&on(None, Some(60)), wet(), s(5)).unwrap();
+        assert_eq!(g.tick(supply(Some(10.0)), s(7)), None);
+        assert_eq!(g.tick(supply(Some(10.0)), s(8)), None);
+        assert_eq!(g.tick(supply(Some(9.96)), s(9)), Some(Decision::Stop));
+        assert_eq!(g.fault(), Some("brown-out: supply fell to 10.0 V for 0.1 s"));
+    }
+
+    #[test]
+    fn without_a_cutoff_the_supply_is_not_judged() {
+        let mut g = PumpGuard::new(PumpLimits {
+            brownout_v: None,
+            ..PumpLimits::default()
+        });
+        let t0 = Instant::now();
+        g.request(&on(None, Some(60)), wet(), t0).unwrap();
+        for n in 1..300 {
+            assert_eq!(
+                g.tick(supply(Some(6.0)), t0 + Duration::from_millis(n * 100)),
+                None
+            );
+        }
+    }
+
+    #[test]
+    fn a_sag_that_also_starves_the_current_is_named_a_brown_out() {
+        let mut g = current_guard();
+        let t0 = Instant::now();
+        let ms = |n| t0 + Duration::from_millis(n);
+        g.request(&on(None, Some(60)), wet(), t0).unwrap();
+        let both = Env {
+            supply_v: Some(9.5),
+            pump_current_a: Some(0.3),
+            ..wet()
+        };
+        for n in [1000, 1100, 1200] {
+            assert_eq!(g.tick(both, ms(n)), None);
+        }
+        assert_eq!(g.tick(both, ms(1300)), Some(Decision::Stop));
+        assert!(g.fault().unwrap().starts_with("brown-out: supply fell to 9.5 V"));
+    }
+
+    #[test]
+    fn the_pis_under_voltage_flag_trips_on_two_reads_in_a_row() {
+        let mut g = PumpGuard::new(PumpLimits::default());
+        let t0 = Instant::now();
+        let ms = |n| t0 + Duration::from_millis(n);
+        g.request(&on(None, Some(60)), wet(), t0).unwrap();
+        // In the grace it isn't judged.
+        assert_eq!(g.tick(pi(Some(true)), ms(500)), None);
+        assert_eq!(g.tick(pi(Some(true)), ms(1000)), None);
+        // Between reads there's no flag: that neither counts nor clears.
+        for n in (1100..2000).step_by(100) {
+            assert_eq!(g.tick(pi(None), ms(n)), None, "{n} ms");
+        }
+        // A clear read starts the count again.
+        assert_eq!(g.tick(pi(Some(false)), ms(2000)), None);
+        assert_eq!(g.tick(pi(Some(true)), ms(3000)), None);
+        assert_eq!(g.tick(pi(Some(true)), ms(4000)), Some(Decision::Stop));
+        assert_eq!(
+            g.fault(),
+            Some("brown-out: the Pi reported under-voltage for 1 s")
+        );
+        // Two reads closer together than brownout_ms aren't enough.
+        g.acknowledge();
+        g.request(&on(None, Some(60)), wet(), ms(10_000)).unwrap();
+        assert_eq!(g.tick(pi(Some(true)), ms(11_000)), None);
+        assert_eq!(g.tick(pi(Some(true)), ms(11_100)), None);
+        assert_eq!(g.tick(pi(Some(true)), ms(11_300)), Some(Decision::Stop));
+    }
+
+    #[test]
+    fn the_brown_out_guard_says_what_it_watches() {
+        let d = describe_brownout;
+        assert_eq!(
+            d(Some(10.8), 300, true, true),
+            "supply below 10.8 V for 0.3 s, or the Pi's under-voltage flag"
+        );
+        assert_eq!(d(Some(10.8), 300, true, false), "supply below 10.8 V for 0.3 s");
+        assert_eq!(
+            d(Some(10.8), 300, false, true),
+            "the Pi's under-voltage flag for 0.3 s only"
+        );
+        assert_eq!(d(None, 300, true, false), "off: pump_brownout_v = 0");
+        assert!(d(Some(10.8), 300, false, false).starts_with("off: no pump monitor"));
     }
 
     #[test]

@@ -25,7 +25,7 @@ BCM numbering (not header pin numbers).
 | Function | Interface | Pin / address | Notes | Source |
 |---|---|---|---|---|
 | Grow light | PWM out | GPIO18 | 20 kHz hardware PWM (stock); upstream used 8 kHz. Verified 2026-11-06, Gardyn 3.0: duty matches at 100 % and 30 % | stock fw + unit |
-| Pump | GPIO out | GPIO24 | Stock drives it plain on/off (100 %), 5 min runs, ~10.6 W; upstream used 50 Hz software PWM capped at 30 % for brown-outs. See below | stock fw |
+| Pump | GPIO out | GPIO24 | Stock drives it plain on/off (100 %), 5 min runs, ~10.6 W. seedypod does the same by default (`pump_max_duty = 100`: the pin held high, no PWM) and uses 50 Hz software PWM only below 100 %. Upstream capped it at 30 % for brown-outs, never measured on a 3.0; a brown-out guard on the INA219's bus voltage (default below 10.8 V for 0.3 s) now stops the pump instead (ADR-0009, amended 2026-11-14). See below | stock fw |
 | Water level | DYP-A01 ultrasonic | trigger GPIO26, echo GPIO19 | Stock: 30 µs trigger, 1 s timeout, keeps readings in 3–25 cm and takes the median of the last 6 | stock fw |
 | Button | GPIO in | GPIO13 | pull-up, active low, falling edge, 80 ms debounce (stock) | stock fw |
 | Over-temp alert | GPIO in | GPIO25 | PCT2075 OS output, **active low**: idle reads high on a real 3.0 (config register `0x00`, 32.6 °C). Stock requests a pull-down but the line still idles high; stock sets the over-temperature and hysteresis thresholds to 70 °C and only reports it | stock fw + unit |

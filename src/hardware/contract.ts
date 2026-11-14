@@ -75,6 +75,15 @@ export const Limits = z.object({
   pumpDryGraceMs: z.number().int().nonnegative().optional(),
   pumpDryGraceMinMs: z.number().int().nonnegative().optional(),
   pumpDryGraceMaxMs: z.number().int().nonnegative().optional(),
+  /**
+   * The brown-out guard, as hal.toml sets it and the unit can run it: the supply
+   * cutoff (V), absent when it's off or there's no pump monitor; how long a sag
+   * must last (ms), present from every hald with the guard; and whether the Pi's
+   * under-voltage flag is read.
+   */
+  pumpBrownoutV: z.number().positive().optional(),
+  pumpBrownoutMs: z.number().int().nonnegative().optional(),
+  pumpBrownoutPi: z.boolean().optional(),
 })
 export type Limits = z.infer<typeof Limits>
 

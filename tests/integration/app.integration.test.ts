@@ -13,7 +13,8 @@ let close: () => void = () => undefined
 let hal: SimHal
 
 beforeAll(async () => {
-  hal = new SimHal({ tickMs: 0 })
+  // A unit that lowered its duty cap in hal.toml (the default is 100 %), so the clamp shows.
+  hal = new SimHal({ tickMs: 0, limits: { pumpMaxDuty: 30 } })
   const events = createEventBus()
   const core = createCore({ hal, store: new MemoryStore(), events, version: 'test', captureMinBytes: 1 })
   const { app, injectWebSocket } = createApp({ ctx: core.ctx })

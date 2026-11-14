@@ -120,6 +120,16 @@ pub struct Limits {
     pub pump_dry_grace_min_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pump_dry_grace_max_ms: Option<u64>,
+    /// The brown-out guard, as hal.toml sets it and the unit can run it: the
+    /// supply cutoff (V), absent when it's off or there is no pump monitor; how
+    /// long a sag must last (ms), present from every hald that has the guard;
+    /// and whether the Pi's under-voltage flag is read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pump_brownout_v: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pump_brownout_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pump_brownout_pi: Option<bool>,
 }
 
 /// `pump/guard/set`: core asks for the current guard's spin-up grace, and hald
@@ -464,7 +474,15 @@ mod fixture_tests {
     #[test]
     fn fixtures_parse_on_the_rust_side() {
         let s: SystemInfo = serde_json::from_str(&fixture("system")).unwrap();
-        assert_eq!(s.limits.pump_max_duty, 30.0);
+        assert_eq!(s.limits.pump_max_duty, 100.0);
+        assert_eq!(
+            (
+                s.limits.pump_brownout_v,
+                s.limits.pump_brownout_ms,
+                s.limits.pump_brownout_pi
+            ),
+            (Some(10.8), Some(300), Some(true))
+        );
         assert_eq!(s.limits.pump_dry_guard, Some(DryGuard::Both));
         assert_eq!(
             (
@@ -481,6 +499,9 @@ mod fixture_tests {
             "pumpDryGraceMs",
             "pumpDryGraceMinMs",
             "pumpDryGraceMaxMs",
+            "pumpBrownoutV",
+            "pumpBrownoutMs",
+            "pumpBrownoutPi",
         ] {
             assert_eq!(back["limits"][k], golden["limits"][k], "{k} round-trips");
         }
@@ -489,7 +510,12 @@ mod fixture_tests {
         assert_eq!(old.board, None);
         assert_eq!(old.limits.pump_dry_guard, None);
         let old_json = serde_json::to_string(&old).unwrap();
-        assert!(!old_json.contains("board") && !old_json.contains("pumpDry"));
+        assert_eq!(old.limits.pump_brownout_ms, None);
+        assert!(
+            !old_json.contains("board")
+                && !old_json.contains("pumpDry")
+                && !old_json.contains("pumpBrownout")
+        );
         let pg: PumpGuardCommand = serde_json::from_str(&fixture("pump_guard_command")).unwrap();
         assert_eq!(pg.dry_grace_ms, 1200);
         assert_eq!(

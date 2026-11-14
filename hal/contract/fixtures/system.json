@@ -10,7 +10,8 @@
     "cameras": ["upper", "lower"]
   },
   "limits": {
-    "pumpMaxRunS": 900, "pumpMaxDuty": 30, "waterLowCm": 16,
-    "pumpDryGuard": "both", "pumpDryGraceMs": 1200, "pumpDryGraceMinMs": 300, "pumpDryGraceMaxMs": 5000
+    "pumpMaxRunS": 900, "pumpMaxDuty": 100, "waterLowCm": 16,
+    "pumpDryGuard": "both", "pumpDryGraceMs": 1200, "pumpDryGraceMinMs": 300, "pumpDryGraceMaxMs": 5000,
+    "pumpBrownoutV": 10.8, "pumpBrownoutMs": 300, "pumpBrownoutPi": true
   }
 }

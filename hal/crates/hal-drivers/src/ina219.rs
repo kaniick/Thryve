@@ -25,8 +25,8 @@ pub const SADC_SHIFT: u16 = 3;
 /// Shunt and bus, continuous.
 pub const MODE_CONTINUOUS: u16 = 0b111;
 
-/// 32 V range, ±320 mV shunt (PGA /8), continuous shunt + bus. The pump is
-/// PWM-driven at 50 Hz (20 ms period), so a single shunt sample lands at a random
+/// 32 V range, ±320 mV shunt (PGA /8), continuous shunt + bus. Below full duty the
+/// pump is PWM-driven at 50 Hz (20 ms period), so a single shunt sample lands at a random
 /// point in the cycle: full pulse current or none. Averaging 128 samples (68.10 ms)
 /// spans ~3.4 periods, so a read is within about ±15 % of the mean. Bus voltage
 /// averages 16 samples (8.51 ms): one conversion cycle is 76.6 ms, under the

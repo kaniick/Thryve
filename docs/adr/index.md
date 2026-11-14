@@ -10,7 +10,7 @@ Format follows [sleepypod/core](https://sleepypod.github.io/) (`# ADR NNNN: Titl
 - [0006 Rust for the hardware daemon](0006-rust-for-the-hal.md)
 - [0007 HAL contract v1](0007-hal-contract.md)
 - 0008 Target controller per topology — *after Phase 1*
-- [0009 Pump safety guard and latched faults](0009-pump-safety-guard.md)
+- [0009 Pump safety guard and latched faults](0009-pump-safety-guard.md) — amended 2026-11-14 (full duty by default, brown-out and current guards, guard settings in hal.toml only)
 - [0010 Drizzle ORM + SQLite behind a Store interface](0010-drizzle-sqlite-store.md)
 - [0011 MCP tool design and MHS alignment](0011-mcp-and-mhs.md)
 - [0012 Deployment and trust model](0012-deployment-and-trust.md)
