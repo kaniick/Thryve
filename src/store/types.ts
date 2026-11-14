@@ -50,6 +50,16 @@ export interface DeviceSettings {
   mirrorAccessKeyId: string | null
   mirrorSecretAccessKey: string | null
   autopilotEnabled: boolean
+  /**
+   * Pump power, 1–100 % duty: what a run that doesn't name its own speed drives the pump at, and the
+   * most any run from core may. 30 by default, seedypod's level; the stock Gardyn firmware runs the
+   * pump at 100. hald's `limits.pump_max_duty` still caps it (ADR-0009).
+   */
+  pumpPower: number
+  /** Ramp each pump start up over `pumpSoftStartMs`; off switches it straight on, as stock does. */
+  pumpSoftStart: boolean
+  /** The soft start's length, 100–10000 ms. */
+  pumpSoftStartMs: number
   /** HomeKit bridge (ADR 0023); off until turned on in Settings. Changed only through `homekit.setEnabled`. */
   homekitEnabled: boolean
   /** False until the owner picks Welcome → Set up a new garden, or restores a backup. */
@@ -523,6 +533,9 @@ export const DEFAULT_SETTINGS: Omit<DeviceSettings, 'updatedAt'> = {
   mirrorAccessKeyId: null,
   mirrorSecretAccessKey: null,
   autopilotEnabled: true,
+  pumpPower: 30,
+  pumpSoftStart: true,
+  pumpSoftStartMs: 1500,
   homekitEnabled: false,
   setupComplete: false,
 }

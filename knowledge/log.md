@@ -1,5 +1,9 @@
 # Knowledge update log
 
+## 2026-11-14
+
+- **Update**: [Pump safety limits](operations/pump-safety-limits.md) and the [Gardyn hardware map](hardware/gardyn-hardware-map.md): the pump still starts at 30 %, but its cap is 100 % so an owner can choose the stock firmware's level (plain on), with a 1.5 s soft start that can be turned off; 30 % didn't lift water to the top of a Gardyn 3.0's tower.
+
 ## 2026-11-11
 
 - **Creation**: [Germination](plants/germination.md), Gardyn's guidance for sprouting yCubes in the tower, behind the grow protocol's germination and seedling checks (ADR 0030). Gardyn says nothing about domes in the tower, so there's no dome check.

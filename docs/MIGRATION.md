@@ -98,41 +98,59 @@ Once Thryve is installed, the web UI updater and `sudo thryve-update --now` pull
 
 ## Weak pump / water not reaching the top
 
-This is not caused by the rebrand. seedypod v1.5.0 and current Thryve use the same pump drive: **software PWM at 50 Hz on GPIO24**, with **duty capped at 30%** (`limits.pump_max_duty`). The cap is intentional — the Gardyn board can brown out above about 30%. Scheduled runs that omit a speed use that cap. The INA219 dry-current guard is **off** until you set `pump_dry_current_a` in `hal.toml`, so it is not cutting the pump short by default.
+seedypod capped the pump at **30 % duty** (`limits.pump_max_duty`) on a 50 Hz software PWM, and every run used that. Thryve keeps **30 % as the default**, and lets you raise it yourself in **Settings → Pump** when water doesn't reach the top.
 
-There is no software bug that secretly runs the pump slower than 30%. If water is not reaching the top of the tower, check hardware first, with water in the tank:
+What the research says to try: the stock Gardyn firmware switches GPIO24 **plain on (100 %)** for each run, about 10.6 W while it lifts water (`docs/hardware/pin-map.md`, read from a stock card). garden-of-eden also defaults to speed 100 (`DEFAULT_PUMP_SPEED`, and its cron examples run `--speed 100`); its README's 30 % cap is an unmeasured "likely too much current" note. The Gardyn 3.0 pump is a 12 V brushless DC pump (TD40A-1248A, 950 mA, 430 cm max head) with its own driver, and chopping its supply at 30 % gives it well under a third of its power. A centrifugal pump's head also falls off faster than its speed. So if the stock SD card lifts water to the top on your unit, expect to need **70–100 %**. Start at 100 % (what stock runs) with the soft start on, and come down only if the Pi misbehaves.
 
-- clogged tubing, outlet, or the intake strainer
-- intake not submerged, or air in the line
-- impeller debris or a failing pump
-- 12 V supply sag while the pump and lights are on (measure at the board during a run)
+What changed:
 
-To see what the unit is doing (SSH, on the unit, tank must have water):
+- **Duty cycle in Settings → Pump**: a slider from 10 % up to hald's cap, saved when you let go. Every run core sends (schedules, the Run buttons, Autopilot, HomeKit, the Home Assistant bridge, REST, MCP) runs at it, and none goes above it. hald's own paths (the button's double press, and Home Assistant talking to hald directly) use `limits.pump_default_duty`, also 30 %.
+- **hald's cap is now 100 %** (`limits.pump_max_duty`), so you *can* go higher than 30 % when you choose. Set it lower in `hal.toml` for a hard ceiling. If your `hal.toml` has an uncommented `pump_max_duty = 30`, the slider stops at 30 and says so: remove that line or raise it, then `sudo systemctl restart hald`.
+- **Soft start**, a toggle in Settings → Pump (on by default) with a ramp time from 0.5 to 10 s (default 1.5 s). Each start ramps from 15 % of its duty to all of it, so the pump's inrush doesn't brown the Pi out. Off switches straight on, as stock does. A stop, the end of a run or a safety trip always cuts the pump at once, mid-ramp or not. hald's own default for its paths is `limits.pump_soft_start_ms` (1500, where 0 means none).
+- **At 100 % the pin is held high**, as stock does, rather than pulsed by the software-PWM thread. Below 100 % it's still 50 Hz software PWM: GPIO24 has no hardware PWM channel on a Pi (the light has GPIO18), and a faster software PWM would cost a single-core Pi Zero a lot of CPU.
+- **Run for 30 s** button. It goes through the same guard as every run: it's refused on a low tank or a latched fault, it's bounded, and it never runs dry.
+- The same settings are at `GET`/`POST /api/pump/power`, `PATCH /api/settings` (`pumpPower`, `pumpSoftStart`, `pumpSoftStartMs`) and the MCP tools `pump_power` and `set_pump_power`.
+- Safety is unchanged. Every run is bounded by `pump_max_run_s`. The dry-run interlock and over-temp cutoff still refuse and trip. Faults still latch. The INA219 current guard, if you set `pump_dry_current_a`, now waits out the ramp as well as its grace.
 
-```sh
-# live HAL picture: duty, voltage, current
-curl -fsS http://127.0.0.1:3001/system
-curl -fsS http://127.0.0.1:3001/state
+### Testing on the unit after migrating
 
-# cap in config (path is /etc/seedypod/hal.toml before migration)
-grep -n pump_max_duty /etc/thryve/hal.toml || grep -n pump_max_duty /etc/seedypod/hal.toml
-```
-
-A 15-second run at the current cap, via the REST API (core on :3000; add `-H "x-api-key: …"` if you set a key):
+With water in the tank. SSH in and run these on the unit; add `-H "X-API-Key: …"` if you set an API key and run them from another machine.
 
 ```sh
+# what hald enforces: expect "pump_max_duty": 100.0, "pump_default_duty": 30.0, "pump_soft_start_ms": 1500
+hald --config /etc/thryve/hal.toml --check 2>/dev/null | grep -A10 '"limits"'
+
+# core's duty, hald's cap, and the soft start
+curl -fsS http://127.0.0.1:3000/api/pump/power
+
+# try the stock level, with the soft start on
+curl -fsS -X POST http://127.0.0.1:3000/api/pump/power \
+  -H 'content-type: application/json' -d '{"power":100,"softStart":true,"softStartMs":1500}'
+
+# a 30-second run at that duty; watch the water reach the top
 curl -fsS -X POST http://127.0.0.1:3000/api/pump/run-once \
-  -H 'content-type: application/json' \
-  -d '{"durationS":15}'
+  -H 'content-type: application/json' -d '{"durationS":30}'
+curl -fsS -X POST http://127.0.0.1:3000/api/pump/stop -H 'content-type: application/json' -d '{}'
 ```
 
-Raising the cap is possible but can brown out the board. Do it only with water in the tank, watching `pump_v` / `pump_a` and that the Pi stays up:
+Or use Settings → Pump: drag the slider, then **Run for 30 s**.
+
+While the pump runs, `curl -fsS http://127.0.0.1:3001/state` shows its level and, with the INA219, `pump_v` and `pump_a`.
+
+### Tuning
+
+- **Water short of the top:** raise the duty in steps of 10 until it reaches the top, then keep the lowest value that does. If it's still short at 100 %, the cause is hardware: check the intake strainer, the tubing and outlet for clogs, that the intake is under water, and the 12 V supply under load.
+- **If the Pi reboots (or hald restarts) when the pump starts, lower the power or lengthen the ramp.** Lengthen the ramp first, since that keeps the duty once the pump is up to speed. Turn the soft start on if it's off, try 3 s, then 5 s:
 
 ```sh
-# example: 35%. Keep this conservative.
-sudo sed -i 's/^#\? *pump_max_duty.*/pump_max_duty = 35.0/' /etc/thryve/hal.toml
-sudo systemctl restart hald
-# then another short run-once, and watch voltage
+curl -fsS -X POST http://127.0.0.1:3000/api/pump/power \
+  -H 'content-type: application/json' -d '{"softStart":true,"softStartMs":3000}'
+# still rebooting: lower the duty
+curl -fsS -X POST http://127.0.0.1:3000/api/pump/power \
+  -H 'content-type: application/json' -d '{"power":80}'
 ```
 
-If a short run at 30% already lifts water to the top, the schedule length or frequency is the issue, not duty. If 30% does not, and 35% still does not, treat it as hardware.
+- To change hald's own defaults (the button, Home Assistant direct) or its hard ceiling, edit `[limits]` in `/etc/thryve/hal.toml` (`pump_default_duty`, `pump_soft_start_ms`, `pump_max_duty`) and run `sudo systemctl restart hald`.
+- After a reboot, `journalctl -u hald -b -1` shows whether the last boot ended while the pump was starting.
+
+Never run the pump dry: keep water in the tank for every test.

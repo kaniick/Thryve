@@ -321,9 +321,19 @@ export function createMcpServer(ctx: Context): McpServer {
   }, async i => text(await caller.light.set(i)))
 
   server.registerTool('run_pump', {
-    description: 'Run the water pump for duration_s seconds at level (% of the HAL-enforced max duty, default max). The HAL clamps duration to its max-run limit and refuses when the tank is low or a fault is latched; a refusal returns an error.',
+    description: 'Run the water pump for duration_s seconds at level (% duty; default the pump power from pump_power, and never above it or the HAL-enforced max duty). The HAL ramps each start up over its soft start, clamps duration to its max-run limit and refuses when the tank is low or a fault is latched; a refusal returns an error.',
     inputSchema: { duration_s: z.number().int().positive().max(3600), level: z.number().min(1).max(100).optional() },
   }, async i => text(await caller.pump.runOnce({ durationS: i.duration_s, level: i.level })))
+
+  server.registerTool('pump_power', {
+    description: 'The pump power: the % duty runs without their own speed drive (schedules, the run button, Home Assistant and HomeKit through core), and the most any run from core may use; halMaxDuty is hald\'s cap over it and effective what a run drives now; softStart and softStartMs are the ramp each start takes. 30 is the default; 100 is full power, how the stock Gardyn firmware runs the pump.',
+    inputSchema: {},
+  }, async () => text(await caller.pump.power()))
+
+  server.registerTool('set_pump_power', {
+    description: 'Set the pump power (1–100 % duty, capped by halMaxDuty) and the soft start (soft_start on/off, soft_start_ms 100–10000); leave out what stays. Raise the power if the water doesn\'t reach the top of the tower (the stock Gardyn firmware runs 100); if the unit reboots when the pump starts, turn the soft start on or lengthen it, or lower the power. Confirm with the person first.',
+    inputSchema: { power: z.number().int().min(1).max(100).optional(), soft_start: z.boolean().optional(), soft_start_ms: z.number().int().min(100).max(10_000).optional() },
+  }, async i => text(await caller.pump.setPower({ power: i.power, softStart: i.soft_start, softStartMs: i.soft_start_ms })))
 
   server.registerTool('stop_pump', { description: 'Stop the pump immediately.', inputSchema: {} }, async () => text(await caller.pump.stop()))
 

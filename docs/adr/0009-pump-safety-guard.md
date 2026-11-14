@@ -15,7 +15,9 @@ sources: [{"resource": "https://github.com/sleepypod/core", "title": "sleepypod/
 ## Context
 
 The pump is the one actuator that can damage the hardware: running dry burns
-the pump, and Gardyn's board browns out above ~30 % duty. garden-of-eden's
+the pump. garden-of-eden's README says Gardyn's board browns out above ~30 %
+duty, but the stock firmware switches the pump plain on, and 30 % on a 50 Hz
+software PWM doesn't lift water to the top of the tower. garden-of-eden's
 issue tracker documents every way its scattered checks were bypassed (#108,
 #109, #111, #114). [sleepypod](https://sleepypod.github.io/developers/hardware/) ADR-0022 established the model we want: detect,
 fail safe by de-energising, stay off until a human acknowledges, auto-recovery
@@ -25,7 +27,15 @@ only as an explicit opt-in.
 
 `hal_core::safety::PumpGuard` is the only path to the pump driver.
 
-1. **Duty clamp** to `limits.pump_max_duty` (default 30 %).
+1. **Duty clamp** to `limits.pump_max_duty` (default 100 % since 2026-11-14, so
+   an owner may choose the stock firmware's level; a unit's pump reached the
+   top of the tower on stock but not at 30 %). A start that names no level runs
+   at `limits.pump_default_duty` (30 %, unchanged), and core's duty cycle
+   (Settings → Pump) defaults to 30 % too. Each start ramps up over its soft
+   start (the command's `softStartMs`, else `limits.pump_soft_start_ms`, default
+   1.5 s; 0 for none) so its inrush can't brown the Pi out. The ramp is the
+   guard's (`PumpGuard::output`), and a stop or a trip cuts the pump at once,
+   mid-ramp or not.
 2. **Bounded runs** — every start has a deadline ≤ `pump_max_run_s` (default
    900 s). There is no unbounded "on".
 3. **Dry-run interlock** — refuse to start when the median of N ultrasonic

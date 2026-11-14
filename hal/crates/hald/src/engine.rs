@@ -6,7 +6,10 @@
 //!
 //! Invariant (AGENTS.md, ADR-0009): the pump driver's `set_level` is called
 //! only from [`Engine::apply_pump`], which only acts on a `PumpGuard`
-//! decision. Dosing pumps likewise only through their `DoseGuard`.
+//! decision. Dosing pumps likewise only through their `DoseGuard`. A start's
+//! soft-start ramp is the guard's too ([`PumpGuard::output`]): the engine only
+//! writes what the guard says the pump should be driving now, and a stop or a
+//! trip writes 0 at once, mid-ramp or not.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, RwLock};
@@ -127,6 +130,9 @@ pub struct EngineConfig {
     pub ha_prefix: Option<String>,
 }
 
+/// How often a soft start steps its duty: 20 a second, a few 50 Hz PWM periods each.
+pub const PUMP_RAMP_STEP: Duration = Duration::from_millis(50);
+
 const HOURS_PERSIST_EVERY: Duration = Duration::from_secs(900);
 
 fn key<T: Serialize>(v: &T) -> String {
@@ -145,6 +151,8 @@ pub struct Engine {
     pump: PumpGuard,
     pump_since: String,
     pump_was_on: bool,
+    /// The level last written to the pump driver; a ramp step only writes a change.
+    pump_written: f64,
     /// Until when a current-guard trip holds before it may clear like a dry-run.
     dry_hold_until: Option<Instant>,
     doses: BTreeMap<ActuatorId, DoseGuard>,
@@ -291,6 +299,7 @@ impl Engine {
             pump: PumpGuard::new(cfg.pump.clone()),
             pump_since: String::new(),
             pump_was_on: false,
+            pump_written: 0.0,
             dry_hold_until: None,
             doses,
             dose_since: BTreeMap::new(),
@@ -447,6 +456,7 @@ impl Engine {
                                 on: Some(target > 0.0),
                                 level: Some(target),
                                 duration_s: None,
+                                soft_start_ms: None,
                             },
                             now,
                         ));
@@ -459,6 +469,7 @@ impl Engine {
                                 on: Some(want_on),
                                 level: None,
                                 duration_s: Some(self.cfg.button_pump_run_s),
+                                soft_start_ms: None,
                             },
                             now,
                         ));
@@ -554,7 +565,8 @@ impl Engine {
                 match self.pump.request(cmd, self.start_env(), now.instant) {
                     Ok(Decision::Run { level, deadline_in }) => {
                         info!(level, secs = deadline_in.as_secs(), "pump run accepted");
-                        self.apply_pump(level, now);
+                        // Mid-ramp, a start drives the ramp's level, not the target, yet.
+                        self.apply_pump(self.pump.output(now.instant), now);
                         self.persisted.last_pump_run = Some(now.ts());
                     }
                     Ok(Decision::Stop) => self.apply_pump(0.0, now),
@@ -631,6 +643,7 @@ impl Engine {
             }
             out.extend(self.publish_actuator(ActuatorId::Pump, now));
         }
+        self.step_pump_ramp(now);
         for id in self.doses.keys().copied().collect::<Vec<_>>() {
             let stop = self.doses.get_mut(&id).and_then(|g| g.tick(now.epoch_s));
             if let Some(Decision::Stop) = stop {
@@ -731,6 +744,25 @@ impl Engine {
         self.env.over_temp_signal = self.read_over_temp_signal();
     }
 
+    /// When the soft-start ramp wants its next step, while a start is ramping up.
+    pub fn pump_ramp_due(&self, now: Now) -> Option<Instant> {
+        self.pump
+            .ramping(now.instant)
+            .then(|| now.instant + PUMP_RAMP_STEP)
+    }
+
+    /// Writes the ramp's level for `now` to a running pump. Never starts one: a
+    /// pump the guard has stopped, or never started, outputs 0 and is left alone.
+    pub fn step_pump_ramp(&mut self, now: Now) {
+        if !self.pump.is_running(now.instant) {
+            return;
+        }
+        let level = self.pump.output(now.instant);
+        if level > 0.0 && level != self.pump_written {
+            self.apply_pump(level, now);
+        }
+    }
+
     /// Whether the pump is commanded on (for `--pump-trace`).
     pub fn pump_on(&self, now: Now) -> bool {
         self.pump.is_running(now.instant)
@@ -750,7 +782,7 @@ impl Engine {
             read(SensorId::PumpW),
         );
         crate::pump_trace::Sample {
-            duty: self.pump.level(),
+            duty: self.pump_written,
             v,
             a,
             w,
@@ -785,6 +817,7 @@ impl Engine {
                 error!(%e, "pump driver write failed");
             }
         }
+        self.pump_written = level;
         let on = level > 0.0;
         if on != self.pump_was_on {
             self.pump_since = now.ts();
@@ -1195,7 +1228,12 @@ mod tests {
         EngineConfig {
             telemetry_interval: Duration::from_secs(10),
             light_fade: Duration::from_millis(800),
-            pump: PumpLimits::default(),
+            // A 30 % cap, straight on: the clamp is visible, and the ramp has its own tests.
+            pump: PumpLimits {
+                max_duty: 30.0,
+                soft_start_ms: 0,
+                ..PumpLimits::default()
+            },
             dosing: DoseLimits {
                 enabled: true,
                 ..DoseLimits::default()
@@ -1266,6 +1304,7 @@ mod tests {
             on: Some(true),
             level,
             duration_s,
+            soft_start_ms: None,
         }
     }
     fn off() -> ActuatorCommand {
@@ -1390,6 +1429,125 @@ mod tests {
         let st = payload(&out, "thryve/u1/actuator/pump/state");
         assert_eq!(st["on"], false);
         assert!(st["fault"].is_null());
+        assert_eq!(r.world.lock().unwrap().pump_level, 0.0);
+        let _ = std::fs::remove_dir_all(&r.dir);
+    }
+
+    /// A rig whose pump runs to full power with a 1 s soft start.
+    fn ramp_rig(tag: &str) -> Rig {
+        let mut r = rig(vec![ActuatorId::Pump], false, tag);
+        r.engine.cfg.pump = PumpLimits {
+            soft_start_ms: 1000,
+            ..PumpLimits::default()
+        };
+        r.engine.pump = PumpGuard::new(r.engine.cfg.pump.clone());
+        r.engine.boot(r.now);
+        r
+    }
+
+    #[test]
+    fn a_start_ramps_the_driver_up_to_its_level_while_reporting_its_target() {
+        let mut r = ramp_rig("ramp");
+        let out = r.engine.handle(
+            Inbound::ActuatorSet(ActuatorId::Pump, on(Some(100.0), Some(60))),
+            r.now,
+        );
+        let st = payload(&out, "thryve/u1/actuator/pump/state");
+        assert_eq!(st["level"], 100.0, "full power when asked for: the cap is 100");
+        let pump = |r: &Rig| r.world.lock().unwrap().pump_level;
+        let first = pump(&r);
+        assert!(first > 0.0 && first < 30.0, "starts gently, at {first}");
+        assert!(r.engine.pump_ramp_due(r.now).is_some());
+        let mut last = first;
+        for _ in 0..19 {
+            r.now.advance(PUMP_RAMP_STEP);
+            r.engine.step_pump_ramp(r.now);
+            assert!(pump(&r) > last, "climbs every step");
+            last = pump(&r);
+        }
+        r.now.advance(PUMP_RAMP_STEP);
+        r.engine.step_pump_ramp(r.now);
+        assert_eq!(pump(&r), 100.0);
+        assert_eq!(
+            r.engine.pump_ramp_due(r.now),
+            None,
+            "no more wakes once it's there"
+        );
+        assert_eq!(r.engine.pump_sample().duty, 100.0);
+        let _ = std::fs::remove_dir_all(&r.dir);
+    }
+
+    #[test]
+    fn a_start_without_a_level_keeps_30_and_one_may_turn_its_ramp_off() {
+        let mut r = ramp_rig("ramp-default");
+        let out = r
+            .engine
+            .handle(Inbound::ActuatorSet(ActuatorId::Pump, on(None, Some(60))), r.now);
+        assert_eq!(payload(&out, "thryve/u1/actuator/pump/state")["level"], 30.0);
+        let off = ActuatorCommand {
+            on: Some(false),
+            ..ActuatorCommand::default()
+        };
+        r.engine
+            .handle(Inbound::ActuatorSet(ActuatorId::Pump, off), r.now);
+        let straight = ActuatorCommand {
+            soft_start_ms: Some(0),
+            ..on(Some(80.0), Some(60))
+        };
+        r.engine
+            .handle(Inbound::ActuatorSet(ActuatorId::Pump, straight), r.now);
+        assert_eq!(r.world.lock().unwrap().pump_level, 80.0, "no ramp: straight on");
+        assert_eq!(r.engine.pump_ramp_due(r.now), None);
+        let _ = std::fs::remove_dir_all(&r.dir);
+    }
+
+    #[test]
+    fn a_stop_mid_ramp_lands_at_once_and_the_ramp_never_restarts_it() {
+        let mut r = ramp_rig("ramp-stop");
+        r.engine
+            .handle(Inbound::ActuatorSet(ActuatorId::Pump, on(None, Some(60))), r.now);
+        r.now.advance(Duration::from_millis(300));
+        r.engine.step_pump_ramp(r.now);
+        assert!(r.world.lock().unwrap().pump_level > 0.0);
+        let off = ActuatorCommand {
+            on: Some(false),
+            level: None,
+            duration_s: None,
+            soft_start_ms: None,
+        };
+        r.engine
+            .handle(Inbound::ActuatorSet(ActuatorId::Pump, off), r.now);
+        assert_eq!(r.world.lock().unwrap().pump_level, 0.0);
+        for _ in 0..30 {
+            r.now.advance(PUMP_RAMP_STEP);
+            r.engine.step_pump_ramp(r.now);
+            assert_eq!(r.world.lock().unwrap().pump_level, 0.0);
+        }
+        assert_eq!(r.engine.pump_ramp_due(r.now), None);
+        let _ = std::fs::remove_dir_all(&r.dir);
+    }
+
+    #[test]
+    fn a_dry_tank_mid_ramp_still_refuses_and_trips() {
+        let mut r = ramp_rig("ramp-dry");
+        r.world.lock().unwrap().water_distance_cm = 150.0;
+        r.engine
+            .handle(Inbound::ActuatorSet(ActuatorId::Pump, on(None, Some(60))), r.now);
+        assert_eq!(r.world.lock().unwrap().pump_level, 0.0, "refused: never ramps");
+        r.engine.step_pump_ramp(r.now);
+        assert_eq!(r.world.lock().unwrap().pump_level, 0.0);
+        r.world.lock().unwrap().water_distance_cm = 8.0;
+        r.engine
+            .handle(Inbound::ActuatorSet(ActuatorId::Pump, on(None, Some(60))), r.now);
+        assert!(r.world.lock().unwrap().pump_level > 0.0);
+        r.world.lock().unwrap().water_distance_cm = 150.0;
+        r.now.advance(Duration::from_millis(500));
+        r.engine.tick(r.now);
+        r.now.advance(hal_core::safety::DRY_CONFIRM);
+        r.engine.tick(r.now);
+        assert_eq!(r.world.lock().unwrap().pump_level, 0.0, "the trip lands mid-ramp");
+        r.now.advance(PUMP_RAMP_STEP);
+        r.engine.step_pump_ramp(r.now);
         assert_eq!(r.world.lock().unwrap().pump_level, 0.0);
         let _ = std::fs::remove_dir_all(&r.dir);
     }

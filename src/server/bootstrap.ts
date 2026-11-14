@@ -14,6 +14,7 @@ import type { MirroredSink } from '../camera/mirrorSink'
 import { LightArbiter } from '../control/light'
 import type { DatabaseInspector } from '../db/inspect'
 import { GrowEngine } from '../grow/grow'
+import { driveOf, withPumpPower } from '../hardware/pumpPower'
 import type { HalClient } from '../hardware/types'
 import type { HomeKitControl } from '../homekit/types'
 import { createEventBus, type EventBus } from '../lib/eventBus'
@@ -89,7 +90,9 @@ export interface Core {
   stop(): Promise<void>
 }
 
-export function createCore(o: CoreOptions): Core {
+export function createCore(opts: CoreOptions): Core {
+  // Every pump command from core runs at the owner's pump power (Settings › Pump).
+  const o: CoreOptions = { ...opts, hal: withPumpPower(opts.hal, () => driveOf(opts.store.settings.get())) }
   const events = o.events ?? createEventBus()
   // Every HAL event becomes a CoreEvent: the recorder, SSE/WS clients and the UI all hang off this bus.
   const wifi = o.wifi ?? new SimWifi()

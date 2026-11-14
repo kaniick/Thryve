@@ -14,7 +14,7 @@ The controller is a Raspberry Pi Zero W (owners' reports; iot-root recommends a 
 | Function | Interface | Pin / address | Note |
 |---|---|---|---|
 | Grow light | PWM | GPIO18 | 8 kHz, hardware PWM |
-| Pump | PWM | GPIO24 | 50 Hz, software PWM, duty capped at 30 % |
+| Pump | PWM | GPIO24 | Stock: plain on/off (100 %). Thryve: 30 % by default, adjustable to 100 % in Settings → Pump; 50 Hz software PWM below 100 %, pin held high at 100 %; soft start on by default (1.5 s) |
 | Water level | DYP-A01 ultrasonic | trig GPIO26 / echo GPIO19 | median of 5 |
 | Button | input | GPIO13 | |
 | Over-temp alert | input | GPIO25 | |

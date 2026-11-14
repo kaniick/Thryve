@@ -4,7 +4,7 @@
  * guides, ranked with BM25.
  */
 import type { LucideIcon } from 'lucide-react'
-import { Archive, BookOpen, CloudUpload, Code, Database, HardDrive, House, Info, KeyRound, Monitor, Radio, RefreshCw, Ruler, Settings, Sprout, Timer, Camera, Wand2, Wifi } from 'lucide-react'
+import { Archive, BookOpen, CloudUpload, Code, Database, HardDrive, House, Info, KeyRound, Monitor, Radio, RefreshCw, Ruler, Settings, Sprout, Timer, Camera, Wand2, Waves, Wifi } from 'lucide-react'
 import { navItems } from '@/src/components/AppShell/navItems'
 import { createBm25Index, tokenize } from '@/src/lib/bm25'
 import { DOCS_BASE, type DocsIndex } from './docsIndex'
@@ -53,6 +53,7 @@ const PAGES: Record<string, { description: string, keywords: string }> = {
 const SETTINGS: ReadonlyArray<Omit<SearchEntry, 'crumbs' | 'href'> & { anchor: string }> = [
   { id: 'unit', anchor: 'unit', title: 'Unit', description: 'Name, timezone and units (°C, L, cm or °F, gal, in)', keywords: 'name timezone time zone celsius fahrenheit degrees units metric imperial us gallons litres liters inches centimetres', icon: Settings },
   { id: 'tank', anchor: 'tank', title: 'Tank calibration', description: 'Distance to the water when full and when empty, and the capacity', keywords: 'tank calibration full empty capacity litres liters distance ultrasonic water level', icon: Ruler },
+  { id: 'pump', anchor: 'pump', title: 'Pump duty cycle', description: 'How hard the pump runs, its soft start, and a test run', keywords: 'pump power speed duty cycle strength water top tower reboot brown out soft start ramp inrush test run', icon: Waves, boost: 0.7 },
   { id: 'reminders', anchor: 'reminders', title: 'Grow reminders', description: 'Days to thinning, root check, harvest and nutrients', keywords: 'reminders thinning root check harvest nutrients feed days', icon: Timer },
   { id: 'cameras', anchor: 'cameras', title: 'Capture interval', description: 'How often the cameras take a still, and analysis masks', keywords: 'camera capture interval timelapse masks artifacts photos', icon: Camera },
   { id: 'storage', anchor: 'storage', title: 'Storage', description: 'How much the unit writes to its SD card each day', keywords: 'sd card flash writes wear storage disk endurance', icon: HardDrive },

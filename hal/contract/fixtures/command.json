@@ -1,1 +1,1 @@
-{ "on": true, "level": 100, "durationS": 300 }
+{ "on": true, "level": 100, "durationS": 300, "softStartMs": 1500 }

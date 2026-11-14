@@ -223,10 +223,10 @@ async fn main() -> anyhow::Result<()> {
                 "sensors": sensors,
                 "actuators": actuators,
                 "cameras": cfg.camera.iter().map(|c| c.name.clone()).collect::<Vec<_>>(),
-                "limits": { "pump_max_run_s": cfg.limits.pump_max_run_s, "pump_max_duty": cfg.limits.pump_max_duty,
+                "limits": { "pump_max_run_s": cfg.limits.pump_max_run_s, "pump_max_duty": cfg.limits.pump_max_duty, "pump_default_duty": cfg.limits.pump_default_duty,
                             "water_low_cm": cfg.limits.water_low_cm, "over_temp_c": cfg.limits.over_temp_c,
                             "pump_dry_current_a": cfg.limits.pump_dry_current_a, "pump_dry_after_s": cfg.limits.pump_dry_after_s,
-                            "pump_dry_grace_s": cfg.limits.pump_dry_grace_s },
+                            "pump_dry_grace_s": cfg.limits.pump_dry_grace_s, "pump_soft_start_ms": cfg.limits.pump_soft_start_ms },
                 "dosing_enabled": cfg.dosing.enabled,
             }))?
         );
@@ -470,21 +470,35 @@ fn run_engine(mut engine: Engine, mut cfg: LoopConfig, rx: Receiver<Inbound>, tx
         let deadline = Instant::now() + real_tick;
         loop {
             // A pump trace wakes the loop between ticks for its reads.
+            // So does a pump start's soft-start ramp, for its steps.
             let wake = cfg
                 .trace
                 .as_ref()
                 .and_then(pump_trace::PumpTrace::due)
-                .map_or(deadline, |d| d.min(deadline));
+                .into_iter()
+                .chain(engine.pump_ramp_due(now))
+                .fold(deadline, Instant::min);
             match rx.recv_timeout(wake.saturating_duration_since(Instant::now())) {
                 Ok(Inbound::Shutdown) | Err(RecvTimeoutError::Disconnected) => {
                     send(&tx, engine.handle(Inbound::Shutdown, now));
                     cfg.stop.store(true, Ordering::Relaxed);
                     return;
                 }
-                Ok(msg) => send(&tx, engine.handle(msg, now)),
+                Ok(msg) => {
+                    // On the unit, a command is judged at the time it lands, so a start's
+                    // ramp and deadline begin then, not at the last tick.
+                    if !cfg.sim {
+                        now = Now::real();
+                    }
+                    send(&tx, engine.handle(msg, now));
+                }
                 Err(RecvTimeoutError::Timeout) if Instant::now() < deadline => {}
                 Err(RecvTimeoutError::Timeout) => break,
             }
+            if !cfg.sim {
+                now = Now::real();
+            }
+            engine.step_pump_ramp(now);
             trace_pump(&mut cfg.trace, &mut engine, now);
         }
         if cfg.sim {

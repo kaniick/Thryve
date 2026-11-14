@@ -30,12 +30,20 @@ afterAll(async () => {
 })
 
 describe('core HTTP surface', () => {
-  it('REST facade answers and clamps through the HAL', async () => {
-    const r = await fetch(`${base}/api/pump/run-once`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ durationS: 30, level: 100 }) })
+  it('REST facade answers and clamps through the pump power and the HAL', async () => {
+    const post = (path: string, body: unknown) => fetch(`${base}/api${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+    // 30 % by default, seedypod's level; the HAL allows up to 100.
+    expect(await fetch(`${base}/api/pump/power`).then(r => r.json())).toEqual({ power: 30, halMaxDuty: 100, effective: 30, softStart: true, softStartMs: 1500 })
+    const r = await post('/pump/run-once', { durationS: 30, level: 100 })
     expect(r.status).toBe(200)
     const s = await r.json() as { level: number, remainingS: number }
     expect(s.level).toBe(30)
     expect(s.remainingS).toBe(30)
+    expect(await post('/pump/power', { power: 90, softStart: false }).then(r => r.json())).toMatchObject({ power: 90, effective: 90, softStart: false })
+    expect((await post('/pump/run-once', { durationS: 30 }).then(r => r.json()) as { level: number }).level).toBe(90)
+    expect((await post('/pump/power', { power: 0 })).status).toBe(400)
+    await post('/pump/power', { power: 30, softStart: true })
+    await post('/pump/stop', {})
   })
 
   it('serves each camera\'s newest stored still at a fixed URL, and nothing before the first', async () => {

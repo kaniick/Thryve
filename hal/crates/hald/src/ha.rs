@@ -283,6 +283,7 @@ pub fn translate_command(unit: &str, topic: &str, payload: &str) -> Option<(Actu
                     on: Some(level > 0.0),
                     level: Some(level),
                     duration_s: None,
+                    soft_start_ms: None,
                 },
             ))
         }
@@ -301,6 +302,7 @@ pub fn translate_command(unit: &str, topic: &str, payload: &str) -> Option<(Actu
                     on: Some(level > 0.0),
                     level: Some(level),
                     duration_s: None,
+                    soft_start_ms: None,
                 },
             ))
         }

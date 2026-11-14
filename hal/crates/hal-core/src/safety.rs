@@ -4,8 +4,11 @@
 //! through [`PumpGuard::request`]. The guard is pure and clock-injected so the
 //! whole policy is unit-testable without hardware:
 //!
-//! 1. **Duty clamp** — `level` is clamped to `max_duty` (Gardyn's board browns
-//!    out above ~30 %).
+//! 1. **Duty clamp** — `level` is clamped to `max_duty` (default 100 %, so an
+//!    owner may choose full power, which is how the stock Gardyn firmware
+//!    drives the pump). A start that names no level runs at `default_duty`
+//!    (30 %, seedypod's level). A start ramps up over its soft start
+//!    ([`PumpGuard::output`]) so the motor's inrush can't brown the Pi out.
 //! 2. **Bounded runs** — every start carries a deadline ≤ `max_run_s`; there is
 //!    no unbounded "on".
 //! 3. **Dry-run interlock** — a start is refused when the water distance (median
@@ -31,6 +34,8 @@ pub use dosing::{DoseGuard, DoseLedger, DoseLimits, DoseRefusal};
 pub struct PumpLimits {
     pub max_run_s: u64,
     pub max_duty: f64,
+    /// The level of a start that names none (the button, HA without a speed), under `max_duty`.
+    pub default_duty: f64,
     pub water_low_cm: Option<f64>,
     pub over_temp_c: Option<f64>,
     /// Below this pump current (A), past the spin-up grace, the pump is pulling
@@ -39,22 +44,48 @@ pub struct PumpLimits {
     /// How long every current read must stay below `dry_current_a` to trip.
     pub dry_current_s: u64,
     /// How long after a start the current isn't judged, while the pump spins up and primes.
+    /// The soft-start ramp is added on top.
     pub dry_grace_s: u64,
+    /// Soft start: how long a start takes to ramp from [`RAMP_FROM`] of its level to
+    /// all of it, so the motor's inrush doesn't brown the board out. 0 starts at once.
+    pub soft_start_ms: u64,
 }
 
 impl Default for PumpLimits {
     fn default() -> Self {
         Self {
             max_run_s: 900,
-            max_duty: 30.0,
+            max_duty: DEFAULT_MAX_DUTY,
+            default_duty: DEFAULT_DUTY,
             water_low_cm: Some(16.0),
             over_temp_c: Some(36.0),
             dry_current_a: None,
             dry_current_s: 5,
             dry_grace_s: 3,
+            soft_start_ms: DEFAULT_SOFT_START_MS,
         }
     }
 }
+
+/// The most any run may drive by default: full power, so an owner can choose it.
+/// Gardyn's stock firmware and garden-of-eden (`DEFAULT_PUMP_SPEED = 100`, its
+/// cron examples run `--speed 100`) drive the pump fully on.
+pub const DEFAULT_MAX_DUTY: f64 = 100.0;
+
+/// What a start that names no level runs at: seedypod's 30 %, unchanged. Core's
+/// pump power (Settings › Pump) names the level for every run it sends.
+pub const DEFAULT_DUTY: f64 = 30.0;
+
+/// The default soft start, 1.5 s: well inside the dry-current grace, and long
+/// enough to spread a small DC pump's inrush over dozens of PWM periods.
+pub const DEFAULT_SOFT_START_MS: u64 = 1500;
+
+/// The longest soft start a config may ask for.
+pub const MAX_SOFT_START_MS: u64 = 10_000;
+
+/// The share of its level a ramp starts at: enough that the pump is on from the
+/// first write, little enough that the stalled motor draws a fraction of its inrush.
+pub const RAMP_FROM: f64 = 0.15;
 
 /// Why a command was refused. Serialised into `ActuatorState.fault` / error replies.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -119,6 +150,8 @@ pub struct PumpGuard {
     dry_since: Option<Instant>,
     /// When this run started, for the current guard's spin-up grace.
     started: Option<Instant>,
+    /// This run's soft start, from its command or `limits.soft_start_ms`.
+    ramp: Duration,
     /// When the pump current first read below `dry_current_a`, in this run of such reads.
     starved_since: Option<Instant>,
 }
@@ -133,6 +166,7 @@ impl PumpGuard {
             dry_since: None,
             started: None,
             starved_since: None,
+            ramp: Duration::ZERO,
         }
     }
 
@@ -146,6 +180,31 @@ impl PumpGuard {
 
     pub fn level(&self) -> f64 {
         self.level
+    }
+
+    /// The duty to drive right now: the run's level, scaled down while the soft
+    /// start ramps up. 0 when not running. Never above the clamped level.
+    pub fn output(&self, now: Instant) -> f64 {
+        if !self.is_running(now) {
+            return 0.0;
+        }
+        let ramp = self.ramp;
+        let Some(started) = self.started else {
+            return self.level;
+        };
+        let t = now.saturating_duration_since(started).as_secs_f64() / ramp.as_secs_f64();
+        if ramp.is_zero() || t >= 1.0 || !t.is_finite() {
+            return self.level;
+        }
+        self.level * (RAMP_FROM + (1.0 - RAMP_FROM) * t)
+    }
+
+    /// Whether a running pump is still on its soft-start ramp.
+    pub fn ramping(&self, now: Instant) -> bool {
+        self.is_running(now)
+            && self
+                .started
+                .is_some_and(|s| now.saturating_duration_since(s) < self.ramp)
     }
 
     pub fn is_running(&self, now: Instant) -> bool {
@@ -186,7 +245,7 @@ impl PumpGuard {
         let level = cmd.level.unwrap_or(if self.level > 0.0 {
             self.level
         } else {
-            self.limits.max_duty
+            self.limits.default_duty.min(self.limits.max_duty)
         });
         let level = level.clamp(0.0, self.limits.max_duty);
         let secs = cmd
@@ -198,6 +257,8 @@ impl PumpGuard {
         if !self.is_running(now) {
             self.started = Some(now);
             self.starved_since = None;
+            let ms = cmd.soft_start_ms.unwrap_or(self.limits.soft_start_ms);
+            self.ramp = Duration::from_millis(ms.min(MAX_SOFT_START_MS));
         }
         self.level = level;
         self.running_until = Some(now + deadline_in);
@@ -240,7 +301,8 @@ impl PumpGuard {
         let (Some(min), Some(started)) = (self.limits.dry_current_a, self.started) else {
             return None;
         };
-        if now.duration_since(started) < Duration::from_secs(self.limits.dry_grace_s) {
+        let grace = Duration::from_secs(self.limits.dry_grace_s) + self.ramp;
+        if now.duration_since(started) < grace {
             return None;
         }
         match env.pump_current_a {
@@ -332,6 +394,7 @@ mod tests {
             on: Some(true),
             level,
             duration_s,
+            soft_start_ms: None,
         }
     }
 
@@ -495,6 +558,7 @@ mod tests {
             on: Some(false),
             level: None,
             duration_s: None,
+            soft_start_ms: None,
         };
         assert_eq!(
             g.request(&off, wet(), t0 + Duration::from_secs(2)),
@@ -541,6 +605,7 @@ mod tests {
     fn current_guard() -> PumpGuard {
         PumpGuard::new(PumpLimits {
             dry_current_a: Some(1.2),
+            soft_start_ms: 0,
             ..PumpLimits::default()
         })
     }
@@ -672,6 +737,7 @@ mod tests {
             on: Some(false),
             level: None,
             duration_s: None,
+            soft_start_ms: None,
         };
         g.request(&off, wet(), s(25)).unwrap();
         g.request(&on(None, Some(60)), wet(), s(26)).unwrap();
@@ -699,6 +765,170 @@ mod tests {
         assert_eq!(g.tick(air, s(10)), None);
         assert_eq!(g.tick(air, s(14)), None);
         assert_eq!(g.tick(air, s(15)), Some(Decision::Stop));
+    }
+
+    #[test]
+    fn the_soft_start_lengthens_the_current_grace() {
+        let mut g = PumpGuard::new(PumpLimits {
+            dry_current_a: Some(1.2),
+            soft_start_ms: 2000,
+            ..PumpLimits::default()
+        });
+        let t0 = Instant::now();
+        let ms = |n| t0 + Duration::from_millis(n);
+        g.request(&on(None, None), wet(), t0).unwrap();
+        let air = Env {
+            pump_current_a: Some(0.2),
+            ..wet()
+        };
+        // 3 s grace + 2 s ramp: nothing is judged before 5 s.
+        assert_eq!(g.tick(air, ms(4_900)), None);
+        assert_eq!(g.tick(air, ms(5_000)), None);
+        assert_eq!(g.tick(air, ms(9_900)), None);
+        assert_eq!(g.tick(air, ms(10_000)), Some(Decision::Stop));
+        assert!(g.fault().is_some_and(is_dry_run));
+    }
+
+    #[test]
+    fn defaults_run_at_30_percent_may_go_to_full_power_and_ramp() {
+        let l = PumpLimits::default();
+        assert_eq!(l.max_duty, 100.0);
+        assert_eq!(l.soft_start_ms, 1500);
+        assert_eq!(l.default_duty, 30.0);
+        let mut g = PumpGuard::new(l);
+        let t0 = Instant::now();
+        // A run without a speed (the button, HA) keeps seedypod's 30 %...
+        assert!(matches!(
+            g.request(&on(None, Some(60)), wet(), t0),
+            Ok(Decision::Run { level, .. }) if level == 30.0
+        ));
+        // ...and one that asks for full power may have it.
+        assert!(matches!(
+            g.request(&on(Some(100.0), Some(60)), wet(), t0),
+            Ok(Decision::Run { level, .. }) if level == 100.0
+        ));
+    }
+
+    #[test]
+    fn a_start_ramps_up_to_its_level_and_never_past_it() {
+        let mut g = PumpGuard::new(PumpLimits {
+            soft_start_ms: 1000,
+            water_low_cm: None,
+            ..PumpLimits::default()
+        });
+        let t0 = Instant::now();
+        let ms = |n| t0 + Duration::from_millis(n);
+        assert_eq!(g.output(t0), 0.0, "off is off");
+        g.request(&on(Some(80.0), Some(60)), wet(), t0).unwrap();
+        assert!(g.ramping(t0));
+        let first = g.output(t0);
+        assert!((first - 80.0 * RAMP_FROM).abs() < 1e-9, "starts at {first}");
+        let mut last = first;
+        for n in (50..1000).step_by(50) {
+            let o = g.output(ms(n));
+            assert!(o > last && o < 80.0, "{o} at {n} ms");
+            last = o;
+        }
+        assert!(!g.ramping(ms(1000)));
+        assert_eq!(g.output(ms(1000)), 80.0);
+        assert_eq!(g.output(ms(30_000)), 80.0);
+        // A new level mid-run keeps the run's ramp, and lands on the new level.
+        g.request(&on(Some(40.0), Some(60)), wet(), ms(30_000)).unwrap();
+        assert_eq!(g.output(ms(30_000)), 40.0);
+        // A stop is immediate, mid-ramp or not; the next start ramps afresh.
+        let off = ActuatorCommand {
+            on: Some(false),
+            level: None,
+            duration_s: None,
+            soft_start_ms: None,
+        };
+        assert_eq!(g.request(&off, wet(), ms(31_000)), Ok(Decision::Stop));
+        g.request(&on(Some(80.0), Some(60)), wet(), ms(100_000)).unwrap();
+        assert!(g.ramping(ms(100_100)));
+        assert!(g.output(ms(100_100)) < 80.0);
+        assert_eq!(g.request(&off, wet(), ms(100_100)), Ok(Decision::Stop));
+        assert_eq!(g.output(ms(100_100)), 0.0);
+        assert!(!g.ramping(ms(100_100)));
+    }
+
+    #[test]
+    fn no_soft_start_drives_the_level_at_once() {
+        let mut g = PumpGuard::new(PumpLimits {
+            soft_start_ms: 0,
+            water_low_cm: None,
+            ..PumpLimits::default()
+        });
+        let t0 = Instant::now();
+        g.request(&on(None, Some(60)), wet(), t0).unwrap();
+        assert!(!g.ramping(t0));
+        assert_eq!(g.output(t0), 30.0);
+    }
+
+    #[test]
+    fn a_start_may_choose_its_own_soft_start_or_none() {
+        let mut g = PumpGuard::new(PumpLimits {
+            soft_start_ms: 1500,
+            water_low_cm: None,
+            ..PumpLimits::default()
+        });
+        let t0 = Instant::now();
+        let ms = |n| t0 + Duration::from_millis(n);
+        let cmd = |soft| ActuatorCommand {
+            on: Some(true),
+            level: Some(100.0),
+            duration_s: Some(60),
+            soft_start_ms: soft,
+        };
+        // Off for this run: full power at once.
+        g.request(&cmd(Some(0)), wet(), t0).unwrap();
+        assert!(!g.ramping(t0));
+        assert_eq!(g.output(t0), 100.0);
+        // A level change mid-run doesn't restart or change the ramp.
+        g.request(&cmd(Some(5000)), wet(), ms(10)).unwrap();
+        assert_eq!(g.output(ms(10)), 100.0);
+        let off = ActuatorCommand {
+            on: Some(false),
+            ..ActuatorCommand::default()
+        };
+        g.request(&off, wet(), ms(20)).unwrap();
+        // Longer than the HAL allows is clamped to MAX_SOFT_START_MS.
+        g.request(&cmd(Some(60_000)), wet(), ms(1000)).unwrap();
+        assert!(g.ramping(ms(1000 + MAX_SOFT_START_MS - 1)));
+        assert!(!g.ramping(ms(1000 + MAX_SOFT_START_MS)));
+        g.request(&off, wet(), ms(20_000)).unwrap();
+        // Unset: hal.toml's soft start.
+        g.request(&cmd(None), wet(), ms(30_000)).unwrap();
+        assert!(g.ramping(ms(31_499)));
+        assert!(!g.ramping(ms(31_500)));
+    }
+
+    #[test]
+    fn a_ramp_never_outlives_the_run_or_a_trip() {
+        let mut g = PumpGuard::new(PumpLimits {
+            soft_start_ms: 5000,
+            ..PumpLimits::default()
+        });
+        let t0 = Instant::now();
+        g.request(&on(None, Some(2)), wet(), t0).unwrap();
+        assert!(g.output(t0 + Duration::from_millis(1500)) > 0.0);
+        assert_eq!(
+            g.output(t0 + Duration::from_secs(2)),
+            0.0,
+            "the deadline ends it mid-ramp"
+        );
+        g.request(&on(None, Some(60)), wet(), t0 + Duration::from_secs(10))
+            .unwrap();
+        let dry = Env {
+            water_distance_cm: Some(30.0),
+            ..wet()
+        };
+        g.tick(dry, t0 + Duration::from_secs(10));
+        assert_eq!(
+            g.tick(dry, t0 + Duration::from_secs(10) + DRY_CONFIRM),
+            Some(Decision::Stop)
+        );
+        assert_eq!(g.output(t0 + Duration::from_secs(14)), 0.0);
+        assert!(!g.ramping(t0 + Duration::from_secs(14)));
     }
 
     #[test]
