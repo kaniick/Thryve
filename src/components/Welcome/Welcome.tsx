@@ -12,7 +12,7 @@ export function Welcome() {
   const start = trpc.settings.update.useMutation({ onSuccess: () => utils.settings.invalidate() })
   return (
     <div className="mx-auto flex max-w-[720px] flex-col gap-4 pt-6">
-      <h1 className="text-2xl font-medium">Welcome to seedypod</h1>
+      <h1 className="text-2xl font-medium">Welcome to thryve</h1>
       <p className="text-sm text-fg-2">This unit has nothing on it yet. Start fresh, or restore a backup from the card it replaces.</p>
       {view === 'choose' && (
         <div className="grid grid-cols-1 gap-3 min-[600px]:grid-cols-2">

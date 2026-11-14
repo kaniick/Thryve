@@ -4,16 +4,16 @@ title: "Feeding and water quality"
 description: "What to put in the tank and when, Gardyn's way or with another nutrient such as MaxiGro, the pH and EC to aim for, and how a probe and Autopilot replace guesswork."
 status: "draft"
 generated: {"by": "claude/opus-5.5", "at": "2026-11-09T11:30:00+00:00"}
-sources: [{"resource": "https://github.com/seedypod/core/blob/dev/knowledge/nutrients/gardyn-feeding-guidance.md", "title": "Knowledge: Gardyn feeding guidance"}, {"resource": "https://github.com/seedypod/core/blob/dev/knowledge/nutrients/community-nutrients.md", "title": "Knowledge: Community nutrients"}, {"resource": "/SENSORS.md", "title": "Adding a probe"}, {"resource": "/AUTOPILOT.md", "title": "Autopilot"}]
+sources: [{"resource": "https://github.com/kaniick/Thryve/blob/dev/knowledge/nutrients/gardyn-feeding-guidance.md", "title": "Knowledge: Gardyn feeding guidance"}, {"resource": "https://github.com/kaniick/Thryve/blob/dev/knowledge/nutrients/community-nutrients.md", "title": "Knowledge: Community nutrients"}, {"resource": "/SENSORS.md", "title": "Adding a probe"}, {"resource": "/AUTOPILOT.md", "title": "Autopilot"}]
 ---
 
 # Feeding and water quality
 
-seedypod doesn't add nutrients for you. It tells you what the tank actually
+thryve doesn't add nutrients for you. It tells you what the tank actually
 reads, so you feed by measurement instead of by calendar. This page gives the
 numbers to start from. The evidence behind them, with every source, is in the
-knowledge bundle: [Gardyn feeding guidance](https://github.com/seedypod/core/blob/dev/knowledge/nutrients/gardyn-feeding-guidance.md)
-and [community nutrients](https://github.com/seedypod/core/blob/dev/knowledge/nutrients/community-nutrients.md).
+knowledge bundle: [Gardyn feeding guidance](https://github.com/kaniick/Thryve/blob/dev/knowledge/nutrients/gardyn-feeding-guidance.md)
+and [community nutrients](https://github.com/kaniick/Thryve/blob/dev/knowledge/nutrients/community-nutrients.md).
 
 ## Gardyn's routine
 
@@ -55,7 +55,7 @@ Gardyn's food at its stock dose has been measured at about 1.2 mS/cm. Adjust pH
 slowly: start at 1 mL of pH Up or Down per gallon and retest after 15–30
 minutes. Overshooting is the common mistake.
 
-## With seedypod
+## With thryve
 
 1. **Fit a pH and an EC probe** ([Adding a probe](SENSORS.md)). The readings
    show under **Water quality** on the home screen and go into history.

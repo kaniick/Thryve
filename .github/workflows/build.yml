@@ -47,22 +47,22 @@ jobs:
           fi
       - name: Create deploy tarball
         run: |
-          tar czf /tmp/seedypod-core.tar.gz \
+          tar czf /tmp/thryve-core.tar.gz \
             --exclude='node_modules' --exclude='.git' --exclude='.env*' \
             --exclude='*.db' --exclude='*.db-*' --exclude='test-results' \
             --exclude='hal/target' --exclude='.claude' .
-          mv /tmp/seedypod-core.tar.gz .
+          mv /tmp/thryve-core.tar.gz .
       - name: Check the tarball has no Git LFS pointers
         # Without lfs: true on checkout, the brand PNGs ship as pointer text and the logo breaks on the unit.
         run: |
-          mkdir -p "$RUNNER_TEMP/tarball" && tar xzf seedypod-core.tar.gz -C "$RUNNER_TEMP/tarball"
+          mkdir -p "$RUNNER_TEMP/tarball" && tar xzf thryve-core.tar.gz -C "$RUNNER_TEMP/tarball"
           if grep -rlx 'version https://git-lfs.github.com/spec/v1' "$RUNNER_TEMP/tarball"; then
-            echo "::error::Git LFS pointer files in seedypod-core.tar.gz; check out with lfs: true"
+            echo "::error::Git LFS pointer files in thryve-core.tar.gz; check out with lfs: true"
             exit 1
           fi
           [ "$(file -b --mime-type "$RUNNER_TEMP/tarball/web/dist/brand/icon-64.png")" = image/png ]
       - uses: actions/upload-artifact@v6
         with:
-          name: seedypod-core
-          path: seedypod-core.tar.gz
+          name: thryve-core
+          path: thryve-core.tar.gz
           retention-days: 14

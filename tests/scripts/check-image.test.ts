@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 const script = resolve(import.meta.dirname, '../../scripts/check-image')
 // What Imager 2.0 writes, from rpi-imager's customization_generator.cpp.
 const USER_DATA = `#cloud-config
-hostname: "seedypod"
+hostname: "thryve"
 manage_etc_hosts: true
 packages:
 - avahi-daemon
@@ -65,7 +65,7 @@ esac
   chmodSync(join(bin, 'xz'), 0o755)
   writeFileSync(join(boot, 'config.txt'), 'auto_initramfs=1\n')
   writeFileSync(join(boot, 'kernel.img'), '')
-  writeFileSync(join(boot, 'seedypod-image.txt'), 'branch=dev\ncommit=83c4b1e0123456789\n')
+  writeFileSync(join(boot, 'thryve-image.txt'), 'branch=dev\ncommit=83c4b1e0123456789\n')
 })
 afterEach(() => rmSync(dir, { recursive: true, force: true }))
 
@@ -78,13 +78,13 @@ function check(...args: string[]) {
 }
 
 function download(types = [0x0C, 0x83]) {
-  const image = join(dir, 'seedypod-os.img.xz')
+  const image = join(dir, 'thryve-os.img.xz')
   const mbr = Buffer.alloc(512)
   types.forEach((t, i) => (mbr[446 + i * 16 + 4] = t))
   mbr[510] = 0x55
   mbr[511] = 0xAA
   writeFileSync(image, mbr)
-  writeFileSync(`${image}.sha256`, `${createHash('sha256').update(mbr).digest('hex')}  seedypod-os.img.xz\n`)
+  writeFileSync(`${image}.sha256`, `${createHash('sha256').update(mbr).digest('hex')}  thryve-os.img.xz\n`)
   return image
 }
 
@@ -129,7 +129,7 @@ describe('a card, before its first boot', () => {
     writeFileSync(join(boot, 'network-config'), NETWORK_CONFIG)
     const r = check('--card', boot)
     expect(r).toMatchObject({ code: 0, err: '' })
-    expect(r.out).toContain('seedypod OS, dev 83c4b1e')
+    expect(r.out).toContain('thryve OS, dev 83c4b1e')
     expect(r.out).toContain('login: alice')
     expect(r.out).toContain('Wi-Fi: Home Network')
   })
@@ -140,7 +140,7 @@ describe('a card, before its first boot', () => {
     const r = check('--card', boot)
     expect(r.code).toBe(0)
     expect(r.out).toContain('no login set')
-    expect(r.out).toContain('seedypod-setup-xxxx')
+    expect(r.out).toContain('thryve-setup-xxxx')
   })
 
   it('catches a 64-bit OS, which a Pi Zero W never boots and gives no error', () => {
@@ -152,9 +152,9 @@ describe('a card, before its first boot', () => {
     expect(r.err).toContain('arm_64bit=1')
   })
 
-  it('tells stock Raspberry Pi OS from seedypod OS', () => {
-    rmSync(join(boot, 'seedypod-image.txt'))
-    expect(check('--card', boot).out).toContain('not seedypod OS')
+  it('tells stock Raspberry Pi OS from thryve OS', () => {
+    rmSync(join(boot, 'thryve-image.txt'))
+    expect(check('--card', boot).out).toContain('not thryve OS')
   })
 
   it('says so when that isn\'t a boot partition', () => {

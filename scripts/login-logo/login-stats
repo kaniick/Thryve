@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# seedypod login stats: the live facts login-logo writes beside the logo. One
+# thryve login stats: the live facts login-logo writes beside the logo. One
 # line per fact, in display order: the label, then tab-separated segments, each
 # "state:text" with state ok, warn, bad, dim or - for none, or "bar-state:percent"
 # for a bar, drawn before the text after it. A fact with no source
@@ -10,15 +10,15 @@
 # On a Pi Zero W a fork costs ~50 ms and curl ~330 ms before it sends a byte, so
 # core is asked over bash's /dev/tcp, files are read with builtins and nothing
 # runs in a $(...). Core gets 0.6 s to answer; login-logo stops waiting at 1 s.
-#   SEEDYPOD_API          host:port of core (127.0.0.1:3000)
-#   SEEDYPOD_API_MS       how long core gets to answer (600)
-#   SEEDYPOD_STATS_ROOT   prefix for /proc, /sys and / (tests)
+#   THRYVE_API          host:port of core (127.0.0.1:3000)
+#   THRYVE_API_MS       how long core gets to answer (600)
+#   THRYVE_STATS_ROOT   prefix for /proc, /sys and / (tests)
 exec 2>/dev/null </dev/null
 # A decimal point in EPOCHREALTIME and printf's %f, whatever the locale.
 export LC_NUMERIC=C
 
-root="${SEEDYPOD_STATS_ROOT:-}"
-api="${SEEDYPOD_API:-127.0.0.1:3000}"
+root="${THRYVE_STATS_ROOT:-}"
+api="${THRYVE_API:-127.0.0.1:3000}"
 dir="${BASH_SOURCE[0]%/*}"
 deg=C
 case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in *[Uu][Tt][Ff]-8*|*[Uu][Tt][Ff]8*) deg=°C ;; esac
@@ -45,7 +45,7 @@ human() {
 summary=""
 fetch() {
   local host=${api%:*} port=${api##*:} line body="" status="" in_body="" left t
-  local wait_ms=${SEEDYPOD_API_MS:-600}
+  local wait_ms=${THRYVE_API_MS:-600}
   [[ $wait_ms =~ ^[0-9]{1,6}$ ]] || wait_ms=600
   local deadline=$((${EPOCHREALTIME/./} + wait_ms * 1000))
   exec 3<>"/dev/tcp/$host/$port" || return 1
@@ -100,7 +100,7 @@ port=:3000
 
 services=()
 if [ -d "$root/sys/fs/cgroup/system.slice" ]; then
-  if ! running seedypod-core; then services+=("bad:core down")
+  if ! running thryve-core; then services+=("bad:core down")
   elif [ -n "$summary" ]; then services+=("ok:core up")
   else services+=("warn:core not answering")
   fi
@@ -125,8 +125,8 @@ if pick updateState; then
   esac
   pick updateCheckedAgeS && ago "$v" && updates+=("dim:checked $r")
   case "$check" in
-    available) updates+=("dim:sudo seedypod-update --now") ;;
-    unchecked) updates+=("dim:sudo seedypod-update --check") ;;
+    available) updates+=("dim:sudo thryve-update --now") ;;
+    unchecked) updates+=("dim:sudo thryve-update --check") ;;
   esac
   emit update "${updates[@]}"
 fi

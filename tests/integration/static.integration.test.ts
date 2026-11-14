@@ -13,7 +13,7 @@ import { MemoryStore } from '../../src/store/memory'
 const script = resolve(import.meta.dirname, '../../scripts/precompress.mjs')
 const IMMUTABLE = 'public, max-age=31536000, immutable'
 const js = 'const garden = "tomato basil";\n'.repeat(200)
-const page = `<!doctype html><title>seedypod</title>${'<!-- padding -->'.repeat(100)}`
+const page = `<!doctype html><title>thryve</title>${'<!-- padding -->'.repeat(100)}`
 
 let dir: string
 let hal: SimHal

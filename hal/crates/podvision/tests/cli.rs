@@ -199,7 +199,7 @@ fn exits_1_naming_what_is_wrong() {
                 format!("pod-state={}", broken.display()),
             ],
             &f.ppm,
-            "not a seedypod-cnn",
+            "not a thryve-cnn",
         ),
         (
             vec![

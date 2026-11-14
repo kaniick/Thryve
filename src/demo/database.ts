@@ -57,7 +57,7 @@ export function demoDatabase(now: () => Date = () => new Date()): DatabaseInspec
     return {
       at: now().toISOString(),
       scanMs: 1800,
-      path: 'data/seedypod.db',
+      path: 'data/thryve.db',
       fileBytes: tables.reduce((n, t) => n + (t.bytes as number), 0) + 53 * 4096,
       walBytes: 1_236_000,
       journalMode: 'wal',

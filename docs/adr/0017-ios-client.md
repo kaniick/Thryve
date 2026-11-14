@@ -1,7 +1,7 @@
 ---
 type: "Decision record"
 title: "ADR 0017: iOS client — reuse sleepypod's transport, not its app"
-description: "Evaluation of forking sleepypod/ios's networking layer against seedypod's tRPC router, and what core must add first."
+description: "Evaluation of forking sleepypod/ios's networking layer against thryve's tRPC router, and what core must add first."
 status: "draft"
 generated: {"by": "claude/opus-5.5", "at": "2026-10-31T07:10:00+00:00"}
 sources: [{"resource": "https://github.com/sleepypod/ios", "title": "sleepypod/ios (Networking/, Services/PodDiscovery.swift, Services/SensorStreamService.swift)"}, {"resource": "/adr/0005-trpc.md", "title": "ADR 0005: tRPC as the primary control plane"}, {"resource": "/adr/0012-deployment-and-trust.md", "title": "ADR 0012: Deployment and trust model"}]
@@ -15,15 +15,15 @@ sources: [{"resource": "https://github.com/sleepypod/ios", "title": "sleepypod/i
 ## Context
 
 Handoff step 5 asked whether [`sleepypod/ios`](https://sleepypod.github.io/developers/ios/) (Swift/SwiftUI, AGPL-3.0, 149
-Swift files) can be forked as the seedypod app by pointing its networking
+Swift files) can be forked as the thryve app by pointing its networking
 layer at this repo's tRPC router. The relevant pieces of that app:
 
-| Piece | File | What it does | Fits seedypod? |
+| Piece | File | What it does | Fits thryve? |
 |---|---|---|---|
 | tRPC transport | `Networking/SleepypodCoreClient.swift` (the `// MARK: - tRPC Transport` section, ~150 lines) | `GET /api/trpc/<proc>?input=` and `POST` with a superjson `{"json": …, "meta": …}` envelope, batched queries (`?batch=1`), result/error decoding, transient-error retry | **Yes, as is.** Core mounts the same `@hono/trpc-server` at `/api/trpc` with the `superjson` transformer (ADR-0005), so the wire format is identical |
 | Backend protocol | `Networking/SleepypodProtocol.swift` | ~45 bed-specific calls: sides, °F set-points, priming, vitals, sleep stages | **No.** There is no overlap with `sensors`, `light`, `pump`, `schedules`, `grow`, `camera`, `vision`, `alerts` |
-| Mock backend | `Networking/MockClient.swift`, `APIBackend.swift` | Demo mode and backend picker behind the protocol | **The pattern, not the code.** A seedypod mock mirrors `SimHal` |
-| Discovery | `Services/PodDiscovery.swift` | `NWBrowser` for `_sleepypod._tcp` with TXT records, manual IP fallback | **The pattern only.** When this was written core advertised nothing (it now does, see below); `hald` advertises `_seedypod-hal._tcp`, and that is the daemon's HTTP port, not core |
+| Mock backend | `Networking/MockClient.swift`, `APIBackend.swift` | Demo mode and backend picker behind the protocol | **The pattern, not the code.** A thryve mock mirrors `SimHal` |
+| Discovery | `Services/PodDiscovery.swift` | `NWBrowser` for `_sleepypod._tcp` with TXT records, manual IP fallback | **The pattern only.** When this was written core advertised nothing (it now does, see below); `hald` advertises `_thryve-hal._tcp`, and that is the daemon's HTTP port, not core |
 | Live stream | `Services/SensorStreamService.swift` | `URLSessionWebSocketTask` to `ws://<ip>:3001` with a receive loop | **The receive loop, retargeted** to `ws://<host>:3000/api/ws` (CoreEvent frames, ADR-0015) |
 | Models, views, HealthKit, ML, snore, Watch | the remaining ~85% | Sleep-domain UI and analysis | **No** |
 
@@ -38,10 +38,10 @@ with attribution (both repos are AGPL-3.0 and have the same maintainer):
 
 1. the tRPC transport (`query`, `mutate`, `batchQuery`, decoding, retry), with
    an optional `X-API-Key` header added;
-2. the `NWBrowser` discovery pattern, browsing `_seedypod._tcp`;
+2. the `NWBrowser` discovery pattern, browsing `_thryve._tcp`;
 3. the WebSocket receive loop, pointed at `/api/ws`;
 4. the protocol + mock + backend-picker structure, re-expressed as a
-   `SeedypodProtocol` over this router: `system.info`, `sensors.latest`,
+   `ThryveProtocol` over this router: `system.info`, `sensors.latest`,
    `light.set`, `pump.runOnce`/`stop`, `schedules.*`, `grow.*`, `camera.*`,
    `alerts.list`/`acknowledge`.
 
@@ -55,13 +55,13 @@ is complete.
 
 ## Prerequisites in core (before the app)
 
-- **Done.** Advertise core over mDNS as `_seedypod._tcp` on its HTTP port, with TXT
+- **Done.** Advertise core over mDNS as `_thryve._tcp` on its HTTP port, with TXT
   `id` (unit), `v` (version) and `auth` (`1` when an API key is set).
   `src/network/mdns.ts` publishes it with ciao, the responder hap-nodejs
   already ships. `id` is hald's unit id, then `HAL_UNIT_ID`, then the
   hostname. TXT is updated live when the API key or the unit id changes. The
   instance name is the unit name in Settings, read at startup.
-  `SEEDYPOD_MDNS=0` turns it off; it is also off under Vitest and when core
+  `THRYVE_MDNS=0` turns it off; it is also off under Vitest and when core
   binds only loopback. The Vercel demo is web-only and advertises nothing.
 - Keep `/api/ws` frames documented as part of the API reference.
 

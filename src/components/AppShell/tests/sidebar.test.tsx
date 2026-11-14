@@ -44,7 +44,7 @@ const aside = () => screen.getByRole('complementary')
 describe('Sidebar', () => {
   it('links the brand icon and name home', () => {
     const { container } = render(<Sidebar status={online} />)
-    const home = screen.getByText('seedypod').closest('a') as HTMLElement
+    const home = screen.getByText('thryve').closest('a') as HTMLElement
     expect(home.getAttribute('href')).toBe('/')
     expect(container.querySelector('a[href="/"] img')?.getAttribute('src')).toBe('/brand/icon-64.png')
   })
@@ -303,7 +303,7 @@ describe('Sidebar', () => {
   it('links the docs in a new tab, and the unit row to Status', () => {
     render(<Sidebar status={online} />)
     const docs = within(aside()).getByRole('link', { name: 'Docs' })
-    expect(docs.getAttribute('href')).toBe('https://seedypod.github.io')
+    expect(docs.getAttribute('href')).toBe('https://github.com/kaniick/Thryve/tree/dev/docs')
     expect(docs.getAttribute('target')).toBe('_blank')
     expect(docs.getAttribute('rel')).toBe('noopener noreferrer')
     expect(within(aside()).getByText('Kitchen Gardyn').closest('a')?.getAttribute('href')).toBe('/status')

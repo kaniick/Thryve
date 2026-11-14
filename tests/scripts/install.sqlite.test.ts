@@ -78,7 +78,7 @@ function publish(contents = 'armv6', hashed = contents) {
 function install(branch = 'dev') {
   const r = spawnSync('bash', ['-c', `source "${script}"; set -e; NODE_FROM_SOURCE=1 BRANCH=${branch} TMP="${join(dir, 'tmp')}"; cd "${prefix}"; install_deps`], {
     encoding: 'utf8',
-    env: { PATH: `${bin}:${process.env.PATH}`, SEEDYPOD_LIB_ONLY: '1', STATE: state, SQLITE_BINARY: join(prefix, BINARY) },
+    env: { PATH: `${bin}:${process.env.PATH}`, THRYVE_LIB_ONLY: '1', STATE: state, SQLITE_BINARY: join(prefix, BINARY) },
   })
   return { code: r.status, out: r.stdout, err: r.stderr }
 }
@@ -117,18 +117,18 @@ describe('a rerun with nothing to install', () => {
   it('runs pnpm for a new Node, and leaves no stale stamp', () => {
     publish()
     install()
-    rmSync(join(prefix, 'node_modules/.seedypod-lock-v22.23.4'))
-    writeFileSync(join(prefix, 'node_modules/.seedypod-lock-v22.1.0'), readFileSync(join(prefix, 'pnpm-lock.yaml')))
+    rmSync(join(prefix, 'node_modules/.thryve-lock-v22.23.4'))
+    writeFileSync(join(prefix, 'node_modules/.thryve-lock-v22.1.0'), readFileSync(join(prefix, 'pnpm-lock.yaml')))
     install()
     expect(pnpmRuns()).toBe(2)
-    expect(existsSync(join(prefix, 'node_modules/.seedypod-lock-v22.1.0'))).toBe(false)
+    expect(existsSync(join(prefix, 'node_modules/.thryve-lock-v22.1.0'))).toBe(false)
   })
 
   it('tries again after an install that failed', () => {
     publish()
     writeFileSync(join(state, 'fail-pnpm'), '')
     expect(install().code).not.toBe(0)
-    expect(existsSync(join(prefix, 'node_modules/.seedypod-lock-v22.23.4'))).toBe(false)
+    expect(existsSync(join(prefix, 'node_modules/.thryve-lock-v22.23.4'))).toBe(false)
   })
 })
 
@@ -140,14 +140,14 @@ describe('prebuilt better-sqlite3', () => {
     expect(r.out).toContain('using the prebuilt ARMv6 better-sqlite3')
     expect(installed()).toBe('armv6')
     expect(log()).not.toContain('apt-get')
-    expect(log()).toContain(`https://github.com/seedypod/core/releases/download/dev-latest/${ASSET}`)
+    expect(log()).toContain(`https://github.com/kaniick/Thryve/releases/download/dev-latest/${ASSET}`)
     expect(log()).toContain('pnpm install --prod --frozen-lockfile source=\n')
   })
 
   it('takes the asset from the latest release on main', () => {
     publish()
     install('main')
-    expect(log()).toContain(`https://github.com/seedypod/core/releases/latest/download/${ASSET}`)
+    expect(log()).toContain(`https://github.com/kaniick/Thryve/releases/latest/download/${ASSET}`)
   })
 
   it('names the asset from the lockfile', () => {

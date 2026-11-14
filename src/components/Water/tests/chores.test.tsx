@@ -35,7 +35,7 @@ vi.mock('@/src/utils/trpc', () => {
   }
 })
 
-const cite = { note: 'knowledge/nutrients/gardyn-feeding-guidance.md', section: 'pH and EC', url: 'https://github.com/seedypod/core/blob/dev/knowledge/nutrients/gardyn-feeding-guidance.md#ph-and-ec' }
+const cite = { note: 'knowledge/nutrients/gardyn-feeding-guidance.md', section: 'pH and EC', url: 'https://github.com/kaniick/Thryve/blob/dev/knowledge/nutrients/gardyn-feeding-guidance.md#ph-and-ec' }
 const chore = (id: ChoreRow['id'], state: ChoreRow['state'], extra: Partial<ChoreRow> = {}): ChoreRow => ({ id, title: id, state, basis: 'timeline', reason: `${id} reason`, dueAt: null, lastDoneAt: null, readings: [], citations: [], doneKind: id, ...extra })
 
 beforeEach(() => {

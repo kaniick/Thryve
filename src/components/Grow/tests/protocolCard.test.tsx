@@ -102,8 +102,8 @@ describe('ProtocolCard', () => {
     expect(panel.getByText('Plain water: no plant food until the sprouts come up.')).toBeTruthy()
     expect(panel.getByText('Check the yCubes daily for sprouts; some take up to 21 days.')).toBeTruthy()
     const links = panel.getAllByRole('link').map(a => a.getAttribute('href'))
-    expect(links).toContain('https://github.com/seedypod/core/blob/dev/knowledge/plants/germination.md#sprouting')
-    expect(links).toContain('https://github.com/seedypod/core/blob/dev/knowledge/nutrients/gardyn-feeding-guidance.md#plant-food')
+    expect(links).toContain('https://github.com/kaniick/Thryve/blob/dev/knowledge/plants/germination.md#sprouting')
+    expect(links).toContain('https://github.com/kaniick/Thryve/blob/dev/knowledge/nutrients/gardyn-feeding-guidance.md#plant-food')
     expect(panel.getAllByRole('link').every(a => a.getAttribute('target') === '_blank')).toBe(true)
   })
 

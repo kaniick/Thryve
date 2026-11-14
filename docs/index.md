@@ -2,7 +2,7 @@
 okf_version: "0.2"
 ---
 
-# seedypod docs
+# thryve docs
 
 Developer and operator documentation, authored as an OKF v0.2 bundle (same
 profile as `knowledge/`). Concepts carry frontmatter with `status`,

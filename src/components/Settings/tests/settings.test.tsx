@@ -84,7 +84,7 @@ describe('Settings: storage', () => {
   })
 })
 
-const record = (o: Partial<{ ts: string, destination: 'download' | 'bucket', ok: boolean, detail: string, bytes: number }>) => ({ id: 1, ts: '2026-10-31T03:00:00Z', destination: 'bucket', name: 'seedypod-backup-u-20261031-030000.tar.gz', bytes: 2_400_000, ok: true, detail: '', ...o })
+const record = (o: Partial<{ ts: string, destination: 'download' | 'bucket', ok: boolean, detail: string, bytes: number }>) => ({ id: 1, ts: '2026-10-31T03:00:00Z', destination: 'bucket', name: 'thryve-backup-u-20261031-030000.tar.gz', bytes: 2_400_000, ok: true, detail: '', ...o })
 const backup = (o: Record<string, unknown> = {}) => ({ available: true, lastSuccess: null, lastBucketAttempt: null, nightly: { enabled: false, hour: 3, keep: 14 }, staleAfterDays: 7, stale: false, recent: [], ...o })
 
 describe('Settings: backup', () => {
@@ -119,7 +119,7 @@ describe('Settings: backup', () => {
   it('opens the restore panel on the saved bucket and asks before replacing the unit', () => {
     data.set('backup', backup({ nightly: { enabled: true, hour: 3, keep: 14 } }))
     data.set('restoreInfo', { available: true, status: null, undo: null })
-    data.set('bucketList', [{ key: 'backups/seedypod-backup-kitchen-20261030-030000.tar.gz', name: 'seedypod-backup-kitchen-20261030-030000.tar.gz', unit: 'kitchen', createdAt: '2026-10-30T03:00:00Z', size: 2_400_000 }])
+    data.set('bucketList', [{ key: 'backups/thryve-backup-kitchen-20261030-030000.tar.gz', name: 'thryve-backup-kitchen-20261030-030000.tar.gz', unit: 'kitchen', createdAt: '2026-10-30T03:00:00Z', size: 2_400_000 }])
     render(<SettingsPage />)
     fireEvent.click(screen.getByRole('button', { name: 'Restore from a backup…' }))
     // The saved mirror is used: no bucket form.
@@ -128,7 +128,7 @@ describe('Settings: backup', () => {
     expect(calls.fromBucket).not.toHaveBeenCalled()
     expect(screen.getByText(/It replaces this unit's settings, schedules, rules and history, then restarts\. You can undo it afterwards\./)).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Replace this unit' }))
-    expect(calls.fromBucket).toHaveBeenCalledWith({ key: 'backups/seedypod-backup-kitchen-20261030-030000.tar.gz', config: undefined })
+    expect(calls.fromBucket).toHaveBeenCalledWith({ key: 'backups/thryve-backup-kitchen-20261030-030000.tar.gz', config: undefined })
   })
 
   it('offers undo after a restore, then redo after an undo', () => {
@@ -285,7 +285,7 @@ describe('Settings: header and section nav', () => {
 
   it('asks the browser where the device is only where it may, and fills the field to two places', () => {
     render(<SettingsPage />)
-    // jsdom is no secure context, as http://seedypod.local isn't.
+    // jsdom is no secure context, as http://thryve.local isn't.
     expect(screen.queryByRole('button', { name: /Use this device/ })).toBeNull()
     cleanup()
     vi.stubGlobal('isSecureContext', true)

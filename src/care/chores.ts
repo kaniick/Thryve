@@ -48,7 +48,7 @@ export const SPROUT_COVER = 0.02
 const PHOTO_MAX_AGE_MS = 2 * DAY_MS
 /** Pods planted longer ago than this are past thinning. */
 const THIN_WINDOW_DAYS = 35
-/** Gardyn publishes no cleaning interval; every third refresh is seedypod's guess. */
+/** Gardyn publishes no cleaning interval; every third refresh is thryve's guess. */
 export const CLEAN_DAYS = 3 * REFRESH_DAYS
 /** A rise this big between samples is a top-up (as the Water page's chart). */
 const TOP_UP_PCT = 8
@@ -204,7 +204,7 @@ function refresh(store: Store, now: Date, planted: Pod[]): Chore {
 
 function clean(store: Store, now: Date, planted: Pod[]): Chore {
   const done = lastDone(store, ['clean'])
-  return onCalendar({ id: 'clean', title: TITLE.clean, lastDoneAt: done ? iso(done.at) : null, doneKind: 'clean', citations: [CITE.tankCadence] }, { every: CLEAN_DAYS, from: anchor(store, ['clean'], planted), now, why: 'Calendar guess, as Gardyn publishes no cleaning interval', rule: `seedypod suggests a deep clean every third refresh (${CLEAN_DAYS} d).`, none: 'nothing logged or planted to count from.' })
+  return onCalendar({ id: 'clean', title: TITLE.clean, lastDoneAt: done ? iso(done.at) : null, doneKind: 'clean', citations: [CITE.tankCadence] }, { every: CLEAN_DAYS, from: anchor(store, ['clean'], planted), now, why: 'Calendar guess, as Gardyn publishes no cleaning interval', rule: `thryve suggests a deep clean every third refresh (${CLEAN_DAYS} d).`, none: 'nothing logged or planted to count from.' })
 }
 
 function trimRoots(store: Store, now: Date, planted: Pod[]): Chore {

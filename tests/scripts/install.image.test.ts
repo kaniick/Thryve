@@ -38,7 +38,7 @@ afterEach(() => rmSync(dir, { recursive: true, force: true }))
 function run(commands: string, env: Record<string, string> = {}) {
   const r = spawnSync('bash', ['-c', `source "${script}"; ${commands}`], {
     encoding: 'utf8',
-    env: { PATH: `${bin}:${process.env.PATH}`, SEEDYPOD_LIB_ONLY: '1', SEEDYPOD_ROOT: root, STATE: state, USER: 'alice', ...env },
+    env: { PATH: `${bin}:${process.env.PATH}`, THRYVE_LIB_ONLY: '1', THRYVE_ROOT: root, STATE: state, USER: 'alice', ...env },
   })
   return { code: r.status, out: r.stdout.trim(), err: r.stderr }
 }
@@ -51,61 +51,61 @@ describe('the account core runs as', () => {
     expect(run('core_user').out).toBe('alice')
   })
 
-  it('stays whatever core already runs as, so an update from the login keeps seedypod-core', () => {
-    unit('seedypod-core.service', '[Service]\nUser=seedypod-core\n')
-    expect(run('core_user').out).toBe('seedypod-core')
+  it('stays whatever core already runs as, so an update from the login keeps thryve-core', () => {
+    unit('thryve-core.service', '[Service]\nUser=thryve-core\n')
+    expect(run('core_user').out).toBe('thryve-core')
   })
 
   it('is what the image build asks for', () => {
-    expect(run('core_user', { SEEDYPOD_CORE_USER: 'seedypod-core' }).out).toBe('seedypod-core')
+    expect(run('core_user', { THRYVE_CORE_USER: 'thryve-core' }).out).toBe('thryve-core')
   })
 })
 
 describe('the group that reads hald\'s files', () => {
-  it('is seedypod where install-hal hasn\'t said otherwise', () => {
-    expect(run('hal_group').out).toBe('seedypod')
+  it('is thryve where install-hal hasn\'t said otherwise', () => {
+    expect(run('hal_group').out).toBe('thryve')
   })
 
-  it('follows hald\'s account, which is seedypod-hal on the image', () => {
-    unit('hald.service', '[Service]\nUser=seedypod-hal\nGroup=seedypod-hal\n')
-    expect(run('hal_group').out).toBe('seedypod-hal')
+  it('follows hald\'s account, which is thryve-hal on the image', () => {
+    unit('hald.service', '[Service]\nUser=thryve-hal\nGroup=thryve-hal\n')
+    expect(run('hal_group').out).toBe('thryve-hal')
   })
 })
 
 describe('unpacking over a prefix core owns', () => {
-  const claim = (coreUser: string) => run(`PREFIX=/opt/seedypod CORE_USER=${coreUser}; claim_prefix; echo "store=\${npm_config_store_dir:-}"; finish_prefix`)
+  const claim = (coreUser: string) => run(`PREFIX=/opt/thryve CORE_USER=${coreUser}; claim_prefix; echo "store=\${npm_config_store_dir:-}"; finish_prefix`)
 
   it('is the plain chown it always was when the login is core\'s account', () => {
     const r = claim('alice')
     expect(r.out).toBe('store=')
-    expect(log()).toContain('sudo chown alice /opt/seedypod')
+    expect(log()).toContain('sudo chown alice /opt/thryve')
     expect(log()).not.toContain('chown -R')
     expect(log()).not.toContain('systemctl stop')
   })
 
   it('stops core, borrows the prefix and hands all of it back', () => {
-    claim('seedypod-core')
+    claim('thryve-core')
     expect(log().split('\n').filter(Boolean)).toEqual([
-      'sudo mkdir -p /opt/seedypod',
-      'sudo systemctl stop seedypod-core.service',
-      'sudo chown alice /opt/seedypod',
-      'sudo find /opt/seedypod -mindepth 1 -maxdepth 1 ! -name data -exec chown -R alice {} +',
-      'sudo chown seedypod-core /opt/seedypod',
-      'sudo find /opt/seedypod -mindepth 1 -maxdepth 1 ! -name data -exec chown -R seedypod-core {} +',
-      'sudo -u seedypod-core mkdir -p /opt/seedypod/data',
+      'sudo mkdir -p /opt/thryve',
+      'sudo systemctl stop thryve-core.service',
+      'sudo chown alice /opt/thryve',
+      'sudo find /opt/thryve -mindepth 1 -maxdepth 1 ! -name data -exec chown -R alice {} +',
+      'sudo chown thryve-core /opt/thryve',
+      'sudo find /opt/thryve -mindepth 1 -maxdepth 1 ! -name data -exec chown -R thryve-core {} +',
+      'sudo -u thryve-core mkdir -p /opt/thryve/data',
     ])
   })
 
   it('hands the prefix back and restarts core when an update dies partway', () => {
-    const r = run('PREFIX=/opt/seedypod CORE_USER=seedypod-core; claim_prefix; trap abandon_update EXIT; exit 7', { USER: 'alice' })
+    const r = run('PREFIX=/opt/thryve CORE_USER=thryve-core; claim_prefix; trap abandon_update EXIT; exit 7', { USER: 'alice' })
     expect(r.code).toBe(7)
-    expect(log()).toContain('sudo chown seedypod-core /opt/seedypod')
-    expect(log()).toContain('sudo systemctl start seedypod-core.service')
+    expect(log()).toContain('sudo chown thryve-core /opt/thryve')
+    expect(log()).toContain('sudo systemctl start thryve-core.service')
   })
 
   it('leaves core alone on an abandoned update when the login owns it', () => {
-    run('PREFIX=/opt/seedypod CORE_USER=alice; abandon_update', { USER: 'alice' })
-    expect(log()).toBe('sudo -u alice mkdir -p /opt/seedypod/data\n')
+    run('PREFIX=/opt/thryve CORE_USER=alice; abandon_update', { USER: 'alice' })
+    expect(log()).toBe('sudo -u alice mkdir -p /opt/thryve/data\n')
   })
 
   it('creates first-run data as core before a restore, and preserves existing data', () => {
@@ -125,11 +125,11 @@ describe('unpacking over a prefix core owns', () => {
     const body = readFileSync(script, 'utf8')
     expect(body.indexOf('curl -fsSL "$TARBALL_URL"')).toBeLessThan(body.indexOf('\nclaim_prefix\n'))
     expect(body).toMatch(/trap 'abandon_update; clear_busy' EXIT\nclaim_prefix/)
-    expect(body).toMatch(/systemctl restart seedypod-core.service\ntrap - EXIT/)
+    expect(body).toMatch(/systemctl restart thryve-core.service\ntrap - EXIT/)
   })
 
   it('keeps pnpm on the store node_modules came from, or it would rebuild better-sqlite3', () => {
-    expect(claim('seedypod-core').out).toBe('store=/opt/seedypod/.pnpm-store')
+    expect(claim('thryve-core').out).toBe('store=/opt/thryve/.pnpm-store')
   })
 })
 
@@ -137,7 +137,7 @@ describe('install-hal on a machine with no hald yet', () => {
   it('gets past choosing hald\'s account, which reads a unit that isn\'t there', () => {
     const r = spawnSync('bash', [resolve(script, '../install-hal'), '--help'], { encoding: 'utf8' })
     expect(r.status).toBe(0)
-    expect(r.stdout).toContain('seedypod HAL (hald) installer')
+    expect(r.stdout).toContain('thryve HAL (hald) installer')
   })
 })
 
@@ -148,14 +148,14 @@ describe('the unit id', () => {
 })
 
 describe('a build with no network for its own assets', () => {
-  it('reads better-sqlite3 from SEEDYPOD_RELEASE_URL', () => {
+  it('reads better-sqlite3 from THRYVE_RELEASE_URL', () => {
     const stub = `echo "curl $*" >> "$STATE/log"; exit 22`
     writeFileSync(join(bin, 'curl'), `#!/bin/sh\n${stub}\n`)
     chmodSync(join(bin, 'curl'), 0o755)
     writeFileSync(join(bin, 'node'), '#!/bin/sh\necho 127\n')
     chmodSync(join(bin, 'node'), 0o755)
     writeFileSync(join(dir, 'pnpm-lock.yaml'), 'packages:\n\n  better-sqlite3@12.11.1:\n    resolution: {}\n')
-    run(`BRANCH=dev TMP="${dir}"; cd "${dir}"; fetch_sqlite_prebuilt || true`, { SEEDYPOD_RELEASE_URL: 'file:///tmp/assets' })
+    run(`BRANCH=dev TMP="${dir}"; cd "${dir}"; fetch_sqlite_prebuilt || true`, { THRYVE_RELEASE_URL: 'file:///tmp/assets' })
     expect(log()).toContain('file:///tmp/assets/better-sqlite3-v12.11.1-node-v127-linux-armv6.tar.gz')
     expect(log()).not.toContain('github.com')
   })

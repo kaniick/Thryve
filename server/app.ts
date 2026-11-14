@@ -135,7 +135,7 @@ export function createApp({ ctx, staticRoot }: CreateAppOptions) {
   app.get('/api/system/boot-log', async (c) => {
     const text = await ctx.bootLog?.()
     if (!text) return c.json({ error: 'no boot log on this core yet' }, 404)
-    return c.body(text, 200, { 'content-type': 'text/plain; charset=utf-8', 'content-disposition': 'attachment; filename="seedypod-boot-log.txt"' })
+    return c.body(text, 200, { 'content-type': 'text/plain; charset=utf-8', 'content-disposition': 'attachment; filename="thryve-boot-log.txt"' })
   })
 
   // Backup bundle (ADR-0021): streamed; counts as an off-card backup once fully sent.

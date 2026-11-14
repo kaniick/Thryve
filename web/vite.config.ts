@@ -25,7 +25,7 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      // API_TARGET=http://seedypod.local:3000 points the UI at a real unit instead of a local core. A unit with an
+      // API_TARGET=http://thryve.local:3000 points the UI at a real unit instead of a local core. A unit with an
       // API key wants it on every request: API_KEY (read here, in Node; never VITE_-prefixed, so never in the bundle)
       // goes on as X-API-Key.
       '/api': {

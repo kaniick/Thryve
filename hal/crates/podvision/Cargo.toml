@@ -1,6 +1,6 @@
 [package]
 name = "podvision"
-description = "seedypod pod-state runner: decodes a still, crops the pods and runs the learned classifier, as a low-priority child of core"
+description = "thryve pod-state runner: decodes a still, crops the pods and runs the learned classifier, as a low-priority child of core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

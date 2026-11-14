@@ -20,7 +20,7 @@ use tracing_subscriber::filter::dynamic_filter_fn;
 use tracing_subscriber::layer::Filter;
 
 /// Set by install-hal; without it hald logs as `RUST_LOG` says, as in `--sim` and development.
-pub const ENV: &str = "SEEDYPOD_RECORDING_POLICY_FILE";
+pub const ENV: &str = "THRYVE_RECORDING_POLICY_FILE";
 
 const RELOAD_EVERY: Duration = Duration::from_secs(1);
 /// The most the API opens a window for: 240 minutes, in the file's milliseconds.

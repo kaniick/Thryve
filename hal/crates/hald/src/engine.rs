@@ -1280,28 +1280,28 @@ mod tests {
         let mut r = rig(vec![ActuatorId::Light, ActuatorId::Pump], true, "boot");
         let out = r.engine.boot(r.now);
         let t = topics_of(&out);
-        assert_eq!(t[0], "seedypod/u1/system");
+        assert_eq!(t[0], "thryve/u1/system");
         assert!(t
             .iter()
             .any(|x| x.starts_with("homeassistant/light/u1_light/config")));
-        assert!(t.contains(&"seedypod/u1/actuator/light/state"));
-        assert!(t.contains(&"seedypod/u1/ha/light/state"));
-        assert!(t.contains(&"seedypod/u1/actuator/pump/state"));
+        assert!(t.contains(&"thryve/u1/actuator/light/state"));
+        assert!(t.contains(&"thryve/u1/ha/light/state"));
+        assert!(t.contains(&"thryve/u1/actuator/pump/state"));
         for k in ["water_low", "pump_fault", "over_temp", "camera_missing"] {
-            assert!(t.contains(&format!("seedypod/u1/alert/{k}").as_str()), "{k}");
+            assert!(t.contains(&format!("thryve/u1/alert/{k}").as_str()), "{k}");
         }
-        assert!(t.contains(&"seedypod/u1/sensor/air_temp"));
-        assert!(t.contains(&"seedypod/u1/sensor/water_level_pct"));
-        assert_eq!(payload(&out, "seedypod/u1/alert/water_low")["active"], false);
-        assert_eq!(payload(&out, "seedypod/u1/system")["unitId"], "u1");
+        assert!(t.contains(&"thryve/u1/sensor/air_temp"));
+        assert!(t.contains(&"thryve/u1/sensor/water_level_pct"));
+        assert_eq!(payload(&out, "thryve/u1/alert/water_low")["active"], false);
+        assert_eq!(payload(&out, "thryve/u1/system")["unitId"], "u1");
         // Retained flags.
         assert!(out
             .iter()
-            .filter(|o| o.topic.starts_with("seedypod/u1/alert/"))
+            .filter(|o| o.topic.starts_with("thryve/u1/alert/"))
             .all(|o| o.retain));
         assert!(out
             .iter()
-            .filter(|o| o.topic.starts_with("seedypod/u1/sensor/"))
+            .filter(|o| o.topic.starts_with("thryve/u1/sensor/"))
             .all(|o| !o.retain));
         let snap = r.snapshot.read().unwrap();
         assert_eq!(snap.sensors.len(), 4);
@@ -1318,7 +1318,7 @@ mod tests {
             Inbound::ActuatorSet(ActuatorId::Light, on(Some(60.0), None)),
             r.now,
         );
-        assert_eq!(payload(&out, "seedypod/u1/actuator/light/state")["level"], 60.0);
+        assert_eq!(payload(&out, "thryve/u1/actuator/light/state")["level"], 60.0);
         assert_eq!(
             out.iter()
                 .find(|o| o.topic.ends_with("ha/light/brightness/state"))
@@ -1339,13 +1339,13 @@ mod tests {
         let out = r
             .engine
             .handle(Inbound::ActuatorSet(ActuatorId::Light, on(None, None)), r.now);
-        assert_eq!(payload(&out, "seedypod/u1/actuator/light/state")["level"], 100.0);
+        assert_eq!(payload(&out, "thryve/u1/actuator/light/state")["level"], 100.0);
         // Empty command is a no-op state publish.
         let out = r.engine.handle(
             Inbound::ActuatorSet(ActuatorId::Light, ActuatorCommand::default()),
             r.now,
         );
-        assert_eq!(payload(&out, "seedypod/u1/actuator/light/state")["on"], true);
+        assert_eq!(payload(&out, "thryve/u1/actuator/light/state")["on"], true);
         // Persisted and restored by a fresh engine on the same state dir.
         let saved = StateFile::new(&r.dir).load();
         assert_eq!(saved.light_level, 100.0);
@@ -1376,18 +1376,18 @@ mod tests {
             Inbound::ActuatorSet(ActuatorId::Pump, on(Some(100.0), Some(20))),
             r.now,
         );
-        let st = payload(&out, "seedypod/u1/actuator/pump/state");
+        let st = payload(&out, "thryve/u1/actuator/pump/state");
         assert_eq!(st["on"], true);
         assert_eq!(st["level"], 30.0, "clamped to max duty");
         assert_eq!(st["remainingS"], 20);
         assert_eq!(r.world.lock().unwrap().pump_level, 30.0);
         assert!(
-            topics_of(&out).iter().all(|t| !t.starts_with("seedypod/u1/ha/")),
+            topics_of(&out).iter().all(|t| !t.starts_with("thryve/u1/ha/")),
             "no HA mirror without prefix"
         );
         r.now.advance(Duration::from_secs(21));
         let out = r.engine.tick(r.now);
-        let st = payload(&out, "seedypod/u1/actuator/pump/state");
+        let st = payload(&out, "thryve/u1/actuator/pump/state");
         assert_eq!(st["on"], false);
         assert!(st["fault"].is_null());
         assert_eq!(r.world.lock().unwrap().pump_level, 0.0);
@@ -1410,33 +1410,30 @@ mod tests {
             30.0,
             "one low read is not enough"
         );
-        assert_eq!(payload(&first, "seedypod/u1/alert/water_low")["active"], true);
+        assert_eq!(payload(&first, "thryve/u1/alert/water_low")["active"], true);
         r.now.advance(hal_core::safety::DRY_CONFIRM);
         let out = r.engine.tick(r.now);
         assert_eq!(r.world.lock().unwrap().pump_level, 0.0);
-        let st = payload(&out, "seedypod/u1/actuator/pump/state");
+        let st = payload(&out, "thryve/u1/actuator/pump/state");
         assert_eq!(st["fault"], "dry-run");
         // The trip raises its alert at once, between telemetry rounds.
-        assert_eq!(payload(&out, "seedypod/u1/alert/pump_fault")["active"], true);
+        assert_eq!(payload(&out, "thryve/u1/alert/pump_fault")["active"], true);
         // Refill: still latched, start refused, and the refusal is visible in state.
         r.world.lock().unwrap().water_distance_cm = 7.0;
         let out = r
             .engine
             .handle(Inbound::ActuatorSet(ActuatorId::Pump, on(None, None)), r.now);
-        assert_eq!(payload(&out, "seedypod/u1/actuator/pump/state")["on"], false);
-        assert_eq!(
-            payload(&out, "seedypod/u1/actuator/pump/state")["fault"],
-            "dry-run"
-        );
+        assert_eq!(payload(&out, "thryve/u1/actuator/pump/state")["on"], false);
+        assert_eq!(payload(&out, "thryve/u1/actuator/pump/state")["fault"], "dry-run");
         assert_eq!(r.world.lock().unwrap().pump_level, 0.0);
         let out = r.engine.handle(Inbound::AlertAck(AlertKind::PumpFault), r.now);
-        assert!(payload(&out, "seedypod/u1/actuator/pump/state")["fault"].is_null());
-        assert_eq!(payload(&out, "seedypod/u1/alert/pump_fault")["active"], false);
+        assert!(payload(&out, "thryve/u1/actuator/pump/state")["fault"].is_null());
+        assert_eq!(payload(&out, "thryve/u1/alert/pump_fault")["active"], false);
         // A window of good readings clears the water alert, and only then may it start.
         let out = r
             .engine
             .handle(Inbound::ActuatorSet(ActuatorId::Pump, on(None, Some(5))), r.now);
-        assert_eq!(payload(&out, "seedypod/u1/actuator/pump/state")["on"], false);
+        assert_eq!(payload(&out, "thryve/u1/actuator/pump/state")["on"], false);
         let mut cleared = None;
         for _ in 0..WATER_WINDOW {
             r.now.advance(Duration::from_secs(10));
@@ -1444,13 +1441,13 @@ mod tests {
                 .engine
                 .tick(r.now)
                 .into_iter()
-                .find(|o| o.topic == "seedypod/u1/alert/water_low");
+                .find(|o| o.topic == "thryve/u1/alert/water_low");
         }
         assert!(cleared.unwrap().payload.contains(r#""active":false"#));
         let out = r
             .engine
             .handle(Inbound::ActuatorSet(ActuatorId::Pump, on(None, Some(5))), r.now);
-        assert_eq!(payload(&out, "seedypod/u1/actuator/pump/state")["on"], true);
+        assert_eq!(payload(&out, "thryve/u1/actuator/pump/state")["on"], true);
         let _ = std::fs::remove_dir_all(&r.dir);
     }
 
@@ -1475,12 +1472,12 @@ mod tests {
             last = r.engine.tick(r.now);
         }
         assert_eq!(r.engine.pump.fault(), None);
-        assert!(payload(&last, "seedypod/u1/actuator/pump/state")["fault"].is_null());
-        assert_eq!(payload(&last, "seedypod/u1/alert/pump_fault")["active"], false);
+        assert!(payload(&last, "thryve/u1/actuator/pump/state")["fault"].is_null());
+        assert_eq!(payload(&last, "thryve/u1/alert/pump_fault")["active"], false);
         let out = r
             .engine
             .handle(Inbound::ActuatorSet(ActuatorId::Pump, on(None, Some(5))), r.now);
-        assert_eq!(payload(&out, "seedypod/u1/actuator/pump/state")["on"], true);
+        assert_eq!(payload(&out, "thryve/u1/actuator/pump/state")["on"], true);
         let _ = std::fs::remove_dir_all(&r.dir);
     }
 
@@ -1542,8 +1539,8 @@ mod tests {
         // The first low read comes a second in, then 5 s of them.
         assert!(after <= 6, "tripped {after} s after the intake went dry");
         let why = "dry-run: pump drew 0.05 A, below 0.15 A for 5 s: it's pulling air";
-        assert_eq!(payload(&out, "seedypod/u1/actuator/pump/state")["fault"], why);
-        let alert = payload(&out, "seedypod/u1/alert/pump_fault");
+        assert_eq!(payload(&out, "thryve/u1/actuator/pump/state")["fault"], why);
+        let alert = payload(&out, "thryve/u1/alert/pump_fault");
         assert_eq!(alert["active"], true);
         assert_eq!(alert["detail"], format!("pump: {why}"));
         assert!(!r.engine.water.active, "the tank reads full throughout");
@@ -1552,7 +1549,7 @@ mod tests {
         let out = r
             .engine
             .handle(Inbound::ActuatorSet(ActuatorId::Pump, on(None, None)), r.now);
-        assert_eq!(payload(&out, "seedypod/u1/actuator/pump/state")["on"], false);
+        assert_eq!(payload(&out, "thryve/u1/actuator/pump/state")["on"], false);
         let mut cleared = None;
         for s in 1..=(2 * WATER_WINDOW as u64 * 10) {
             r.now.advance(Duration::from_secs(1));
@@ -1583,12 +1580,12 @@ mod tests {
         assert!(r.engine.dry_hold_until.is_some());
         r.world.lock().unwrap().intake_dry = false;
         let out = r.engine.handle(Inbound::AlertAck(AlertKind::PumpFault), r.now);
-        assert_eq!(payload(&out, "seedypod/u1/alert/pump_fault")["active"], false);
+        assert_eq!(payload(&out, "thryve/u1/alert/pump_fault")["active"], false);
         assert_eq!(r.engine.dry_hold_until, None);
         let out = r
             .engine
             .handle(Inbound::ActuatorSet(ActuatorId::Pump, on(None, Some(30))), r.now);
-        assert_eq!(payload(&out, "seedypod/u1/actuator/pump/state")["on"], true);
+        assert_eq!(payload(&out, "thryve/u1/actuator/pump/state")["on"], true);
         let _ = std::fs::remove_dir_all(&r.dir);
     }
 
@@ -1746,15 +1743,15 @@ mod tests {
         r.world.lock().unwrap().water_distance_cm = 150.0;
         r.now.advance(Duration::from_secs(10));
         let out = r.engine.tick(r.now);
-        assert_eq!(payload(&out, "seedypod/u1/alert/water_low")["active"], true);
+        assert_eq!(payload(&out, "thryve/u1/alert/water_low")["active"], true);
         r.world.lock().unwrap().water_distance_cm = 7.0;
         r.now.advance(Duration::from_secs(10));
         let out = r.engine.tick(r.now);
-        assert!(!topics_of(&out).contains(&"seedypod/u1/alert/water_low"));
+        assert!(!topics_of(&out).contains(&"thryve/u1/alert/water_low"));
         let out = r
             .engine
             .handle(Inbound::ActuatorSet(ActuatorId::Pump, on(None, Some(5))), r.now);
-        assert_eq!(payload(&out, "seedypod/u1/actuator/pump/state")["on"], false);
+        assert_eq!(payload(&out, "thryve/u1/actuator/pump/state")["on"], false);
         assert_eq!(r.world.lock().unwrap().pump_level, 0.0);
         let _ = std::fs::remove_dir_all(&r.dir);
     }
@@ -1766,11 +1763,11 @@ mod tests {
         r.engine.pump = PumpGuard::new(r.engine.cfg.pump.clone());
         r.world.lock().unwrap().water_distance_cm = 150.0;
         let out = r.engine.boot(r.now);
-        assert!(!topics_of(&out).contains(&"seedypod/u1/alert/water_low"));
+        assert!(!topics_of(&out).contains(&"thryve/u1/alert/water_low"));
         let out = r
             .engine
             .handle(Inbound::ActuatorSet(ActuatorId::Pump, on(None, Some(5))), r.now);
-        assert_eq!(payload(&out, "seedypod/u1/actuator/pump/state")["on"], true);
+        assert_eq!(payload(&out, "thryve/u1/actuator/pump/state")["on"], true);
         let _ = std::fs::remove_dir_all(&r.dir);
     }
 
@@ -1889,7 +1886,7 @@ mod tests {
         let mut f = Fading::new("fade");
         f.r.engine.boot(f.r.now);
         let out = f.set(60.0);
-        assert_eq!(payload(&out, "seedypod/u1/actuator/light/state")["level"], 60.0);
+        assert_eq!(payload(&out, "thryve/u1/actuator/light/state")["level"], 60.0);
         assert_eq!(f.level(), 0.0, "nothing lands before the first frame");
         assert_eq!(
             StateFile::new(&f.r.dir).load().light_level,
@@ -2061,22 +2058,22 @@ mod tests {
         broken.store(true, Ordering::Relaxed);
         let out = e.handle(Inbound::ActuatorSet(ActuatorId::Light, on(Some(50.0), None)), now);
         assert_eq!(
-            payload(&out, "seedypod/u1/actuator/light/state")["fault"],
+            payload(&out, "thryve/u1/actuator/light/state")["fault"],
             "light driver write failed"
         );
         now.advance(Duration::from_secs(1));
         let out = e.tick(now);
         assert_eq!(
-            payload(&out, "seedypod/u1/actuator/light/state")["fault"],
+            payload(&out, "thryve/u1/actuator/light/state")["fault"],
             "light driver write failed"
         );
         now.advance(Duration::from_secs(1));
-        assert!(!topics_of(&e.tick(now)).contains(&"seedypod/u1/actuator/light/state"));
+        assert!(!topics_of(&e.tick(now)).contains(&"thryve/u1/actuator/light/state"));
         broken.store(false, Ordering::Relaxed);
         e.handle(Inbound::ActuatorSet(ActuatorId::Light, on(Some(60.0), None)), now);
         now.advance(Duration::from_secs(1));
         let out = e.tick(now);
-        assert!(payload(&out, "seedypod/u1/actuator/light/state")["fault"].is_null());
+        assert!(payload(&out, "thryve/u1/actuator/light/state")["fault"].is_null());
     }
 
     #[test]
@@ -2105,20 +2102,20 @@ mod tests {
         r.world.lock().unwrap().pcb_temp_c = 40.0;
         r.now.advance(Duration::from_secs(10));
         let out = r.engine.tick(r.now);
-        let a = payload(&out, "seedypod/u1/alert/over_temp");
+        let a = payload(&out, "thryve/u1/alert/over_temp");
         assert_eq!(a["active"], true);
         assert!(a["detail"].as_str().unwrap().contains("40.0"));
         let out = r
             .engine
             .handle(Inbound::ActuatorSet(ActuatorId::Pump, on(None, None)), r.now);
-        assert_eq!(payload(&out, "seedypod/u1/actuator/pump/state")["on"], false);
+        assert_eq!(payload(&out, "thryve/u1/actuator/pump/state")["on"], false);
         // Cooling clears it on the next telemetry round only (no spam in between).
         r.world.lock().unwrap().pcb_temp_c = 30.0;
         r.now.advance(Duration::from_secs(1));
-        assert!(!topics_of(&r.engine.tick(r.now)).contains(&"seedypod/u1/alert/over_temp"));
+        assert!(!topics_of(&r.engine.tick(r.now)).contains(&"thryve/u1/alert/over_temp"));
         r.now.advance(Duration::from_secs(10));
         let out = r.engine.tick(r.now);
-        assert_eq!(payload(&out, "seedypod/u1/alert/over_temp")["active"], false);
+        assert_eq!(payload(&out, "thryve/u1/alert/over_temp")["active"], false);
         let _ = std::fs::remove_dir_all(&r.dir);
     }
 
@@ -2161,7 +2158,7 @@ mod tests {
         );
         let now = Now::real();
         let out = e.boot(now);
-        let a = payload(&out, "seedypod/u1/alert/over_temp");
+        let a = payload(&out, "thryve/u1/alert/over_temp");
         assert_eq!(a["active"], true);
         assert_eq!(a["detail"], "board alert line asserted");
         e.handle(Inbound::ActuatorSet(ActuatorId::Pump, on(None, None)), now);
@@ -2176,16 +2173,16 @@ mod tests {
         r.now.advance(Duration::from_secs(1));
         assert!(topics_of(&r.engine.tick(r.now))
             .iter()
-            .all(|t| !t.starts_with("seedypod/u1/sensor/")));
+            .all(|t| !t.starts_with("thryve/u1/sensor/")));
         // Interval elapsed with identical values → republished anyway.
         r.now.advance(Duration::from_secs(10));
         let out = r.engine.tick(r.now);
-        assert!(topics_of(&out).contains(&"seedypod/u1/sensor/air_temp"));
+        assert!(topics_of(&out).contains(&"thryve/u1/sensor/air_temp"));
         // Forced interval, but a changed value must publish even before the interval.
         r.now.advance(Duration::from_secs(10));
         r.world.lock().unwrap().air_temp_c = 30.0;
         let out = r.engine.tick(r.now);
-        assert_eq!(payload(&out, "seedypod/u1/sensor/air_temp")["value"], 30.0);
+        assert_eq!(payload(&out, "thryve/u1/sensor/air_temp")["value"], 30.0);
         let _ = std::fs::remove_dir_all(&r.dir);
     }
 
@@ -2194,13 +2191,13 @@ mod tests {
         let mut r = rig(vec![ActuatorId::Light, ActuatorId::Pump], false, "button");
         r.engine.boot(r.now);
         let out = r.engine.handle(Inbound::Button(ButtonPress::Single), r.now);
-        assert_eq!(payload(&out, "seedypod/u1/event/button")["press"], "single");
+        assert_eq!(payload(&out, "thryve/u1/event/button")["press"], "single");
         assert!(!out[0].retain);
         assert_eq!(r.world.lock().unwrap().light_level, 100.0);
         r.engine.handle(Inbound::Button(ButtonPress::Single), r.now);
         assert_eq!(r.world.lock().unwrap().light_level, 0.0);
         let out = r.engine.handle(Inbound::Button(ButtonPress::Double), r.now);
-        let st = payload(&out, "seedypod/u1/actuator/pump/state");
+        let st = payload(&out, "thryve/u1/actuator/pump/state");
         assert_eq!(st["on"], true);
         assert_eq!(st["remainingS"], 300);
         // Second double press stops it.
@@ -2231,13 +2228,13 @@ mod tests {
         let out = r
             .engine
             .handle(Inbound::ActuatorSet(ActuatorId::Dose1, on(None, Some(3))), r.now);
-        let st = payload(&out, "seedypod/u1/actuator/dose_1/state");
+        let st = payload(&out, "thryve/u1/actuator/dose_1/state");
         assert_eq!(st["on"], true);
         assert_eq!(st["remainingS"], 3);
         assert_eq!(r.world.lock().unwrap().dose_level[0], 100.0);
         r.now.advance(Duration::from_secs(4));
         let out = r.engine.tick(r.now);
-        assert_eq!(payload(&out, "seedypod/u1/actuator/dose_1/state")["on"], false);
+        assert_eq!(payload(&out, "thryve/u1/actuator/dose_1/state")["on"], false);
         assert_eq!(r.world.lock().unwrap().dose_level[0], 0.0);
         let saved = StateFile::new(&r.dir).load();
         assert_eq!(saved.doses["dose_1"].doses, 1);
@@ -2251,7 +2248,7 @@ mod tests {
         let out = r
             .engine
             .handle(Inbound::ActuatorSet(ActuatorId::Dose1, on(None, Some(1))), r.now);
-        let st = payload(&out, "seedypod/u1/actuator/dose_1/state");
+        let st = payload(&out, "thryve/u1/actuator/dose_1/state");
         assert_eq!(st["on"], false);
         assert_eq!(st["fault"], "lockout");
         let df = &r.engine.alerts[&AlertKind::DoseFault];
@@ -2260,11 +2257,11 @@ mod tests {
         assert!(!r.engine.alerts[&AlertKind::PumpFault].active);
         // Acknowledging the pump fault leaves the dosing lockout latched.
         let out = r.engine.handle(Inbound::AlertAck(AlertKind::PumpFault), r.now);
-        assert!(!out.iter().any(|o| o.topic == "seedypod/u1/actuator/dose_1/state"));
+        assert!(!out.iter().any(|o| o.topic == "thryve/u1/actuator/dose_1/state"));
         assert!(r.engine.alerts[&AlertKind::DoseFault].active);
         let out = r.engine.handle(Inbound::AlertAck(AlertKind::DoseFault), r.now);
-        assert!(payload(&out, "seedypod/u1/actuator/dose_1/state")["fault"].is_null());
-        assert_eq!(payload(&out, "seedypod/u1/alert/dose_fault")["active"], false);
+        assert!(payload(&out, "thryve/u1/actuator/dose_1/state")["fault"].is_null());
+        assert_eq!(payload(&out, "thryve/u1/alert/dose_fault")["active"], false);
         let _ = std::fs::remove_dir_all(&r.dir);
     }
 
@@ -2316,17 +2313,17 @@ mod tests {
         let mut r = devices_rig("dev-add");
         r.engine.boot(r.now);
         let out = r.engine.handle(dev(DeviceOp::Add, "ezo_ph", 0x63), r.now);
-        let res = payload(&out, "seedypod/u1/devices/result");
+        let res = payload(&out, "thryve/u1/devices/result");
         assert_eq!(
             (res["ok"].as_bool(), res["requestId"].as_str()),
             (Some(true), Some("Add-ezo_ph-99"))
         );
-        assert!(payload(&out, "seedypod/u1/system")["caps"]["sensors"]
+        assert!(payload(&out, "thryve/u1/system")["caps"]["sensors"]
             .as_array()
             .unwrap()
             .contains(&serde_json::json!("ph")));
         assert!(topics_of(&out).contains(&"homeassistant/sensor/u1_ph/config"));
-        let inv = payload(&out, "seedypod/u1/devices");
+        let inv = payload(&out, "thryve/u1/devices");
         let added = inv["sensors"]
             .as_array()
             .unwrap()
@@ -2345,7 +2342,7 @@ mod tests {
         // Persisted for the next boot, and readings flow on the next tick.
         assert_eq!(Overlay::new(&r.dir).load().len(), 1);
         r.now.advance(Duration::from_secs(11));
-        assert!(topics_of(&r.engine.tick(r.now)).contains(&"seedypod/u1/sensor/ph"));
+        assert!(topics_of(&r.engine.tick(r.now)).contains(&"thryve/u1/sensor/ph"));
         assert!(r
             .snapshot
             .read()
@@ -2383,10 +2380,10 @@ mod tests {
             (dev(DeviceOp::Remove, "ezo_ec", 0x64), "no ezo_ec sensor at 0x64"),
         ] {
             let out = r.engine.handle(cmd, r.now);
-            let res = payload(&out, "seedypod/u1/devices/result");
+            let res = payload(&out, "thryve/u1/devices/result");
             assert_eq!(res["ok"], false);
             assert!(res["detail"].as_str().unwrap().contains(why), "{why}: {res}");
-            assert!(!topics_of(&out).contains(&"seedypod/u1/system"), "{why}");
+            assert!(!topics_of(&out).contains(&"thryve/u1/system"), "{why}");
         }
         assert_eq!(Overlay::new(&r.dir).load().len(), 1);
         let _ = std::fs::remove_dir_all(&r.dir);
@@ -2398,13 +2395,13 @@ mod tests {
         r.engine.boot(r.now);
         r.engine.handle(dev(DeviceOp::Add, "ezo_ec", 0x64), r.now);
         let out = r.engine.handle(dev(DeviceOp::Remove, "ezo_ec", 0x64), r.now);
-        assert_eq!(payload(&out, "seedypod/u1/devices/result")["ok"], true);
+        assert_eq!(payload(&out, "thryve/u1/devices/result")["ok"], true);
         let ha = out
             .iter()
             .find(|o| o.topic == "homeassistant/sensor/u1_ec/config" && o.payload.is_empty())
             .expect("empty retained config deletes the HA entity");
         assert!(ha.retain);
-        assert!(!payload(&out, "seedypod/u1/system")["caps"]["sensors"]
+        assert!(!payload(&out, "thryve/u1/system")["caps"]["sensors"]
             .as_array()
             .unwrap()
             .contains(&serde_json::json!("ec")));
@@ -2419,7 +2416,7 @@ mod tests {
             ),
             r.now,
         );
-        assert_eq!(payload(&out, "seedypod/u1/sensor/ec/calibration")["ok"], false);
+        assert_eq!(payload(&out, "thryve/u1/sensor/ec/calibration")["ok"], false);
         let _ = std::fs::remove_dir_all(&r.dir);
     }
 
@@ -2427,12 +2424,12 @@ mod tests {
     fn without_a_factory_runtime_changes_are_refused_and_nothing_is_addable() {
         let mut r = rig(vec![], false, "dev-nofactory");
         let boot = r.engine.boot(r.now);
-        assert!(payload(&boot, "seedypod/u1/devices")["addable"]
+        assert!(payload(&boot, "thryve/u1/devices")["addable"]
             .as_array()
             .unwrap()
             .is_empty());
         let out = r.engine.handle(dev(DeviceOp::Add, "ezo_ph", 0x63), r.now);
-        assert!(payload(&out, "seedypod/u1/devices/result")["detail"]
+        assert!(payload(&out, "thryve/u1/devices/result")["detail"]
             .as_str()
             .unwrap()
             .contains("can't add sensors at runtime"));
@@ -2454,7 +2451,7 @@ mod tests {
         );
         let o = out
             .iter()
-            .find(|o| o.topic == "seedypod/u1/sensor/ph/calibration")
+            .find(|o| o.topic == "thryve/u1/sensor/ph/calibration")
             .unwrap();
         assert!(o.retain);
         let v: serde_json::Value = serde_json::from_str(&o.payload).unwrap();
@@ -2466,7 +2463,7 @@ mod tests {
             Inbound::Calibrate(SensorId::Ph, cmd(CalibrationPoint::Low, None)),
             r.now,
         );
-        let v = payload(&out, "seedypod/u1/sensor/ph/calibration");
+        let v = payload(&out, "thryve/u1/sensor/ph/calibration");
         assert_eq!(v["ok"], false);
         assert!(v["points"].is_null());
         assert!(v["detail"].as_str().unwrap().contains("reference value"));
@@ -2476,7 +2473,7 @@ mod tests {
             Inbound::Calibrate(SensorId::Ec, cmd(CalibrationPoint::Dry, None)),
             r.now,
         );
-        let v = payload(&out, "seedypod/u1/sensor/ec/calibration");
+        let v = payload(&out, "thryve/u1/sensor/ec/calibration");
         assert_eq!(v["ok"], false);
         assert_eq!(v["detail"], "no ec sensor configured");
         let _ = std::fs::remove_dir_all(&r.dir);
@@ -2503,7 +2500,7 @@ mod tests {
         let now = Now::real();
         e.boot(now);
         let out = e.handle(Inbound::ActuatorSet(ActuatorId::Dose2, on(None, None)), now);
-        assert_eq!(payload(&out, "seedypod/u1/actuator/dose_2/state")["on"], false);
+        assert_eq!(payload(&out, "thryve/u1/actuator/dose_2/state")["on"], false);
         assert_eq!(world.lock().unwrap().dose_level[1], 0.0);
     }
 
@@ -2530,7 +2527,7 @@ mod tests {
             },
             r.now,
         );
-        let a = payload(&out, "seedypod/u1/alert/camera_missing");
+        let a = payload(&out, "thryve/u1/alert/camera_missing");
         assert_eq!(a["active"], true);
         assert_eq!(a["detail"], "upper: device not present");
         // Same failure again → no republish.
@@ -2553,11 +2550,11 @@ mod tests {
             },
             r.now,
         );
-        assert_eq!(payload(&out, "seedypod/u1/alert/camera_missing")["active"], false);
+        assert_eq!(payload(&out, "thryve/u1/alert/camera_missing")["active"], false);
         // Resync republishes it along with everything else.
         let out = r.engine.handle(Inbound::Resync, r.now);
-        assert!(topics_of(&out).contains(&"seedypod/u1/alert/camera_missing"));
-        assert!(topics_of(&out).contains(&"seedypod/u1/system"));
+        assert!(topics_of(&out).contains(&"thryve/u1/alert/camera_missing"));
+        assert!(topics_of(&out).contains(&"thryve/u1/system"));
         let _ = std::fs::remove_dir_all(&r.dir);
     }
 
@@ -2587,9 +2584,9 @@ mod tests {
         let last = out.last().unwrap();
         assert_eq!(
             (last.topic.as_str(), last.payload.as_str(), last.retain),
-            ("seedypod/u1/availability", "offline", true)
+            ("thryve/u1/availability", "offline", true)
         );
-        assert_eq!(payload(&out, "seedypod/u1/actuator/pump/state")["on"], false);
+        assert_eq!(payload(&out, "thryve/u1/actuator/pump/state")["on"], false);
         let saved = StateFile::new(&r.dir).load();
         assert!(
             (saved.light_hours_total - 1.0).abs() < 1e-6,

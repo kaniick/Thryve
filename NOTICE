@@ -1,0 +1,37 @@
+Thryve
+======
+
+This software is a fork and rebrand of seedypod
+(https://github.com/seedypod/core), originally written by Jonathan Ng and
+contributors, and licensed under the GNU Affero General Public License v3.0
+only.
+
+This fork is maintained at https://github.com/kaniick/Thryve. It keeps the
+same AGPL-3.0-only license. Anyone who runs a modified version as a network
+service must offer the corresponding source under AGPL §13.
+
+Attribution
+-----------
+
+- seedypod, by Jonathan Ng and contributors: the original local, cloud-free
+  control stack this fork is based on.
+- sleepypod (https://sleepypod.github.io/): conventions, design system, and
+  ADR precedents. No claim is made to the sleepypod name or marks.
+- Gardyn is a trademark of its owner. This project is unofficial software for
+  Gardyn hydroponic towers, used in a nominative sense only.
+- Hardware facts (pin map, I²C addresses, observed failure modes) were
+  documented with reference to iot-root/garden-of-eden (GPL-3). No code from
+  that project was copied (see docs/hardware/pin-map.md and ADR-0002).
+
+Changes in this fork
+--------------------
+
+The product has been renamed from seedypod to Thryve. Identifiers, paths,
+MQTT topics (`thryve/<unit-id>/`), mDNS types (`_thryve._tcp`,
+`_thryve-hal._tcp`), HomeKit manufacturer and identity (including the HKDF
+salt), HTTP headers, udev paths, installer names, environment variables
+(`THRYVE_*`), and release assets use the Thryve names.
+
+A one-time migration from a seedypod v1.5.0 unit is documented in
+docs/MIGRATION.md. After that migration, HomeKit must be re-paired: the
+HomeKit identity salt changed, and pairings from seedypod will not work.

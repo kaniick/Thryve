@@ -271,7 +271,7 @@ pub struct Alert {
     pub detail: String,
 }
 
-/// MQTT topic layout under `seedypod/<unit-id>/`.
+/// MQTT topic layout under `thryve/<unit-id>/`.
 pub mod topics {
     use super::{ActuatorId, AlertKind, SensorId};
 
@@ -283,7 +283,7 @@ pub mod topics {
     }
 
     pub fn prefix(unit: &str) -> String {
-        format!("seedypod/{unit}")
+        format!("thryve/{unit}")
     }
     pub fn availability(unit: &str) -> String {
         format!("{}/availability", prefix(unit))
@@ -353,27 +353,27 @@ mod tests {
             press: ButtonPress::Double,
         };
         assert_eq!(serde_json::to_string(&e).unwrap(), r#"{"press":"double"}"#);
-        assert_eq!(topics::button("u1"), "seedypod/u1/event/button");
+        assert_eq!(topics::button("u1"), "thryve/u1/event/button");
     }
 
     #[test]
     fn topics_match_the_ts_helpers() {
-        assert_eq!(topics::sensor("u1", SensorId::Ph), "seedypod/u1/sensor/ph");
+        assert_eq!(topics::sensor("u1", SensorId::Ph), "thryve/u1/sensor/ph");
         assert_eq!(
             topics::actuator_set("u1", ActuatorId::Pump),
-            "seedypod/u1/actuator/pump/set"
+            "thryve/u1/actuator/pump/set"
         );
         assert_eq!(
             topics::alert_ack("u1", AlertKind::WaterLow),
-            "seedypod/u1/alert/water_low/ack"
+            "thryve/u1/alert/water_low/ack"
         );
         assert_eq!(
             topics::sensor_calibrate("u1", SensorId::Ph),
-            "seedypod/u1/sensor/ph/calibrate"
+            "thryve/u1/sensor/ph/calibrate"
         );
         assert_eq!(
             topics::sensor_calibration("u1", SensorId::Ec),
-            "seedypod/u1/sensor/ec/calibration"
+            "thryve/u1/sensor/ec/calibration"
         );
     }
 

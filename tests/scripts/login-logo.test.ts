@@ -15,7 +15,7 @@ vi.setConfig({ testTimeout: 20_000 })
 const repo = resolve(import.meta.dirname, '../..')
 const source = join(repo, 'scripts/login-logo')
 const framesFile = join(source, 'logo.frames')
-const LINE = 'seedypod dev@abc1234  http://seedypod.local:3000\r\n'
+const LINE = 'thryve dev@abc1234  http://thryve.local:3000\r\n'
 const SHOW_CURSOR = '\x1b[?25h'
 const HIDE_CURSOR = '\x1b[?25l'
 
@@ -49,7 +49,7 @@ interface Spec {
 }
 
 function pty(spec: Spec = {}) {
-  const env = { PATH: process.env.PATH, HOME: home, HOSTNAME: 'seedypod.lan', LANG: 'en_GB.UTF-8', TERM: 'xterm-kitty', ...spec.env }
+  const env = { PATH: process.env.PATH, HOME: home, HOSTNAME: 'thryve.lan', LANG: 'en_GB.UTF-8', TERM: 'xterm-kitty', ...spec.env }
   const r = spawnSync('python3', [join(repo, 'tests/scripts/pty-run.py'), JSON.stringify({ argv: ['bash', logo], ...spec, env })], { encoding: 'utf8' })
   const { output, status, first, last } = JSON.parse(r.stdout) as { output: string, status: number, first: number | null, last: number | null }
   return { out: Buffer.from(output, 'base64').toString('utf8'), status, seconds: (last ?? 0) - (first ?? 0) }
@@ -93,20 +93,20 @@ describe('login-logo animation', () => {
   it('writes the version and the address beside the logo', () => {
     const r = pty()
     expect(r.out).toContain('\x1b[46C\x1b[38;5;245mdev@abc1234')
-    expect(r.out).toContain('\x1b[46C\x1b[38;5;72mhttp://seedypod.local:3000\x1b[0m')
+    expect(r.out).toContain('\x1b[46C\x1b[38;5;72mhttp://thryve.local:3000\x1b[0m')
   })
 
   it('drops the port when port 80 forwards to core', () => {
     writeFileSync(join(share, 'port80.nft'), '')
     const r = pty()
-    expect(r.out).toContain('\x1b[46C\x1b[38;5;72mhttp://seedypod.local\x1b[0m')
+    expect(r.out).toContain('\x1b[46C\x1b[38;5;72mhttp://thryve.local\x1b[0m')
     expect(r.out).not.toContain(':3000')
   })
 
   it('leaves the version out when none was installed', () => {
     rmSync(join(share, 'version'))
     const r = pty()
-    expect(r.out).toContain('http://seedypod.local:3000')
+    expect(r.out).toContain('http://thryve.local:3000')
     expect(r.out).not.toContain('\x1b[38;5;245m')
   })
 
@@ -129,7 +129,7 @@ describe('login-logo still fallback', () => {
   })
 
   it.each<[string, Spec]>([
-    ['too narrow', { cols: 72 }],
+    ['too narrow', { cols: 68 }],
     ['too short', { rows: 21 }],
     ['of unknown size', { rows: 0, cols: 0 }],
     ['TERM=dumb', { env: { TERM: 'dumb', COLORTERM: 'truecolor' } }],
@@ -158,8 +158,8 @@ describe('login-logo still fallback', () => {
 })
 
 describe('login-logo opt-outs', () => {
-  it('stays out of the way of ~/.hushlogin and SEEDYPOD_NO_LOGO=1', () => {
-    expect(pty({ env: { SEEDYPOD_NO_LOGO: '1' } }).out).toBe('')
+  it('stays out of the way of ~/.hushlogin and THRYVE_NO_LOGO=1', () => {
+    expect(pty({ env: { THRYVE_NO_LOGO: '1' } }).out).toBe('')
     writeFileSync(join(home, '.hushlogin'), '')
     expect(pty().out).toBe('')
   })
@@ -221,7 +221,7 @@ describe('logo.frames', () => {
     const [rows, textCol, , delay] = records()[0].split(' ').map(Number)
     expect(rows).toBeGreaterThanOrEqual(18)
     expect(rows).toBeLessThanOrEqual(22)
-    expect(textCol + 'http://seedypod.local:3000'.length).toBeLessThan(80)
+    expect(textCol + 'http://thryve.local:3000'.length).toBeLessThan(80)
     expect(delay * (records().length - 4)).toBeGreaterThan(1.2)
     expect(delay * (records().length - 4)).toBeLessThan(1.8)
   })
@@ -236,11 +236,11 @@ describe('logo.frames', () => {
     const logoCells = [...true24.values()].filter(ch => !/[a-z]/.test(ch))
     expect(logoCells.length).toBeGreaterThan(400)
     expect(new Set(logoCells)).toEqual(new Set(['▀', '▄', '█']))
-    expect([...true24.values()].filter(ch => /[a-z]/.test(ch)).join('')).toBe('seedypod')
+    expect([...true24.values()].filter(ch => /[a-z]/.test(ch)).join('')).toBe('thryve')
     // The word, and the facts under it, start level with the top of the logo.
     const [, textCol, textRow] = records()[0].split(' ').map(Number)
     expect(textRow).toBe(0)
-    expect(true24.get(`0,${textCol}`)).toBe('s')
+    expect(true24.get(`0,${textCol}`)).toBe('t')
     expect([...true24].some(([cell, ch]) => cell.startsWith('0,') && !/[a-z]/.test(ch))).toBe(true)
   })
 
@@ -262,8 +262,8 @@ describe('profile.d hook', () => {
   let hook: string
 
   beforeEach(() => {
-    hook = join(dir, 'seedypod-logo.sh')
-    writeFileSync(hook, readFileSync(join(source, 'profile.sh'), 'utf8').replaceAll('/usr/local/share/seedypod', share))
+    hook = join(dir, 'thryve-logo.sh')
+    writeFileSync(hook, readFileSync(join(source, 'profile.sh'), 'utf8').replaceAll('/usr/local/share/thryve', share))
     // The hook's job is deciding whether to start the logo, so count the starts.
     writeFileSync(logo, `#!/bin/sh\necho started >> "${join(dir, 'starts')}"\n`)
     chmodSync(logo, 0o755)
@@ -275,7 +275,7 @@ describe('profile.d hook', () => {
   }
 
   it.each([['bash'], ['sh']])('does nothing when a non-interactive %s sources it', (sh) => {
-    const r = spawnSync(sh, ['-c', `. "${hook}"; echo "shown=\${SEEDYPOD_LOGO_SHOWN:-no}"`], { encoding: 'utf8' })
+    const r = spawnSync(sh, ['-c', `. "${hook}"; echo "shown=\${THRYVE_LOGO_SHOWN:-no}"`], { encoding: 'utf8' })
     expect(r).toMatchObject({ status: 0, stdout: 'shown=no\n', stderr: '' })
     expect(starts()).toBe(0)
   })
@@ -297,7 +297,7 @@ describe('profile.d hook', () => {
     expect(starts()).toBe(1)
   })
 
-  it.each([['TMUX', '/tmp/tmux-1000/default,1,0'], ['STY', '1234.pts-0.seedypod']])('leaves %s panes alone', (name, value) => {
+  it.each([['TMUX', '/tmp/tmux-1000/default,1,0'], ['STY', '1234.pts-0.thryve']])('leaves %s panes alone', (name, value) => {
     shell('', { env: { [name]: value } })
     expect(starts()).toBe(0)
   })
@@ -326,7 +326,7 @@ describe('scripts/install --login-logo', () => {
 
   const install = (env = {}) => spawnSync('bash', [join(repo, 'scripts/install'), '--login-logo', '--prefix', prefix], {
     encoding: 'utf8',
-    env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, SEEDYPOD_ROOT: root, ...env },
+    env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, THRYVE_ROOT: root, ...env },
   })
 
   beforeEach(() => {
@@ -342,8 +342,8 @@ describe('scripts/install --login-logo', () => {
     chmodSync(join(bin, 'chown'), 0o755)
   })
 
-  const installed = () => join(root, 'usr/local/share/seedypod')
-  const hook = () => join(root, 'etc/profile.d/seedypod-logo.sh')
+  const installed = () => join(root, 'usr/local/share/thryve')
+  const hook = () => join(root, 'etc/profile.d/thryve-logo.sh')
 
   it('puts the logo outside the prefix, owned by root, with the version pinned', () => {
     expect(install()).toMatchObject({ status: 0, stderr: '' })

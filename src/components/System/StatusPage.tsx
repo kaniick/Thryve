@@ -98,7 +98,7 @@ function HealthStrip() {
   const summary = checkSummary(list)
   const worstKind = worstState(list)
   const worst = list.find(c => c.state === worstKind) ?? null
-  const head = healthHeadline(settings.data?.unitName ?? 'seedypod', list, worst)
+  const head = healthHeadline(settings.data?.unitName ?? 'thryve', list, worst)
   const frac = summary ? summary.passing / summary.total : 0
   const C = 2 * Math.PI * 26
   const core = info.data ? coreBuild(info.data.coreVersion) : null

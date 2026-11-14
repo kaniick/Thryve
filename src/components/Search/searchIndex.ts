@@ -124,7 +124,7 @@ export function buildDocsEntries(index: DocsIndex): SearchEntry[] {
     crumbs: page.section ? ['Docs', page.section] : ['Docs'],
     description: page.description,
     keywords: [...page.headings.map(h => h.title), page.keywords].join(' '),
-    href: new URL(page.path, DOCS_BASE).href,
+    href: `${DOCS_BASE}${page.path}`,
     external: true,
     icon: BookOpen,
     boost: DOCS_BOOST,

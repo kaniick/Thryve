@@ -40,11 +40,11 @@ describe('MqttHalClient', () => {
   it('subscribes to the contract topics on connect and rebuilds the snapshot from retained messages', () => {
     const { mqtt, client } = make()
     mqtt.fire('connect')
-    expect(mqtt.subscribed).toContain(`seedypod/${U}/sensor/+`)
-    mqtt.msg(`seedypod/${U}/availability`, 'online')
-    mqtt.msg(`seedypod/${U}/system`, { contract: 1, unitId: U, model: 'gardyn 3.0', halVersion: '0.1.0', caps: { sensors: ['air_temp'], actuators: ['light', 'pump'], cameras: ['upper'] }, limits: { pumpMaxRunS: 900, pumpMaxDuty: 30, waterLowCm: 16 } })
-    mqtt.msg(`seedypod/${U}/sensor/air_temp`, { ts: '2026-10-31T00:00:00Z', value: 22.5, unit: '°C' })
-    mqtt.msg(`seedypod/${U}/alert/water_low`, { kind: 'water_low', active: true, ts: '2026-10-31T00:00:00Z', detail: 'low' })
+    expect(mqtt.subscribed).toContain(`thryve/${U}/sensor/+`)
+    mqtt.msg(`thryve/${U}/availability`, 'online')
+    mqtt.msg(`thryve/${U}/system`, { contract: 1, unitId: U, model: 'gardyn 3.0', halVersion: '0.1.0', caps: { sensors: ['air_temp'], actuators: ['light', 'pump'], cameras: ['upper'] }, limits: { pumpMaxRunS: 900, pumpMaxDuty: 30, waterLowCm: 16 } })
+    mqtt.msg(`thryve/${U}/sensor/air_temp`, { ts: '2026-10-31T00:00:00Z', value: 22.5, unit: '°C' })
+    mqtt.msg(`thryve/${U}/alert/water_low`, { kind: 'water_low', active: true, ts: '2026-10-31T00:00:00Z', detail: 'low' })
     const s = client.snapshot()
     expect(s.online).toBe(true)
     expect(s.system?.limits.pumpMaxDuty).toBe(30)
@@ -55,15 +55,15 @@ describe('MqttHalClient', () => {
   it('publishes a command and resolves when hald echoes the new state', async () => {
     const { mqtt, client } = make()
     const p = client.setActuator('light', { on: true, level: 60 })
-    expect(mqtt.published.at(-1)).toMatchObject({ topic: `seedypod/${U}/actuator/light/set`, payload: JSON.stringify({ on: true, level: 60 }) })
-    mqtt.msg(`seedypod/${U}/actuator/light/state`, { on: true, level: 60, since: '2026-10-31T00:00:00Z', fault: null, remainingS: null })
+    expect(mqtt.published.at(-1)).toMatchObject({ topic: `thryve/${U}/actuator/light/set`, payload: JSON.stringify({ on: true, level: 60 }) })
+    mqtt.msg(`thryve/${U}/actuator/light/state`, { on: true, level: 60, since: '2026-10-31T00:00:00Z', fault: null, remainingS: null })
     await expect(p).resolves.toMatchObject({ on: true, level: 60 })
   })
 
   it('maps a refused start (state echo with fault, off) to HalRefused and times out otherwise', async () => {
     const { mqtt, client } = make()
     const p = client.setActuator('pump', { on: true })
-    mqtt.msg(`seedypod/${U}/actuator/pump/state`, { on: false, level: 0, since: '2026-10-31T00:00:00Z', fault: 'dry-run', remainingS: null })
+    mqtt.msg(`thryve/${U}/actuator/pump/state`, { on: false, level: 0, since: '2026-10-31T00:00:00Z', fault: 'dry-run', remainingS: null })
     await expect(p).rejects.toBeInstanceOf(HalRefused)
     await expect(client.setActuator('pump', { on: false })).rejects.toThrow(/did not acknowledge/)
   })
@@ -72,14 +72,14 @@ describe('MqttHalClient', () => {
     let now = Date.parse('2026-11-11T00:03:05Z')
     const mqtt = new FakeMqtt()
     const client = new MqttHalClient({ unitId: U, mqtt, httpBase: '', now: () => new Date(now) })
-    mqtt.msg(`seedypod/${U}/actuator/pump/state`, { on: true, level: 30, since: '2026-11-11T00:03:05Z', fault: null, remainingS: 900 })
+    mqtt.msg(`thryve/${U}/actuator/pump/state`, { on: true, level: 30, since: '2026-11-11T00:03:05Z', fault: null, remainingS: 900 })
     expect(client.snapshot().actuators.pump?.remainingS).toBe(900)
     // Six minutes on, the unit's API said 900 still.
     now += 6 * 60_000 + 500
     expect(client.snapshot().actuators.pump?.remainingS).toBe(540)
     now += 20 * 60_000
     expect(client.snapshot().actuators.pump?.remainingS).toBe(0)
-    mqtt.msg(`seedypod/${U}/actuator/light/state`, { on: true, level: 100, since: '2026-11-11T00:03:05Z', fault: null, remainingS: null })
+    mqtt.msg(`thryve/${U}/actuator/light/state`, { on: true, level: 100, since: '2026-11-11T00:03:05Z', fault: null, remainingS: null })
     expect(client.snapshot().actuators.light?.remainingS).toBeNull()
   })
 
@@ -87,20 +87,20 @@ describe('MqttHalClient', () => {
     const mqtt = new FakeMqtt()
     mqtt.connected = true
     void new MqttHalClient({ unitId: U, mqtt, httpBase: '' })
-    expect(mqtt.subscribed).toContain(`seedypod/${U}/system`)
+    expect(mqtt.subscribed).toContain(`thryve/${U}/system`)
     mqtt.fire('connect')
-    expect(mqtt.subscribed.filter(t => t === `seedypod/${U}/system`)).toHaveLength(2)
+    expect(mqtt.subscribed.filter(t => t === `thryve/${U}/system`)).toHaveLength(2)
   })
 
   it('round-trips a calibration and ignores retained results nobody asked for', async () => {
     const { mqtt, client } = make()
     mqtt.fire('connect')
-    expect(mqtt.subscribed).toContain(`seedypod/${U}/sensor/+/calibration`)
-    mqtt.msg(`seedypod/${U}/sensor/ph/calibration`, { ts: '2026-10-30T00:00:00Z', point: 'low', ok: true, points: 2, detail: '' })
+    expect(mqtt.subscribed).toContain(`thryve/${U}/sensor/+/calibration`)
+    mqtt.msg(`thryve/${U}/sensor/ph/calibration`, { ts: '2026-10-30T00:00:00Z', point: 'low', ok: true, points: 2, detail: '' })
     const p = client.calibrate('ph', { point: 'mid', value: 7 })
-    expect(mqtt.published.at(-1)).toMatchObject({ topic: `seedypod/${U}/sensor/ph/calibrate`, payload: JSON.stringify({ point: 'mid', value: 7 }) })
-    mqtt.msg(`seedypod/${U}/sensor/ph/calibration`, { ts: '2026-10-31T00:00:00Z', point: 'low', ok: true, points: 2, detail: '' })
-    mqtt.msg(`seedypod/${U}/sensor/ph/calibration`, { ts: '2026-10-31T00:00:01Z', point: 'mid', ok: true, points: 1, detail: '' })
+    expect(mqtt.published.at(-1)).toMatchObject({ topic: `thryve/${U}/sensor/ph/calibrate`, payload: JSON.stringify({ point: 'mid', value: 7 }) })
+    mqtt.msg(`thryve/${U}/sensor/ph/calibration`, { ts: '2026-10-31T00:00:00Z', point: 'low', ok: true, points: 2, detail: '' })
+    mqtt.msg(`thryve/${U}/sensor/ph/calibration`, { ts: '2026-10-31T00:00:01Z', point: 'mid', ok: true, points: 1, detail: '' })
     await expect(p).resolves.toMatchObject({ ok: true, points: 1 })
     expect(client.snapshot().sensors.ph).toBeUndefined()
     const slow = new MqttHalClient({ unitId: U, mqtt, httpBase: '', calibrationTimeoutMs: 10 })
@@ -110,16 +110,16 @@ describe('MqttHalClient', () => {
   it('round-trips devices/set by requestId and tracks the retained inventory', async () => {
     const { mqtt, client } = make()
     mqtt.fire('connect')
-    expect(mqtt.subscribed).toEqual(expect.arrayContaining([`seedypod/${U}/devices`, `seedypod/${U}/devices/result`]))
+    expect(mqtt.subscribed).toEqual(expect.arrayContaining([`thryve/${U}/devices`, `thryve/${U}/devices/result`]))
     const inv = { sensors: [], addable: [] }
-    mqtt.msg(`seedypod/${U}/devices`, inv)
+    mqtt.msg(`thryve/${U}/devices`, inv)
     expect(client.snapshot().devices).toEqual(inv)
     const p = client.addSensor('ezo_ph', 0x63)
     const sent = JSON.parse(mqtt.published.at(-1)?.payload ?? '{}')
-    expect(mqtt.published.at(-1)?.topic).toBe(`seedypod/${U}/devices/set`)
+    expect(mqtt.published.at(-1)?.topic).toBe(`thryve/${U}/devices/set`)
     expect(sent).toMatchObject({ op: 'add', kind: 'ezo_ph', addr: 0x63 })
-    mqtt.msg(`seedypod/${U}/devices/result`, { requestId: 'someone-else', ok: true, detail: '' })
-    mqtt.msg(`seedypod/${U}/devices/result`, { requestId: sent.requestId, ok: false, detail: 'probe failed' })
+    mqtt.msg(`thryve/${U}/devices/result`, { requestId: 'someone-else', ok: true, detail: '' })
+    mqtt.msg(`thryve/${U}/devices/result`, { requestId: sent.requestId, ok: false, detail: 'probe failed' })
     await expect(p).resolves.toEqual({ requestId: sent.requestId, ok: false, detail: 'probe failed' })
     const slow = new MqttHalClient({ unitId: U, mqtt, httpBase: '', devicesTimeoutMs: 10 })
     await expect(slow.removeSensor('ezo_ph', 0x63)).rejects.toThrow(/did not answer the remove ezo_ph request/)
@@ -134,7 +134,7 @@ describe('MqttHalClient', () => {
   it('fetches a full-size pod-ID still without touching the link counts (#224)', async () => {
     const urls: string[] = []
     const answers = [
-      new Response(new Uint8Array(3000), { headers: { 'x-seedypod-damaged-frames': '2' } }),
+      new Response(new Uint8Array(3000), { headers: { 'x-thryve-damaged-frames': '2' } }),
       new Response(new Uint8Array(9000)),
       new Response('no good full-size frame: damaged frame\n', { status: 503 }),
       new Response('', { status: 404 }),
@@ -153,8 +153,8 @@ describe('MqttHalClient', () => {
 
   it('picks up what a still says about the link, whether or not it was good', async () => {
     const answers = [
-      new Response(new Uint8Array(3000), { headers: { 'x-seedypod-damaged-frames': '2', 'x-seedypod-hub-boots': '8/10' } }),
-      new Response('no good frame', { status: 503, headers: { 'x-seedypod-damaged-frames': '1' } }),
+      new Response(new Uint8Array(3000), { headers: { 'x-thryve-damaged-frames': '2', 'x-thryve-hub-boots': '8/10' } }),
+      new Response('no good frame', { status: 503, headers: { 'x-thryve-damaged-frames': '1' } }),
     ]
     const client = new MqttHalClient({ unitId: U, mqtt: new FakeMqtt(), httpBase: '', fetchImpl: (async () => answers.shift()) as unknown as typeof fetch })
     expect(client.damagedFrames('upper')).toBe(0)
@@ -176,7 +176,7 @@ describe('MqttHalClient', () => {
       httpBase: '',
       fetchImpl: (async () => {
         if (!up) throw new Error('fetch failed')
-        return new Response(new Uint8Array(3000), { headers: { 'x-seedypod-damaged-frames': '3' } })
+        return new Response(new Uint8Array(3000), { headers: { 'x-thryve-damaged-frames': '3' } })
       }) as unknown as typeof fetch,
     })
     await client.captureStill('upper')
@@ -191,11 +191,11 @@ describe('MqttHalClient', () => {
     const events: string[] = []
     client.subscribe(e => events.push(e.type))
     await client.acknowledgeAlert('pump_fault')
-    expect(mqtt.published.at(-1)?.topic).toBe(`seedypod/${U}/alert/pump_fault/ack`)
+    expect(mqtt.published.at(-1)?.topic).toBe(`thryve/${U}/alert/pump_fault/ack`)
     expect((await client.captureStill('upper')).byteLength).toBe(3000)
-    mqtt.msg(`seedypod/${U}/event/button`, { press: 'double' })
-    mqtt.msg(`seedypod/${U}/sensor/air_temp`, 'not json')
-    mqtt.msg(`seedypod/${U}/alert/water_low`, { kind: 'water_low', active: true, ts: 'not-a-date', detail: '' })
+    mqtt.msg(`thryve/${U}/event/button`, { press: 'double' })
+    mqtt.msg(`thryve/${U}/sensor/air_temp`, 'not json')
+    mqtt.msg(`thryve/${U}/alert/water_low`, { kind: 'water_low', active: true, ts: 'not-a-date', detail: '' })
     mqtt.msg(`other/${U}/sensor/air_temp`, { ts: '2026-10-31T00:00:00Z', value: 1, unit: 'x' })
     expect(events).toEqual(['button'])
   })

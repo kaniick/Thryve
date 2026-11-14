@@ -22,7 +22,7 @@ const STAGES: { value: Stage, label: string }[] = [{ value: 'germination', label
 const STATUS: { value: PodStatus, label: string }[] = [{ value: 'empty', label: 'Empty' }, { value: 'seeded', label: 'Seeded' }, { value: 'growing', label: 'Growing' }, { value: 'harvest', label: 'Harvest' }, { value: 'attention', label: 'Attention' }]
 const TREND: Record<string, string> = { growing: 'Growing', stalled: 'Stalled', declining: 'Shrinking' }
 type View = 'pods' | 'tower'
-const VIEW_KEY = 'seedypod.growView'
+const VIEW_KEY = 'thryve.growView'
 const VIEWS: { value: View, label: ReactNode }[] = [
   { value: 'pods', label: [<LayoutGrid key="i" size={16} aria-hidden="true" />, 'Pods'] },
   { value: 'tower', label: [<Box key="i" size={16} aria-hidden="true" />, 'Tower'] },

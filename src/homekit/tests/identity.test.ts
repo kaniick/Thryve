@@ -92,9 +92,10 @@ describe('derivation', () => {
   })
 
   it('pins the derivation, so a refactor can\'t silently re-key every unit', () => {
-    expect(deriveUsername('gardyn-1a2b3c4d', 0)).toBe('B6:C2:6B:92:03:40')
-    expect(derivePincode('gardyn-1a2b3c4d', 0)).toBe('316-88-759')
-    expect(deriveSetupId('gardyn-1a2b3c4d', 0)).toBe('A3J5')
+    // Salt is thryve-homekit-v1 (changed from seedypod-homekit-v1 in the rebrand; units must re-pair).
+    expect(deriveUsername('gardyn-1a2b3c4d', 0)).toBe('8E:9D:F6:B3:5D:C0')
+    expect(derivePincode('gardyn-1a2b3c4d', 0)).toBe('104-53-070')
+    expect(deriveSetupId('gardyn-1a2b3c4d', 0)).toBe('NSFE')
   })
 
   it('formats like HAP wants: locally administered unicast MAC, XXX-XX-XXX, 4-char setup id', () => {

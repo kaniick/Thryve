@@ -285,7 +285,7 @@ function SettingsForm({ s, coreVersion, coreHost, system, onSave, saving }: {
             {bucketOpen && (
               <>
                 <Row label="Mirror endpoint" sub="Any S3-compatible service: R2, MinIO, a NAS"><TextField className="w-60" value={str('mirrorEndpoint')} onChange={v => setD({ ...d, mirrorEndpoint: v || null })} placeholder="https://<account>.r2.cloudflarestorage.com" /></Row>
-                <Row label="Bucket"><TextField className="w-60" value={str('mirrorBucket')} onChange={v => setD({ ...d, mirrorBucket: v || null })} placeholder="seedypod" /></Row>
+                <Row label="Bucket"><TextField className="w-60" value={str('mirrorBucket')} onChange={v => setD({ ...d, mirrorBucket: v || null })} placeholder="thryve" /></Row>
                 <Row label="Region"><TextField className="w-60" value={str('mirrorRegion')} onChange={v => setD({ ...d, mirrorRegion: v || 'auto' })} placeholder="auto" /></Row>
                 <Row label="Key prefix" sub="Folder inside the bucket, e.g. kitchen/"><TextField className="w-60" value={str('mirrorPrefix')} onChange={v => setD({ ...d, mirrorPrefix: v })} /></Row>
                 <Row label="Access key id"><TextField className="w-60" value={str('mirrorAccessKeyId')} onChange={v => setD({ ...d, mirrorAccessKeyId: v || null })} /></Row>

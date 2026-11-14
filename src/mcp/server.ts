@@ -39,7 +39,7 @@ function rated<T extends object>(curve: T, spec: LightSpec) {
 
 export function createMcpServer(ctx: Context): McpServer {
   const caller = createCaller(ctx)
-  const server = new McpServer({ name: 'seedypod', version: ctx.version })
+  const server = new McpServer({ name: 'Thryve', version: ctx.version })
 
   // ── Read ─────────────────────────────────────────────────────────────────
   server.registerTool('status', {
@@ -453,7 +453,7 @@ export function createMcpServer(ctx: Context): McpServer {
   }, async i => text(await caller.schedules.library.activate(i)))
 
   server.registerTool('upload_model', {
-    description: 'Add a pod-state weights file (seedypod-cnn v1, from seedypod/training) as a model revision. Give its contents as base64, or a URL on the local network (the laptop that trained it; the unit fetches nothing from the internet), and its SHA-256, which must match. Stored disabled unless enable is true; an enabled revision runs on every capture as its own analyser beside the others. Confirm with the user before enabling.',
+    description: 'Add a pod-state weights file (thryve-cnn v1, from seedypod/training) as a model revision. Give its contents as base64, or a URL on the local network (the laptop that trained it; the unit fetches nothing from the internet), and its SHA-256, which must match. Stored disabled unless enable is true; an enabled revision runs on every capture as its own analyser beside the others. Confirm with the user before enabling.',
     inputSchema: { base64: z.string().optional(), url: z.string().optional(), sha256: z.string().length(64), enable: z.boolean().optional() },
   }, async (i) => {
     if (!i.base64 === !i.url) throw new Error('give exactly one of base64 or url')
@@ -476,13 +476,13 @@ export function createMcpServer(ctx: Context): McpServer {
   server.registerTool('capture_still', { description: 'Take a still from a camera now and return its record (URL relative to the core host).', inputSchema: { camera: z.enum(['upper', 'lower']) } }, async i => text(await caller.camera.capture(i)))
 
   // ── Resources ────────────────────────────────────────────────────────────
-  server.registerResource('sensors', 'seedypod://sensors', { description: 'Latest sensor readings', mimeType: 'application/json' }, async uri => ({
+  server.registerResource('sensors', 'thryve://sensors', { description: 'Latest sensor readings', mimeType: 'application/json' }, async uri => ({
     contents: [{ uri: uri.href, mimeType: 'application/json', text: JSON.stringify(ctx.hal.snapshot().sensors) }],
   }))
-  server.registerResource('devices', 'seedypod://devices', { description: 'Sensor devices (with probe status) and addable kinds with their calibration steps', mimeType: 'application/json' }, async uri => ({
+  server.registerResource('devices', 'thryve://devices', { description: 'Sensor devices (with probe status) and addable kinds with their calibration steps', mimeType: 'application/json' }, async uri => ({
     contents: [{ uri: uri.href, mimeType: 'application/json', text: JSON.stringify(ctx.hal.snapshot().devices) }],
   }))
-  server.registerResource('limits', 'seedypod://limits', { description: 'Hardware limits the HAL enforces (pump max run, max duty, dry-run threshold)', mimeType: 'application/json' }, async uri => ({
+  server.registerResource('limits', 'thryve://limits', { description: 'Hardware limits the HAL enforces (pump max run, max duty, dry-run threshold)', mimeType: 'application/json' }, async uri => ({
     contents: [{ uri: uri.href, mimeType: 'application/json', text: JSON.stringify(ctx.hal.snapshot().system?.limits ?? null) }],
   }))
 

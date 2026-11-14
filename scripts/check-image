@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Checks a seedypod OS image before you flash it, or a card before its first boot.
+# Checks a thryve OS image before you flash it, or a card before its first boot.
 # Runs on macOS and Linux and changes nothing.
-# Usage: scripts/check-image seedypod-os.img.xz   the download is whole and is a Pi image;
+# Usage: scripts/check-image thryve-os.img.xz   the download is whole and is a Pi image;
 #                                                 its .sha256 has to sit next to it
 #        scripts/check-image --card <bootfs>      the card's boot partition, once written:
 #                                                 will it boot a Pi Zero W, and what login
@@ -50,15 +50,15 @@ check_card() {
   if [ -f "$boot/kernel.img" ]; then
     ok "it has the 32-bit kernel a Pi Zero W boots"
   else
-    bad "no kernel.img: this is a 64-bit OS, which a Pi Zero W can't boot and won't say so. Flash seedypod OS"
+    bad "no kernel.img: this is a 64-bit OS, which a Pi Zero W can't boot and won't say so. Flash thryve OS"
   fi
   if grep -q '^arm_64bit=1' "$boot/config.txt"; then
     bad "config.txt has arm_64bit=1, which a Pi Zero W can't boot"
   fi
-  if [ -f "$boot/seedypod-image.txt" ]; then
-    ok "seedypod OS, $(sed -n 's/^branch=//p' "$boot/seedypod-image.txt") $(sed -n 's/^commit=\(.\{7\}\).*/\1/p' "$boot/seedypod-image.txt")"
+  if [ -f "$boot/thryve-image.txt" ]; then
+    ok "thryve OS, $(sed -n 's/^branch=//p' "$boot/thryve-image.txt") $(sed -n 's/^commit=\(.\{7\}\).*/\1/p' "$boot/thryve-image.txt")"
   else
-    note "not seedypod OS: scripts/install-hal and scripts/install are still to run on it"
+    note "not thryve OS: scripts/install-hal and scripts/install are still to run on it"
   fi
 
   login="$(yaml_value "$boot/user-data" user name 2>/dev/null || true)"
@@ -71,7 +71,7 @@ check_card() {
   if [ -n "$wifi" ]; then
     ok "Wi-Fi: $wifi (a Pi Zero W only has 2.4 GHz)"
   else
-    note "no Wi-Fi set: hold the unit's button for 10 seconds to open seedypod-setup-xxxx"
+    note "no Wi-Fi set: hold the unit's button for 10 seconds to open thryve-setup-xxxx"
   fi
 }
 

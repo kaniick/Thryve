@@ -201,7 +201,7 @@ describe('system.checks', () => {
 
   it('reads Wi-Fi: unmanaged, setup hotspot, offline, connected without an address', async () => {
     expect((await rig({ wifi: null }).checks()).network).toMatchObject({ state: 'idle', detail: 'Not managed on this host' })
-    expect((await rig({ wifi: { mode: 'setup', setup: { ssid: 'seedypod-setup', url: 'x', until: iso(0) } } }).checks()).network).toMatchObject({ state: 'stalled', detail: 'Setup hotspot seedypod-setup up' })
+    expect((await rig({ wifi: { mode: 'setup', setup: { ssid: 'thryve-setup', url: 'x', until: iso(0) } } }).checks()).network).toMatchObject({ state: 'stalled', detail: 'Setup hotspot thryve-setup up' })
     expect((await rig({ wifi: { mode: 'setup', setup: null } }).checks()).network.detail).toBe('Setup hotspot up')
     expect((await rig({ wifi: { mode: 'offline', lastError: 'wrong password' } }).checks()).network).toMatchObject({ state: 'down', detail: 'wrong password' })
     expect((await rig({ wifi: { mode: 'offline', lastError: null } }).checks()).network.detail).toBe('Not connected')

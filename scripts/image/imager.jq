@@ -1,4 +1,4 @@
-# A Raspberry Pi Imager repository holding only seedypod OS, offered only on the boards
+# A Raspberry Pi Imager repository holding only thryve OS, offered only on the boards
 # it runs on, so the wrong OS for a Pi Zero W can't be picked. `init_format` is what
 # turns on Imager's customisation (login, Wi-Fi, hostname) for this image.
 {
@@ -24,7 +24,7 @@
   },
   os_list: [
     {
-      name: "seedypod OS",
+      name: "thryve OS",
       description: "Raspberry Pi OS Lite (32-bit) with hald and core installed (\($branch) \($commit))",
       icon: $icon,
       url: $url,

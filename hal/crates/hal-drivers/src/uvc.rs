@@ -74,7 +74,7 @@ pub fn jpeg_is_plausible(bytes: &[u8], min_len: usize) -> bool {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct UvcConfig {
-    /// Preferred node, normally the stable udev name (`/dev/seedypod/camera-upper`).
+    /// Preferred node, normally the stable udev name (`/dev/thryve/camera-upper`).
     pub device: PathBuf,
     /// Used when `device` doesn't exist, e.g. before the udev rules are installed.
     pub fallback: Option<PathBuf>,
@@ -457,7 +457,7 @@ mod tests {
 
     #[test]
     fn args_follow_the_upstream_lessons() {
-        let cfg = UvcConfig::new("/dev/seedypod/camera-upper");
+        let cfg = UvcConfig::new("/dev/thryve/camera-upper");
         let a = fswebcam_args(
             &cfg,
             Path::new("/dev/video0"),
@@ -790,7 +790,7 @@ mod tests {
 
     #[test]
     fn full_size_args_differ_from_a_stills_only_in_size_and_quality() {
-        let cfg = UvcConfig::new("/dev/seedypod/camera-upper");
+        let cfg = UvcConfig::new("/dev/thryve/camera-upper");
         let (dev, out) = (Path::new("/dev/video0"), Path::new("/tmp/x.jpg"));
         let still = shot_args(&cfg, Shot::Still, dev, out, None);
         let full = shot_args(&cfg, Shot::Full, dev, out, None);
@@ -902,7 +902,7 @@ mod tests {
     #[test]
     fn falls_back_when_the_stable_name_is_missing() {
         let dir = scratch("fallback");
-        let mut cfg = UvcConfig::new("/dev/seedypod/camera-does-not-exist");
+        let mut cfg = UvcConfig::new("/dev/thryve/camera-does-not-exist");
         assert_eq!(cfg.resolve(), None);
         cfg.fallback = Some("/dev/video-does-not-exist".into());
         assert_eq!(cfg.resolve(), None);

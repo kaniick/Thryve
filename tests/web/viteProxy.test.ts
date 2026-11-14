@@ -21,9 +21,9 @@ describe('the web dev server\'s API proxy', () => {
   })
 
   it('points at a unit and sends its API key from the server side', async () => {
-    vi.stubEnv('API_TARGET', 'http://seedypod.local:3000')
+    vi.stubEnv('API_TARGET', 'http://thryve.local:3000')
     vi.stubEnv('API_KEY', 'sekrit')
     const p = await proxy()
-    expect(p).toMatchObject({ target: 'http://seedypod.local:3000', changeOrigin: true, headers: { 'x-api-key': 'sekrit' } })
+    expect(p).toMatchObject({ target: 'http://thryve.local:3000', changeOrigin: true, headers: { 'x-api-key': 'sekrit' } })
   })
 })

@@ -40,7 +40,7 @@ use tracing_subscriber::layer::{Layer, SubscriberExt};
 use tracing_subscriber::util::SubscriberInitExt;
 
 #[derive(Parser, Debug)]
-#[command(name = "hald", version, about = "seedypod hardware daemon")]
+#[command(name = "hald", version, about = "thryve hardware daemon")]
 struct Cli {
     /// Path to hal.toml (defaults are the documented Gardyn pin map).
     #[arg(short, long, env = "HAL_CONFIG")]
@@ -192,7 +192,7 @@ async fn main() -> anyhow::Result<()> {
         cfg.mqtt_url = Some(u.clone());
     }
     let state_dir = if cli.sim && cfg.state_dir == config::Config::default().state_dir {
-        std::env::temp_dir().join("seedypod-sim")
+        std::env::temp_dir().join("thryve-sim")
     } else {
         cfg.state_dir.clone()
     };

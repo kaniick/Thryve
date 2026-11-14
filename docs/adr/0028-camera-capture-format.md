@@ -22,7 +22,7 @@ the analysers measure (ADR 0019).
 We measured on the real unit (Pi Zero W, armv6l, Raspbian kernel 6.18) on
 2026-11-09 between 07:39 and 07:54 UTC, with both cameras present. The upper
 camera is on USB port 1-1.3 and the lower on 1-1.4, behind a Terminus 1a40:0801
-hub. Every camera access ran under `flock /tmp/seedypod-camera.lock`, between
+hub. Every camera access ran under `flock /tmp/thryve-camera.lock`, between
 hald's hourly captures. The scene was the empty tower lit by room lights at
 night, so this measures how much *false* cover and noise each format makes,
 not how well it sees leaves. Analysis used both v2 on-device analysers from

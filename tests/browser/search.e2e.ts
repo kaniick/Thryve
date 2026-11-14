@@ -23,8 +23,8 @@ test('⌘K search opens from anywhere and jumps to a setting or a plant', async 
 
 test('⌘K search finds the bundled docs offline and opens a guide in a new tab', async ({ page, context }) => {
   // Units often have no internet: the live index fails, so the palette searches its bundled snapshot.
-  await context.route('https://seedypod.github.io/search-index.json', route => route.abort('internetdisconnected'))
-  await context.route('https://seedypod.github.io/core/debugging/', route => route.fulfill({ contentType: 'text/html', body: '<title>Debugging</title>' }))
+  await context.route('https://github.com/kaniick/Thryve/tree/dev/docs/search-index.json', route => route.abort('internetdisconnected'))
+  await context.route('https://github.com/kaniick/Thryve/tree/dev/docs/core/debugging/', route => route.fulfill({ contentType: 'text/html', body: '<title>Debugging</title>' }))
   await page.goto('/water')
   await page.getByRole('button', { name: 'Search' }).click()
   const palette = page.getByRole('dialog', { name: 'Search' })
@@ -35,7 +35,7 @@ test('⌘K search finds the bundled docs offline and opens a guide in a new tab'
   const popupEvent = page.waitForEvent('popup')
   await page.keyboard.press('Enter')
   const popup = await popupEvent
-  await expect(popup).toHaveURL('https://seedypod.github.io/core/debugging/')
+  await expect(popup).toHaveURL('https://github.com/kaniick/Thryve/tree/dev/docs/core/debugging/')
   await popup.close()
   await expect(palette).toBeHidden()
   await expect(page).toHaveURL(/\/water$/)

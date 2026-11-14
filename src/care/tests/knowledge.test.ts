@@ -11,7 +11,7 @@ describe('knowledge citations (ADR-0029)', () => {
     for (const c of Object.values(CITE)) {
       const headings = note(c.note).split('\n').filter(l => /^#{1,6} /.test(l)).map(l => l.replace(/^#+ /, '').trim())
       expect(headings, `${c.note} has "${c.section}"`).toContain(c.section)
-      expect(c.url).toBe(`https://github.com/seedypod/core/blob/dev/${c.note}#${anchor(c.section)}`)
+      expect(c.url).toBe(`https://github.com/kaniick/Thryve/blob/dev/${c.note}#${anchor(c.section)}`)
     }
   })
 

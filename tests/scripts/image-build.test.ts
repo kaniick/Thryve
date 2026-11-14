@@ -11,7 +11,7 @@ const repo = resolve(import.meta.dirname, '../..')
 const read = (path: string) => readFileSync(join(repo, path), 'utf8')
 
 function imager() {
-  const r = spawnSync('jq', ['-n', '--arg', 'url', 'https://x/seedypod-os.img.xz', '--arg', 'icon', 'https://x/icon.png', '--arg', 'date', '2026-11-06',
+  const r = spawnSync('jq', ['-n', '--arg', 'url', 'https://x/thryve-os.img.xz', '--arg', 'icon', 'https://x/icon.png', '--arg', 'date', '2026-11-06',
     '--arg', 'branch', 'dev', '--arg', 'commit', '83c4b1e', '--argjson', 'extract_size', '3000', '--arg', 'extract_sha256', 'aa',
     '--argjson', 'download_size', '600', '--arg', 'download_sha256', 'bb', '-f', join(repo, 'scripts/image/imager.jq')], { encoding: 'utf8' })
   expect(r.status).toBe(0)
@@ -41,7 +41,7 @@ describe('the Imager repository', () => {
   })
 
   it('carries what Imager verifies the download with', () => {
-    expect(imager().os_list[0]).toMatchObject({ url: 'https://x/seedypod-os.img.xz', extract_size: 3000, extract_sha256: 'aa', image_download_size: 600, image_download_sha256: 'bb' })
+    expect(imager().os_list[0]).toMatchObject({ url: 'https://x/thryve-os.img.xz', extract_size: 3000, extract_sha256: 'aa', image_download_size: 600, image_download_sha256: 'bb' })
   })
 })
 
@@ -57,7 +57,7 @@ describe('the CI job', () => {
   })
 
   it('keeps the image through dev-release\'s asset refresh', () => {
-    expect(read('.github/workflows/dev-release.yml')).toContain('grep -v \'^seedypod-os\'')
+    expect(read('.github/workflows/dev-release.yml')).toContain('grep -v \'^thryve-os\'')
     expect(read('.github/workflows/dev-release.yml')).not.toContain('gh release delete dev-latest')
   })
 })

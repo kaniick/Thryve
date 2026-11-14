@@ -10,22 +10,22 @@ set -euo pipefail
 
 branch="$1"
 commit="$2"
-here=/tmp/seedypod/image
-assets=/tmp/seedypod/assets
-share=/usr/local/share/seedypod
-lib=/usr/local/lib/seedypod
+here=/tmp/thryve/image
+assets=/tmp/thryve/assets
+share=/usr/local/share/thryve
+lib=/usr/local/lib/thryve
 export DEBIAN_FRONTEND=noninteractive USER=root HOME=/root
 # The build log stays plain text, even when the build runs from a terminal.
-export SEEDYPOD_COLOR=never
+export THRYVE_COLOR=never
 
 # Neither account is a login, and neither name is one a person would pick, so Imager
-# can create any login at all, seedypod included.
-export SEEDYPOD_SERVICE_USER=seedypod-hal SEEDYPOD_CORE_USER=seedypod-core
-useradd --system --home-dir /opt/seedypod --no-create-home --shell /usr/sbin/nologin "$SEEDYPOD_CORE_USER"
+# can create any login at all, thryve included.
+export THRYVE_SERVICE_USER=thryve-hal THRYVE_CORE_USER=thryve-core
+useradd --system --home-dir /opt/thryve --no-create-home --shell /usr/sbin/nologin "$THRYVE_CORE_USER"
 
 apt-get update -q
-sed -i 's/raspberrypi/seedypod/g' /etc/hosts
-echo seedypod > /etc/hostname
+sed -i 's/raspberrypi/thryve/g' /etc/hosts
+echo thryve > /etc/hostname
 
 # --no-wear: its checks need a running system, so first boot applies them. Except two
 # that only mean anything from the start of a boot. Restarting journald alongside
@@ -35,27 +35,27 @@ bash "$here/install-hal" --binary "$assets/hald-arm-unknown-linux-gnueabihf" --n
 (
   export SUDO=
   systemctl() { :; }
-  SEEDYPOD_LIB_ONLY=1 . "$here/install-hal"
+  THRYVE_LIB_ONLY=1 . "$here/install-hal"
   wear_journald
   boot_swap
 )
 
 # The unit id is the Pi's serial. First boot writes it to a file core reads on each start,
 # which overrides this placeholder and needs no daemon-reload.
-mkdir -p /etc/systemd/system/seedypod-core.service.d
-printf '[Service]\nEnvironmentFile=-/var/lib/seedypod-image/unit.env\n' > /etc/systemd/system/seedypod-core.service.d/unit-id.conf
-SEEDYPOD_TARBALL_URL="file://$assets/seedypod-core.tar.gz" SEEDYPOD_RELEASE_URL="file://$assets" \
-  SEEDYPOD_HAL_UNIT_ID=__UNIT_ID__ bash "$here/install" --branch "$branch"
+mkdir -p /etc/systemd/system/thryve-core.service.d
+printf '[Service]\nEnvironmentFile=-/var/lib/thryve-image/unit.env\n' > /etc/systemd/system/thryve-core.service.d/unit-id.conf
+THRYVE_TARBALL_URL="file://$assets/thryve-core.tar.gz" THRYVE_RELEASE_URL="file://$assets" \
+  THRYVE_HAL_UNIT_ID=__UNIT_ID__ bash "$here/install" --branch "$branch"
 # A chroot has no device tree to say it's a Pi, so ask for this by name.
 bash "$here/install" --port80
 
 # ---- first boot -------------------------------------------------------------------
-# Root runs these at boot, so they can't sit in /opt/seedypod, which core's account owns.
+# Root runs these at boot, so they can't sit in /opt/thryve, which core's account owns.
 mkdir -p "$lib"
 install -m 0644 "$here/install" "$here/install-hal" "$lib/"
-install -m 0755 "$here/first-boot" /usr/local/sbin/seedypod-first-boot
-install -m 0644 "$here/seedypod-first-boot.service" "$here/seedypod-cloud-init-off.service" /etc/systemd/system/
-systemctl enable seedypod-first-boot.service seedypod-cloud-init-off.service
+install -m 0755 "$here/first-boot" /usr/local/sbin/thryve-first-boot
+install -m 0644 "$here/thryve-first-boot.service" "$here/thryve-cloud-init-off.service" /etc/systemd/system/
+systemctl enable thryve-first-boot.service thryve-cloud-init-off.service
 
 # ---- leave nothing behind ---------------------------------------------------------
 # Node's tarball carries uid 1000, which first boot gives to the login.
@@ -71,4 +71,4 @@ printf 'uninitialized\n' > /etc/machine-id
 
 # scripts/check-image reads this off the card; the unit keeps a copy.
 printf 'branch=%s\ncommit=%s\nbase=%s\nbuilt=%s\n' "$branch" "$commit" \
-  "$(sed -n 's/^BASE_URL=.*\///p' "$here/base.env")" "$(date -u +%FT%TZ)" | tee "$share/image" > /boot/firmware/seedypod-image.txt
+  "$(sed -n 's/^BASE_URL=.*\///p' "$here/base.env")" "$(date -u +%FT%TZ)" | tee "$share/image" > /boot/firmware/thryve-image.txt

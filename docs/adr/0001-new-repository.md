@@ -1,7 +1,7 @@
 ---
 type: "Decision record"
 title: "ADR 0001: New repository and naming"
-description: "Why a new repo instead of a fork, the seedypod name, and the single-repo layout."
+description: "Why a new repo instead of a fork, the thryve name, and the single-repo layout."
 status: "stable"
 generated: {"by": "claude/fable-5.1", "at": "2026-10-31T04:40:00+00:00"}
 sources: [{"resource": "https://github.com/sleepypod/core", "title": "sleepypod/core (conventions and ADR precedents)"}, {"resource": "https://github.com/iot-root/garden-of-eden", "title": "iot-root/garden-of-eden (reference implementation, GPL-3; no code copied)"}]
@@ -23,10 +23,10 @@ appliance with an embedded Linux controller) for Eight Sleep hardware.
 
 ## Decision
 
-Start a new repository rather than fork. Name the project **seedypod**: the
+Start a new repository rather than fork. Name the project **thryve**: the
 sleepypod naming pattern, and Gardyn's plant slots are literally called pods —
-you put seeds in them. The repository is `seedypod/core`. Sibling repos follow
-sleepypod: `seedypod/seedypod.github.io` (docs), `seedypod/.github` (org
+you put seeds in them. The repository is `kaniick/Thryve`. Sibling repos follow
+sleepypod: `thryve/thryve.github.io` (docs), `thryve/.github` (org
 profile), later `seedypod/ios`.
 
 Single repository for core (TypeScript) and the HAL (Rust, `hal/`), mirroring
@@ -50,3 +50,13 @@ with it everywhere — package, crates, MQTT prefix (`seedypod/<unit-id>/`),
 mDNS service (`_seedypod-hal._tcp`), paths (`/etc/seedypod`, `/var/lib/seedypod`,
 `/opt/seedypod`) and the `SEEDYPOD_*` installer variables. No unit had run
 the old names, so nothing needed a migration. GitHub redirects `ng/leafypod`.
+
+## Amendment (2026-11-14): seedypod → Thryve
+
+The software was forked to `kaniick/Thryve` and rebranded as **Thryve**, still
+AGPL-3.0-only. Identifiers, paths, MQTT (`thryve/<unit-id>/`), mDNS
+(`_thryve._tcp`, `_thryve-hal._tcp`), HomeKit identity (including the HKDF
+salt — existing pairings must be re-done), installer names and `THRYVE_*`
+variables changed with it. Units already running seedypod v1.5.0 are migrated
+in place by `scripts/thryve-migrate` (see docs/MIGRATION.md); they do not need
+a reflash. The original project remains at https://github.com/seedypod/core.

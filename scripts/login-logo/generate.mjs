@@ -30,7 +30,7 @@ const TEXT_COL = INDENT + WIDTH + 4
 // the logo's top; the installers print one line under it, so theirs sits midway.
 const TEXT_ROW = 0
 const BANNER_TEXT_ROW = 8
-const WORD = 'seedypod'
+const WORD = 'thryve'
 const COLS = TEXT_COL + WORD.length
 
 const FRAMES = 30

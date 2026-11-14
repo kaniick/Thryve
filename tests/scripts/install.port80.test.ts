@@ -10,8 +10,8 @@ import { join, resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 const script = resolve(import.meta.dirname, '../../scripts/install')
-const RULES = 'usr/local/share/seedypod/port80.nft'
-const UNIT = 'etc/systemd/system/seedypod-port80.service'
+const RULES = 'usr/local/share/thryve/port80.nft'
+const UNIT = 'etc/systemd/system/thryve-port80.service'
 const HEADER = '  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n'
 const listening = (port: string, state = '0A') => `   0: 00000000:${port} 00000000:0000 ${state} 00000000:00000000 00:00000000 00000000     0        0 1 1 00000000 100 0 0 10 0\n`
 
@@ -19,11 +19,11 @@ const STUBS: Record<string, string> = {
   'sudo': 'exec "$@"',
   'systemctl': `echo "systemctl $*" >> "$STATE/log"
 case "$*" in
-  "restart seedypod-port80.service") [ ! -f "$STATE/fail-start" ] ;;
+  "restart thryve-port80.service") [ ! -f "$STATE/fail-start" ] ;;
 esac`,
   'apt-get': `echo "apt-get $*" >> "$STATE/log"
 [ -f "$STATE/fail-apt" ] && exit 100
-mkdir -p "$SEEDYPOD_ROOT/usr/sbin"; : > "$SEEDYPOD_ROOT/usr/sbin/nft"; chmod +x "$SEEDYPOD_ROOT/usr/sbin/nft"`,
+mkdir -p "$THRYVE_ROOT/usr/sbin"; : > "$THRYVE_ROOT/usr/sbin/nft"; chmod +x "$THRYVE_ROOT/usr/sbin/nft"`,
 }
 
 let dir: string
@@ -55,11 +55,11 @@ const onBoard = (model: string) => writeFileSync(join(root, 'proc/device-tree/mo
 const flag = (name: string) => writeFileSync(join(state, name), '')
 const log = () => (existsSync(join(state, 'log')) ? readFileSync(join(state, 'log'), 'utf8') : '')
 const forwarding = () => existsSync(join(root, RULES)) && existsSync(join(root, UNIT))
-const env = () => ({ PATH: `${bin}:${process.env.PATH}`, SEEDYPOD_ROOT: root, STATE: state })
+const env = () => ({ PATH: `${bin}:${process.env.PATH}`, THRYVE_ROOT: root, STATE: state })
 
 /** What a whole install does. */
 function install() {
-  const r = spawnSync('bash', ['-c', `source "${script}"; install_port80`], { encoding: 'utf8', env: { ...env(), SEEDYPOD_LIB_ONLY: '1' } })
+  const r = spawnSync('bash', ['-c', `source "${script}"; install_port80`], { encoding: 'utf8', env: { ...env(), THRYVE_LIB_ONLY: '1' } })
   return { code: r.status, out: r.stdout, err: r.stderr }
 }
 
@@ -77,11 +77,11 @@ describe('on a Raspberry Pi', () => {
     expect(rules).toContain('fib daddr type local tcp dport 80 redirect to :3000')
     expect(rules).toContain('hook prerouting')
     const unit = readFileSync(join(root, UNIT), 'utf8')
-    expect(unit).toContain('ExecStart=/usr/sbin/nft -f /usr/local/share/seedypod/port80.nft')
-    expect(unit).toContain('ExecStop=/usr/sbin/nft delete table ip seedypod')
+    expect(unit).toContain('ExecStart=/usr/sbin/nft -f /usr/local/share/thryve/port80.nft')
+    expect(unit).toContain('ExecStop=/usr/sbin/nft delete table ip thryve')
     expect(unit).toContain('WantedBy=multi-user.target')
-    expect(log()).toContain('systemctl enable seedypod-port80.service')
-    expect(log()).toContain('systemctl restart seedypod-port80.service')
+    expect(log()).toContain('systemctl enable thryve-port80.service')
+    expect(log()).toContain('systemctl restart thryve-port80.service')
   })
 
   it('leaves a working forward alone on a rerun, with no reload', () => {
@@ -96,8 +96,8 @@ describe('on a Raspberry Pi', () => {
     install()
     flag('port80-down')
     install()
-    expect(log().match(/restart seedypod-port80/g)).toHaveLength(2)
-    expect(readFileSync(join(root, RULES), 'utf8')).toContain('delete table ip seedypod')
+    expect(log().match(/restart thryve-port80/g)).toHaveLength(2)
+    expect(readFileSync(join(root, RULES), 'utf8')).toContain('delete table ip thryve')
   })
 
   it('doesn\'t pass off a failed write as nothing to do', () => {
@@ -114,7 +114,7 @@ describe('on a Raspberry Pi', () => {
     install()
     writeFileSync(join(root, RULES), 'older rules\n')
     install()
-    expect(log().match(/restart seedypod-port80/g)).toHaveLength(2)
+    expect(log().match(/restart thryve-port80/g)).toHaveLength(2)
     expect(readFileSync(join(root, RULES), 'utf8')).toContain('redirect to :3000')
   })
 
@@ -138,7 +138,7 @@ describe('on a Raspberry Pi', () => {
     flag('fail-start')
     expect(install().code).toBe(1)
     expect(forwarding()).toBe(false)
-    expect(log()).toContain('systemctl disable --now seedypod-port80.service')
+    expect(log()).toContain('systemctl disable --now thryve-port80.service')
   })
 })
 
@@ -159,7 +159,7 @@ describe('when something else owns port 80', () => {
     writeFileSync(join(root, 'proc/net/tcp'), HEADER + listening('0050'))
     expect(install().code).toBe(0)
     expect(forwarding()).toBe(false)
-    expect(log()).toContain('systemctl disable --now seedypod-port80.service')
+    expect(log()).toContain('systemctl disable --now thryve-port80.service')
   })
 
   it('isn\'t fooled by other ports, or by a connection that isn\'t listening', () => {
@@ -206,7 +206,7 @@ describe('--no-port80', () => {
     install()
     expect(flagged('--no-port80').code).toBe(0)
     expect(forwarding()).toBe(false)
-    expect(log()).toContain('systemctl disable --now seedypod-port80.service')
+    expect(log()).toContain('systemctl disable --now thryve-port80.service')
     install()
     expect(forwarding()).toBe(false)
   })

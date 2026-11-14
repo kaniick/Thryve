@@ -1,5 +1,5 @@
 /**
- * What the Database view shows about seedypod.db (after sleepypod's System →
+ * What the Database view shows about thryve.db (after sleepypod's System →
  * Databases): metadata only. Nothing here carries a row's values, because rows
  * hold Wi-Fi details and bucket credentials. Shared by the node inspector
  * (`inspector.ts`) and the browser demo, so it stays free of node imports.

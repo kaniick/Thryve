@@ -253,7 +253,7 @@ mod tests {
         assert_eq!(o.client_id(), "hald-u1");
         assert_eq!(o.broker_address(), ("h".to_owned(), 1883));
         let will = o.last_will().unwrap();
-        assert_eq!(will.topic, "seedypod/u1/availability");
+        assert_eq!(will.topic, "thryve/u1/availability");
         assert_eq!(&will.message[..], b"offline");
         assert!(will.retain);
         let login = o.credentials().expect("credentials set");
@@ -282,11 +282,11 @@ mod tests {
     #[test]
     fn subscriptions_cover_commands_acks_and_ha_mirrors() {
         let s = subscriptions("u1");
-        assert!(s.contains(&"seedypod/u1/actuator/+/set".to_owned()));
-        assert!(s.contains(&"seedypod/u1/alert/+/ack".to_owned()));
-        assert!(s.contains(&"seedypod/u1/ha/light/brightness/set".to_owned()));
-        assert!(s.contains(&"seedypod/u1/sensor/+/calibrate".to_owned()));
-        assert!(s.contains(&"seedypod/u1/devices/set".to_owned()));
+        assert!(s.contains(&"thryve/u1/actuator/+/set".to_owned()));
+        assert!(s.contains(&"thryve/u1/alert/+/ack".to_owned()));
+        assert!(s.contains(&"thryve/u1/ha/light/brightness/set".to_owned()));
+        assert!(s.contains(&"thryve/u1/sensor/+/calibrate".to_owned()));
+        assert!(s.contains(&"thryve/u1/devices/set".to_owned()));
         assert_eq!(s.len(), 8);
     }
 
@@ -294,7 +294,7 @@ mod tests {
     fn inbound_parsing_covers_every_command_shape() {
         let cmd = parse_inbound(
             "u1",
-            "seedypod/u1/actuator/pump/set",
+            "thryve/u1/actuator/pump/set",
             br#"{"on":true,"level":100,"durationS":300}"#,
         )
         .unwrap();
@@ -310,17 +310,17 @@ mod tests {
             )
         );
         assert_eq!(
-            parse_inbound("u1", "seedypod/u1/actuator/light/set", b"").unwrap(),
+            parse_inbound("u1", "thryve/u1/actuator/light/set", b"").unwrap(),
             Inbound::ActuatorSet(ActuatorId::Light, ActuatorCommand::default())
         );
         assert_eq!(
-            parse_inbound("u1", "seedypod/u1/alert/pump_fault/ack", b"{}").unwrap(),
+            parse_inbound("u1", "thryve/u1/alert/pump_fault/ack", b"{}").unwrap(),
             Inbound::AlertAck(AlertKind::PumpFault)
         );
         assert_eq!(
             parse_inbound(
                 "u1",
-                "seedypod/u1/sensor/ph/calibrate",
+                "thryve/u1/sensor/ph/calibrate",
                 br#"{"point":"mid","value":7}"#
             )
             .unwrap(),
@@ -333,11 +333,11 @@ mod tests {
             )
         );
         assert!(matches!(
-            parse_inbound("u1", "seedypod/u1/devices/set", br#"{"requestId":"r","op":"remove","kind":"ezo_ph","addr":99}"#),
+            parse_inbound("u1", "thryve/u1/devices/set", br#"{"requestId":"r","op":"remove","kind":"ezo_ph","addr":99}"#),
             Ok(Inbound::Devices(c)) if c.op == hal_core::DeviceOp::Remove && c.addr == 0x63
         ));
         assert_eq!(
-            parse_inbound("u1", "seedypod/u1/ha/light/set", b"ON").unwrap(),
+            parse_inbound("u1", "thryve/u1/ha/light/set", b"ON").unwrap(),
             Inbound::ActuatorSet(
                 ActuatorId::Light,
                 ActuatorCommand {
@@ -347,17 +347,17 @@ mod tests {
             )
         );
         for (topic, payload) in [
-            ("seedypod/u1/actuator/fan/set", b"{}".as_slice()),
-            ("seedypod/u1/actuator/pump/set", b"{\"on\":\"yes\"}"),
-            ("seedypod/u1/alert/nope/ack", b"{}"),
-            ("seedypod/u1/ha/light/set", b"maybe"),
-            ("seedypod/u1/something/else", b"{}"),
-            ("seedypod/u2/actuator/pump/set", b"{}"),
-            ("seedypod/u1/actuator/pump/set", &[0xFF, 0xFE]),
-            ("seedypod/u1/sensor/nope/calibrate", br#"{"point":"clear"}"#),
-            ("seedypod/u1/sensor/ph/calibrate", br#"{"point":"middle"}"#),
-            ("seedypod/u1/sensor/ph/calibrate", b""),
-            ("seedypod/u1/devices/set", br#"{"op":"add"}"#),
+            ("thryve/u1/actuator/fan/set", b"{}".as_slice()),
+            ("thryve/u1/actuator/pump/set", b"{\"on\":\"yes\"}"),
+            ("thryve/u1/alert/nope/ack", b"{}"),
+            ("thryve/u1/ha/light/set", b"maybe"),
+            ("thryve/u1/something/else", b"{}"),
+            ("thryve/u2/actuator/pump/set", b"{}"),
+            ("thryve/u1/actuator/pump/set", &[0xFF, 0xFE]),
+            ("thryve/u1/sensor/nope/calibrate", br#"{"point":"clear"}"#),
+            ("thryve/u1/sensor/ph/calibrate", br#"{"point":"middle"}"#),
+            ("thryve/u1/sensor/ph/calibrate", b""),
+            ("thryve/u1/devices/set", br#"{"op":"add"}"#),
         ] {
             assert!(parse_inbound("u1", topic, payload).is_err(), "{topic}");
         }
@@ -402,7 +402,7 @@ mod tests {
             connected.clone(),
         ));
         tokio::time::sleep(Duration::from_millis(300)).await;
-        tx.send(Outbound::retained("seedypod/u1/x", "dropped while offline"))
+        tx.send(Outbound::retained("thryve/u1/x", "dropped while offline"))
             .unwrap();
         drop(tx);
         tokio::time::timeout(Duration::from_secs(5), task)

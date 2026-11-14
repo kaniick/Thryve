@@ -39,23 +39,23 @@ fn sim_run_publishes_the_contract_and_goes_offline() {
         .map(|l| serde_json::from_str(l).unwrap_or_else(|e| panic!("{e}: {l}")))
         .collect();
     let topics: Vec<&str> = lines.iter().map(|v| v["topic"].as_str().unwrap()).collect();
-    assert_eq!(topics[0], "seedypod/smoke/system");
+    assert_eq!(topics[0], "thryve/smoke/system");
     assert_eq!(
         lines[0]["payload"]["caps"]["actuators"],
         serde_json::json!(["light", "pump"])
     );
     assert!(topics.contains(&"homeassistant/light/smoke_light/config"));
     assert!(topics.contains(&"homeassistant/fan/smoke_pump/config"));
-    assert!(topics.contains(&"seedypod/smoke/alert/water_low"));
+    assert!(topics.contains(&"thryve/smoke/alert/water_low"));
     assert!(
         topics
             .iter()
-            .filter(|t| **t == "seedypod/smoke/sensor/air_temp")
+            .filter(|t| **t == "thryve/smoke/sensor/air_temp")
             .count()
             >= 2
     );
     let last = lines.last().unwrap();
-    assert_eq!(last["topic"], "seedypod/smoke/availability");
+    assert_eq!(last["topic"], "thryve/smoke/availability");
     assert_eq!(last["payload"], "offline");
     assert_eq!(last["retain"], true);
     assert!(dir.join("state").join("state.json").exists());
@@ -170,8 +170,8 @@ fn camera_rules_are_printed_for_explicit_ports_and_bad_input_is_refused() {
         .expect("hald runs");
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     let rules = String::from_utf8(out.stdout).unwrap();
-    assert!(rules.contains("KERNELS==\"1-1.3:1.0\", ATTR{index}==\"0\", SYMLINK+=\"seedypod/camera-upper\""));
-    assert!(rules.contains("SYMLINK+=\"seedypod/camera-lower\""));
+    assert!(rules.contains("KERNELS==\"1-1.3:1.0\", ATTR{index}==\"0\", SYMLINK+=\"thryve/camera-upper\""));
+    assert!(rules.contains("SYMLINK+=\"thryve/camera-lower\""));
     let bad = hald()
         .args(["--camera-rules", "upper"])
         .output()

@@ -60,7 +60,7 @@ function publish(target: string, version = 'podvision 0.1.0', opts: { hashed?: s
 function install(branch = 'dev') {
   const r = spawnSync('bash', ['-c', `source "${script}"; BRANCH=${branch} TMP="${join(dir, 'tmp')}"; install_podvision`], {
     encoding: 'utf8',
-    env: { PATH: `${bin}:${process.env.PATH}`, SEEDYPOD_LIB_ONLY: '1', SEEDYPOD_ROOT: root, STATE: state, SEEDYPOD_COLOR: 'never' },
+    env: { PATH: `${bin}:${process.env.PATH}`, THRYVE_LIB_ONLY: '1', THRYVE_ROOT: root, STATE: state, THRYVE_COLOR: 'never' },
   })
   return { code: r.status, out: r.stdout, err: r.stderr }
 }
@@ -75,7 +75,7 @@ describe('podvision from the release', () => {
     expect(r).toMatchObject({ code: 0 })
     expect(r.out).toContain('installed podvision 0.1.0 for pod-state')
     expect(readFileSync(dest(), 'utf8')).toContain('podvision 0.1.0')
-    expect(log()).toContain('https://github.com/seedypod/core/releases/download/dev-latest/podvision-arm-unknown-linux-gnueabihf')
+    expect(log()).toContain('https://github.com/kaniick/Thryve/releases/download/dev-latest/podvision-arm-unknown-linux-gnueabihf')
   })
 
   it('installs the aarch64 build on a 64-bit Pi, from the latest release on main', () => {
@@ -83,7 +83,7 @@ describe('podvision from the release', () => {
     publish('aarch64-unknown-linux-gnu')
     expect(install('main').code).toBe(0)
     expect(existsSync(dest())).toBe(true)
-    expect(log()).toContain('https://github.com/seedypod/core/releases/latest/download/podvision-aarch64-unknown-linux-gnu')
+    expect(log()).toContain('https://github.com/kaniick/Thryve/releases/latest/download/podvision-aarch64-unknown-linux-gnu')
   })
 
   it('takes the 32-bit build for a 64-bit CPU on a 32-bit OS', () => {

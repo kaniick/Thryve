@@ -10,7 +10,7 @@ import { join, resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 const script = resolve(import.meta.dirname, '../../scripts/install-hal')
-const RULE = 'SUBSYSTEM=="video4linux", SUBSYSTEMS=="usb", KERNELS=="1-1.3:1.0", ATTR{index}=="0", SYMLINK+="seedypod/camera-upper"\n'
+const RULE = 'SUBSYSTEM=="video4linux", SUBSYSTEMS=="usb", KERNELS=="1-1.3:1.0", ATTR{index}=="0", SYMLINK+="thryve/camera-upper"\n'
 
 let dir: string
 let root: string
@@ -23,14 +23,14 @@ function install(hald = 'echo "camera names pinned: upper = port 1-1.3:1.0"') {
   chmodSync(join(dir, 'bin/hald'), 0o755)
   return spawnSync('bash', ['-c', `set -euo pipefail; source "${script}"; SUDO=; install_camera_rules "${dir}/bin/hald"`], {
     encoding: 'utf8',
-    env: { PATH: `${dir}/bin:/usr/bin:/bin`, SEEDYPOD_LIB_ONLY: '1', SEEDYPOD_ROOT: root, STATE: dir },
+    env: { PATH: `${dir}/bin:/usr/bin:/bin`, THRYVE_LIB_ONLY: '1', THRYVE_ROOT: root, STATE: dir },
   })
 }
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'install-hal-cameras-'))
   root = join(dir, 'root')
-  rules = join(root, 'etc/udev/rules.d/70-seedypod-cameras.rules')
+  rules = join(root, 'etc/udev/rules.d/70-thryve-cameras.rules')
   mkdirSync(join(root, 'etc/udev/rules.d'), { recursive: true })
   mkdirSync(join(dir, 'bin'))
   for (const tool of ['udevadm', 'systemctl']) {
@@ -43,10 +43,10 @@ afterEach(() => rmSync(dir, { recursive: true, force: true }))
 describe('install_camera_rules', () => {
   it('sets up the step that pins names when a USB camera appears', () => {
     expect(install().status).toBe(0)
-    const rule = readFileSync(join(root, 'etc/udev/rules.d/71-seedypod-camera-sync.rules'), 'utf8')
+    const rule = readFileSync(join(root, 'etc/udev/rules.d/71-thryve-camera-sync.rules'), 'utf8')
     expect(rule).toContain('ACTION=="add", SUBSYSTEM=="video4linux", SUBSYSTEMS=="usb", ATTR{index}=="0"')
-    expect(rule).toContain('ENV{SYSTEMD_WANTS}+="seedypod-camera-rules.service"')
-    const unit = readFileSync(join(root, 'etc/systemd/system/seedypod-camera-rules.service'), 'utf8')
+    expect(rule).toContain('ENV{SYSTEMD_WANTS}+="thryve-camera-rules.service"')
+    const unit = readFileSync(join(root, 'etc/systemd/system/thryve-camera-rules.service'), 'utf8')
     expect(unit).toContain('Type=oneshot')
     expect(unit).toContain(`ExecStart=${dir}/bin/hald --sync-camera-rules`)
   })
@@ -71,14 +71,14 @@ describe('install_camera_rules', () => {
     const r = install('echo "camera names already pinned"')
     expect(r.stdout).toContain('If upper and lower are swapped')
     expect(r.stdout).toContain('sudo udevadm trigger --action=add')
-    expect(r.stdout).toContain('sudo tee /etc/udev/rules.d/70-seedypod-cameras.rules')
+    expect(r.stdout).toContain('sudo tee /etc/udev/rules.d/70-thryve-cameras.rules')
   })
 
   it('removes rules that named the on-chip video nodes, and leaves good ones', () => {
     writeFileSync(rules, RULE)
     install('echo waiting')
     expect(existsSync(rules)).toBe(true)
-    writeFileSync(rules, 'SUBSYSTEM=="video4linux", KERNELS=="bcm2835-codec", SYMLINK+="seedypod/camera-upper"\n')
+    writeFileSync(rules, 'SUBSYSTEM=="video4linux", KERNELS=="bcm2835-codec", SYMLINK+="thryve/camera-upper"\n')
     expect(install('echo waiting').stdout).toContain('removed camera rules')
     expect(existsSync(rules)).toBe(false)
   })

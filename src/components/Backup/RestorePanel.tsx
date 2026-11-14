@@ -68,7 +68,7 @@ export function RestorePanel({ savedMirror, confirm, onStarted }: {
         </h3>
         <p className="text-[13px] text-fg-2">
           A
-          <span className="font-mono">seedypod-backup-….tar.gz</span>
+          <span className="font-mono">thryve-backup-….tar.gz</span>
           {' '}
           you downloaded from Settings → Backup.
         </p>
@@ -94,7 +94,7 @@ export function RestorePanel({ savedMirror, confirm, onStarted }: {
             </p>
             <div className="grid grid-cols-1 gap-2 min-[600px]:grid-cols-2">
               <TextField label="Endpoint" value={cfg.endpoint} onChange={v => setCfg({ ...cfg, endpoint: v })} placeholder="https://<account>.r2.cloudflarestorage.com" />
-              <TextField label="Bucket" value={cfg.bucket} onChange={v => setCfg({ ...cfg, bucket: v })} placeholder="seedypod" />
+              <TextField label="Bucket" value={cfg.bucket} onChange={v => setCfg({ ...cfg, bucket: v })} placeholder="thryve" />
               <TextField label="Region" value={cfg.region} onChange={v => setCfg({ ...cfg, region: v || 'auto' })} />
               <TextField label="Key prefix" value={cfg.prefix} onChange={v => setCfg({ ...cfg, prefix: v })} placeholder="kitchen/" />
               <TextField label="Access key id" value={cfg.accessKeyId} onChange={v => setCfg({ ...cfg, accessKeyId: v })} />

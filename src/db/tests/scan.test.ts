@@ -29,8 +29,8 @@ const journal = (entries: Array<{ tag: string, when: number }>) => {
 }
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'seedypod-scan-'))
-  path = join(dir, 'seedypod.db')
+  dir = mkdtempSync(join(tmpdir(), 'thryve-scan-'))
+  path = join(dir, 'thryve.db')
   store = new SqliteStore({ url: path })
   db = new Database(path)
 })

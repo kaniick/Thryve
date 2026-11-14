@@ -4,7 +4,7 @@ import { trpc } from '@/src/utils/trpc'
 export function useCoreStatus(): { name: string, line: string, online: boolean } {
   const info = trpc.system.info.useQuery(undefined, { refetchInterval: 30_000 })
   const settings = trpc.settings.get.useQuery()
-  const name = settings.data?.unitName ?? 'seedypod'
+  const name = settings.data?.unitName ?? 'thryve'
   if (!info.data) return { name, line: info.isError ? 'core unreachable' : '…', online: false }
   const { coreVersion, halOnline, system } = info.data
   return { name, line: `${system?.model ?? 'no HAL'} · core ${coreVersion} · ${halOnline ? 'online' : 'offline'}`, online: halOnline }

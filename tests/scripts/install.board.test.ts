@@ -29,7 +29,7 @@ function check(o: { model?: string, arch: string, bits: number }) {
     // The kernel's model string ends in a NUL.
     writeFileSync(join(dir, 'proc/device-tree/model'), `${o.model}\0`)
   }
-  const r = spawnSync('bash', [script, '--check'], { env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, SEEDYPOD_ROOT: dir }, encoding: 'utf8' })
+  const r = spawnSync('bash', [script, '--check'], { env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, THRYVE_ROOT: dir }, encoding: 'utf8' })
   return { code: r.status, out: r.stdout.trim(), err: r.stderr.trim() }
 }
 

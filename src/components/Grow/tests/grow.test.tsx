@@ -277,7 +277,7 @@ describe('Grow', () => {
 
   it('falls back to the pods without WebGL', async () => {
     tower.unavailable = true
-    localStorage.setItem('seedypod.growView', 'tower')
+    localStorage.setItem('thryve.growView', 'tower')
     render(<GrowPage />)
     expect(await screen.findByText(/needs WebGL/)).toBeTruthy()
     expect(screen.queryByTestId('tower')).toBeNull()

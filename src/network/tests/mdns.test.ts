@@ -53,7 +53,7 @@ function setup(o: { system?: SystemInfo | null, env?: NodeJS.ProcessEnv, host?: 
   const fake = fakeAdvertise()
   const log = vi.fn()
   const svc = new CoreAdvertiser({
-    store, hal, events, version: 'dev@abc1234', port: 3000, host: o.host ?? '0.0.0.0', hostname: 'seedypod',
+    store, hal, events, version: 'dev@abc1234', port: 3000, host: o.host ?? '0.0.0.0', hostname: 'thryve',
     env: o.env ?? {}, advertise: fake.advertise, log,
   })
   return { svc, store, events, fake, log, report }
@@ -62,11 +62,11 @@ function setup(o: { system?: SystemInfo | null, env?: NodeJS.ProcessEnv, host?: 
 describe('mdnsEnabled', () => {
   it('is on by default for a LAN bind', () => {
     expect(mdnsEnabled({}, '0.0.0.0')).toBe(true)
-    expect(mdnsEnabled({ SEEDYPOD_MDNS: '1' }, '::')).toBe(true)
+    expect(mdnsEnabled({ THRYVE_MDNS: '1' }, '::')).toBe(true)
   })
 
-  it('turns off with SEEDYPOD_MDNS=0, false or off', () => {
-    for (const v of ['0', 'false', ' OFF ']) expect(mdnsEnabled({ SEEDYPOD_MDNS: v }, '0.0.0.0')).toBe(false)
+  it('turns off with THRYVE_MDNS=0, false or off', () => {
+    for (const v of ['0', 'false', ' OFF ']) expect(mdnsEnabled({ THRYVE_MDNS: v }, '0.0.0.0')).toBe(false)
   })
 
   it('stays off under tests', () => {
@@ -98,7 +98,7 @@ describe('hostLabel', () => {
   it('makes one DNS label from the unit id', () => {
     expect(hostLabel('gardyn-1a2b3c4d')).toBe('gardyn-1a2b3c4d-core')
     expect(hostLabel('My Pod.local')).toBe('my-pod-local-core')
-    expect(hostLabel('***')).toBe('seedypod-core')
+    expect(hostLabel('***')).toBe('thryve-core')
     expect(hostLabel('a'.repeat(100)).length).toBeLessThanOrEqual(63)
   })
 })
@@ -112,11 +112,11 @@ describe('ciaoAdvertise', () => {
   }
   const opts: AdvertiseOptions = { name: 'Kitchen', hostname: 'gardyn-1-core', port: 3000, txt: { id: 'gardyn-1', v: 'dev', auth: '0' } }
 
-  it('publishes _seedypod._tcp and tears down service then responder', async () => {
+  it('publishes _thryve._tcp and tears down service then responder', async () => {
     const { ciao, responder, service } = fakeCiao()
     const ad = await ciaoAdvertise(async () => ciao)(opts)
-    expect(SERVICE_TYPE).toBe('seedypod')
-    expect(responder.createService).toHaveBeenCalledWith({ name: 'Kitchen', type: 'seedypod', port: 3000, hostname: 'gardyn-1-core', txt: opts.txt })
+    expect(SERVICE_TYPE).toBe('thryve')
+    expect(responder.createService).toHaveBeenCalledWith({ name: 'Kitchen', type: 'thryve', port: 3000, hostname: 'gardyn-1-core', txt: opts.txt })
     expect(service.advertise).toHaveBeenCalled()
     ad.updateTxt({ ...opts.txt, auth: '1' })
     expect(service.updateTxt).toHaveBeenCalledWith({ ...opts.txt, auth: '1' })
@@ -145,20 +145,20 @@ describe('CoreAdvertiser', () => {
     const { svc, fake, log } = setup({ apiKey: 'k' })
     await svc.start()
     expect(fake.calls).toEqual([{ name: 'Gardyn', hostname: 'gardyn-1a2b3c4d-core', port: 3000, txt: { id: 'gardyn-1a2b3c4d', v: 'dev@abc1234', auth: '1' } }])
-    expect(log).toHaveBeenCalledWith(expect.stringContaining('advertising _seedypod._tcp on port 3000'))
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('advertising _thryve._tcp on port 3000'))
     await svc.start()
     expect(fake.calls).toHaveLength(1)
   })
 
-  it('falls back to "seedypod" for a blank unit name', async () => {
+  it('falls back to "Thryve" for a blank unit name', async () => {
     const { svc, store, fake } = setup()
     store.settings.update({ unitName: '  ' })
     await svc.start()
-    expect(fake.calls[0]?.name).toBe('seedypod')
+    expect(fake.calls[0]?.name).toBe('Thryve')
   })
 
   it('does nothing when disabled', async () => {
-    const { svc, fake } = setup({ env: { SEEDYPOD_MDNS: '0' } })
+    const { svc, fake } = setup({ env: { THRYVE_MDNS: '0' } })
     await svc.start()
     await svc.stop()
     expect(fake.calls).toHaveLength(0)
@@ -177,14 +177,14 @@ describe('CoreAdvertiser', () => {
   it('updates auth when the API key changes, and id when hald reports', async () => {
     const { svc, store, events, fake, report } = setup({ system: null, env: { HAL_UNIT_ID: undefined } })
     await svc.start()
-    expect(fake.calls[0]?.txt).toEqual({ id: 'seedypod', v: 'dev@abc1234', auth: '0' })
+    expect(fake.calls[0]?.txt).toEqual({ id: 'thryve', v: 'dev@abc1234', auth: '0' })
 
     events.emit({ kind: 'mutation', path: 'settings' })
     expect(fake.txts).toHaveLength(0)
 
     store.settings.update({ apiKey: 'k' })
     events.emit({ kind: 'mutation', path: 'settings' })
-    expect(fake.txts.at(-1)).toEqual({ id: 'seedypod', v: 'dev@abc1234', auth: '1' })
+    expect(fake.txts.at(-1)).toEqual({ id: 'thryve', v: 'dev@abc1234', auth: '1' })
 
     const s = unit('gardyn-77')
     report(s)

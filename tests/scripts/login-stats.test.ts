@@ -56,7 +56,7 @@ beforeEach(async () => {
     'proc/meminfo': 'MemTotal:         437120 kB\nMemFree:           39000 kB\nMemAvailable:     190944 kB\n',
     'sys/class/thermal/thermal_zone0/temp': '49768\n',
     'sys/fs/cgroup/system.slice/hald.service/cgroup.procs': '423\n',
-    'sys/fs/cgroup/system.slice/seedypod-core.service/cgroup.procs': '11433\n',
+    'sys/fs/cgroup/system.slice/thryve-core.service/cgroup.procs': '11433\n',
   })
   stub('df', 'echo "Filesystem 1024-blocks Used Available Capacity Mounted on"; echo "/dev/mmcblk0p2 60809268 2200584 56097604 4% /"')
   stub('vcgencmd', '[ "$1" = get_throttled ] && echo throttled=0x0')
@@ -86,12 +86,12 @@ function stub(name: string, body: string) {
   chmodSync(join(bin, name), 0o755)
 }
 const env = (extra: Record<string, string | undefined> = {}) => ({
-  PATH: `${bin}:${process.env.PATH}`, HOME: dir, HOSTNAME: 'seedypod.lan', LANG: 'en_GB.UTF-8',
-  SEEDYPOD_API: `127.0.0.1:${port}`, SEEDYPOD_STATS_ROOT: root, SSH_CONNECTION: '192.168.1.117 58442 192.168.2.177 22', ...extra,
+  PATH: `${bin}:${process.env.PATH}`, HOME: dir, HOSTNAME: 'thryve.lan', LANG: 'en_GB.UTF-8',
+  THRYVE_API: `127.0.0.1:${port}`, THRYVE_STATS_ROOT: root, SSH_CONNECTION: '192.168.1.117 58442 192.168.2.177 22', ...extra,
 })
 
 /** Generous deadlines, so that a loaded test machine doesn't cut the facts short. */
-const SLOW = { SEEDYPOD_API_MS: '5000', SEEDYPOD_STATS_MS: '8000' }
+const SLOW = { THRYVE_API_MS: '5000', THRYVE_STATS_MS: '8000' }
 
 async function stats(extra: Record<string, string | undefined> = SLOW) {
   const started = Date.now()
@@ -109,7 +109,7 @@ describe('login-stats', () => {
       ['unit', '-:gardyn-db753a85', 'dim:gardyn 3.0'],
       ['web', '-:http://192.168.2.177:3000'],
       ['status', 'ok:core up', 'ok:hald up'],
-      ['update', 'warn:dev@aed156b available', 'dim:checked 2h ago', 'dim:sudo seedypod-update --now'],
+      ['update', 'warn:dev@aed156b available', 'dim:checked 2h ago', 'dim:sudo thryve-update --now'],
       ['uptime', '-:1d 21h', 'dim:load 2.10'],
       ['outputs', 'ok:light on 80%', '-:pump off'],
       ['tank', '-:18%'],
@@ -138,7 +138,7 @@ describe('login-stats', () => {
     core.body = { ...SUMMARY, updateState: 'current', updateTo: null }
     expect((await stats()).facts).toContainEqual(['update', 'ok:up to date', 'dim:checked 2h ago'])
     core.body = { ...SUMMARY, updateState: 'unchecked', updateTo: null, updateCheckedAgeS: null }
-    expect((await stats()).facts).toContainEqual(['update', '-:not checked', 'dim:sudo seedypod-update --check'])
+    expect((await stats()).facts).toContainEqual(['update', '-:not checked', 'dim:sudo thryve-update --check'])
     core.body = { ...SUMMARY, updateState: null, updateTo: null, updateCheckedAgeS: null }
     expect((await stats()).facts.map(f => f[0])).not.toContain('update')
   })
@@ -179,7 +179,7 @@ describe('login-stats', () => {
   it('still says what it can from the Pi while core is down, quickly', async () => {
     server.closeAllConnections()
     await new Promise(ok => server.close(ok))
-    rmSync(join(root, 'sys/fs/cgroup/system.slice/seedypod-core.service'), { recursive: true })
+    rmSync(join(root, 'sys/fs/cgroup/system.slice/thryve-core.service'), { recursive: true })
     const r = await stats()
     expect(r.err).toBe('')
     expect(r.facts.map(f => f[0])).toEqual(['web', 'status', 'uptime', 'board', 'ram', 'disk', 'power'])
@@ -231,7 +231,7 @@ describe('login-logo with login-stats', () => {
     expect(r.status).toBe(0)
     // The word is in the frame's top row; the version goes one row down.
     expect(r.out).toContain('\x1b[1B\r\x1b[46C\x1b[38;5;245mdev@081abf0')
-    const after = r.out.slice(r.out.indexOf('http://seedypod.local:3000'))
+    const after = r.out.slice(r.out.indexOf('http://thryve.local:3000'))
     expect(after).toContain('\x1b[0m\r\n\r\n\r\x1b[46C\x1b[38;5;72munit    \x1b[0mgardyn-db753a85\r\n')
     expect(after).toContain('\x1b[38;5;72mstatus  \x1b[0m\x1b[38;5;114mcore up\x1b[0m\x1b[38;5;245m · \x1b[0m\x1b[38;5;114mhald up\x1b[0m')
     expect(after).toContain('\x1b[38;5;221m2 active\x1b[0m')
@@ -291,11 +291,11 @@ describe('login-logo with login-stats', () => {
     const r = await pty({ env: { NO_COLOR: '1' } })
     expect(r.out).not.toMatch(ESC)
     expect(r.out.split('\r\n')).toEqual([
-      'seedypod dev@081abf0  http://seedypod.local:3000',
+      'thryve dev@081abf0  http://thryve.local:3000',
       'unit    gardyn-db753a85 · gardyn 3.0',
       'web     http://192.168.2.177:3000',
       'status  core up · hald up',
-      'update  dev@aed156b available · checked 2h ago · sudo seedypod-update --now',
+      'update  dev@aed156b available · checked 2h ago · sudo thryve-update --now',
       'uptime  1d 21h · load 2.10',
       'outputs light on 80% · pump off',
       'tank    18%',
@@ -317,7 +317,7 @@ describe('login-logo with login-stats', () => {
     await new Promise(ok => server.close(ok))
     const r = await pty({ env: { NO_COLOR: '1' } })
     // The version file stands in for core's answer.
-    expect(r.out).toMatch(/^seedypod dev@abc1234 {2}http:\/\/seedypod\.local:3000\r\nweb {5}http/)
+    expect(r.out).toMatch(/^thryve dev@abc1234 {2}http:\/\/thryve\.local:3000\r\nweb {5}http/)
     expect(r.out).not.toContain('tank')
     expect(r.ms).toBeLessThan(4000)
     server = createServer()
@@ -325,14 +325,14 @@ describe('login-logo with login-stats', () => {
 
   it('stops waiting a second in, keeping what login-stats had said', async () => {
     writeFileSync(join(share, 'login-stats'), '#!/bin/sh\nprintf "tank\\t-:18%%\\n"\nsleep 5\nprintf "late\\t-:never\\n"\n')
-    const r = await pty({ env: { NO_COLOR: '1', SEEDYPOD_STATS_MS: undefined } })
-    expect(r.out).toBe('seedypod dev@abc1234  http://seedypod.local:3000\r\ntank    18%\r\n')
+    const r = await pty({ env: { NO_COLOR: '1', THRYVE_STATS_MS: undefined } })
+    expect(r.out).toBe('thryve dev@abc1234  http://thryve.local:3000\r\ntank    18%\r\n')
     expect(r.ms).toBeGreaterThan(900)
     expect(r.ms).toBeLessThan(4000)
   })
 
-  it('is left out with the rest of the logo by SEEDYPOD_NO_LOGO=1', async () => {
-    expect((await pty({ env: { SEEDYPOD_NO_LOGO: '1' } })).out).toBe('')
+  it('is left out with the rest of the logo by THRYVE_NO_LOGO=1', async () => {
+    expect((await pty({ env: { THRYVE_NO_LOGO: '1' } })).out).toBe('')
     expect(core.requests).toEqual([])
   })
 })

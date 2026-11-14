@@ -37,7 +37,7 @@ const ASIDE_W = 300
 const ASIDE_RESERVE = ASIDE_W + 24
 const ASIDE_MIN = 900
 
-const ZONES_KEY = 'seedypod.lightZones'
+const ZONES_KEY = 'thryve.lightZones'
 function savedZones(): boolean {
   try {
     return localStorage.getItem(ZONES_KEY) === 'on'

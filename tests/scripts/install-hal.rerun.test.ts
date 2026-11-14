@@ -19,7 +19,7 @@ beforeEach(() => {
   root = join(dir, 'root')
   bin = join(dir, 'bin')
   for (const d of [bin, join(root, 'usr/sbin')]) mkdirSync(d, { recursive: true })
-  writeFileSync(join(bin, 'id'), '#!/bin/sh\n[ "$1" = -nG ] && [ "$2" = seedypod ] && echo "seedypod gpio video"\n')
+  writeFileSync(join(bin, 'id'), '#!/bin/sh\n[ "$1" = -nG ] && [ "$2" = thryve ] && echo "thryve gpio video"\n')
   chmodSync(join(bin, 'id'), 0o755)
 })
 
@@ -29,7 +29,7 @@ function run(fn: string, input?: string) {
   const r = spawnSync('bash', ['-c', `source "${script}"; SUDO=; ${fn}`], {
     encoding: 'utf8',
     input,
-    env: { PATH: `${bin}:/usr/bin:/bin`, SEEDYPOD_LIB_ONLY: '1', SEEDYPOD_ROOT: root },
+    env: { PATH: `${bin}:/usr/bin:/bin`, THRYVE_LIB_ONLY: '1', THRYVE_ROOT: root },
   })
   return { code: r.status, out: r.stdout }
 }
@@ -64,9 +64,9 @@ describe('have_broker', () => {
 
 describe('in_group', () => {
   it('matches whole group names', () => {
-    expect(run('in_group seedypod gpio').code).toBe(0)
-    expect(run('in_group seedypod gp').code).toBe(1)
-    expect(run('in_group seedypod i2c').code).toBe(1)
+    expect(run('in_group thryve gpio').code).toBe(0)
+    expect(run('in_group thryve gp').code).toBe(1)
+    expect(run('in_group thryve i2c').code).toBe(1)
   })
 })
 
@@ -100,12 +100,12 @@ describe('put_unit', () => {
 })
 
 describe('a restart owed', () => {
-  const hald = () => join(root, 'var/lib/seedypod/.restart-hald')
-  const core = () => join(root, 'var/lib/seedypod/.restart-core')
+  const hald = () => join(root, 'var/lib/thryve/.restart-hald')
+  const core = () => join(root, 'var/lib/thryve/.restart-core')
   const log = () => (existsSync(join(dir, 'log')) ? readFileSync(join(dir, 'log'), 'utf8') : '')
 
   beforeEach(() => {
-    mkdirSync(join(root, 'var/lib/seedypod'), { recursive: true })
+    mkdirSync(join(root, 'var/lib/thryve'), { recursive: true })
     writeFileSync(join(bin, 'systemctl'), `#!/bin/sh
 echo "systemctl $*" >> "${join(dir, 'log')}"
 case "$*" in
@@ -150,7 +150,7 @@ esac
   it('pays core\'s once, for a group joined in a run that died', () => {
     run(`owe_restart "$CORE_RESTART_OWED"; exit 1`)
     run('restart_core_if_owed')
-    expect(log()).toContain('try-restart seedypod-core.service')
+    expect(log()).toContain('try-restart thryve-core.service')
     expect(existsSync(core())).toBe(false)
     const before = log()
     run('restart_core_if_owed')

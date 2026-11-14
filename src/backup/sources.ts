@@ -1,12 +1,13 @@
 /**
  * Where a backup's files come from on a unit (ADR-0021). Node-only; the
- * paths default to what the installers set up, and the `SEEDYPOD_*`
+ * paths default to what the installers set up, and the `THRYVE_*`
  * variables move them for the simulated bring-up and tests.
  */
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { envValue } from '../lib/legacyEnv'
 
 export interface BackupPaths {
   /** `hal.toml` lives here. */
@@ -21,9 +22,9 @@ export interface BackupPaths {
 
 export function backupPaths(env: NodeJS.ProcessEnv, dataDir: string): BackupPaths {
   return {
-    etcDir: env.SEEDYPOD_ETC_DIR || '/etc/seedypod',
-    stateDir: env.SEEDYPOD_STATE_DIR || '/var/lib/seedypod',
-    mosquittoPasswd: env.SEEDYPOD_MOSQUITTO_PASSWD || '/etc/mosquitto/seedypod.passwd',
+    etcDir: envValue(env, 'THRYVE_ETC_DIR') || '/etc/thryve',
+    stateDir: envValue(env, 'THRYVE_STATE_DIR') || '/var/lib/thryve',
+    mosquittoPasswd: envValue(env, 'THRYVE_MOSQUITTO_PASSWD') || '/etc/mosquitto/thryve.passwd',
     capturesDir: join(dataDir, 'captures'),
     homekitDir: join(dataDir, 'homekit'),
   }
@@ -59,7 +60,7 @@ export function nodeBackupSources(o: { paths: BackupPaths, snapshot: (dest: stri
   return {
     paths: o.paths,
     async database() {
-      const tmp = join(tmpdir(), `seedypod-backup-${process.pid}-${Date.now()}.db`)
+      const tmp = join(tmpdir(), `thryve-backup-${process.pid}-${Date.now()}.db`)
       try {
         await o.snapshot(tmp)
         return new Uint8Array(await readFile(tmp))
@@ -70,18 +71,18 @@ export function nodeBackupSources(o: { paths: BackupPaths, snapshot: (dest: stri
     },
     systemFiles() {
       const files: SourceFile[] = [
-        { name: 'etc/seedypod/hal.toml', path: join(o.paths.etcDir, 'hal.toml'), optional: false },
-        { name: 'etc/mosquitto/seedypod.passwd', path: o.paths.mosquittoPasswd, optional: true },
+        { name: 'etc/thryve/hal.toml', path: join(o.paths.etcDir, 'hal.toml'), optional: false },
+        { name: 'etc/mosquitto/thryve.passwd', path: o.paths.mosquittoPasswd, optional: true },
       ]
       if (existsSync(o.paths.stateDir)) {
         try {
           for (const f of readdirSync(o.paths.stateDir).sort()) {
-            if (/^[a-z0-9_-]+\.json$/.test(f)) files.push({ name: `var/lib/seedypod/${f}`, path: join(o.paths.stateDir, f), optional: true })
+            if (/^[a-z0-9_-]+\.json$/.test(f)) files.push({ name: `var/lib/thryve/${f}`, path: join(o.paths.stateDir, f), optional: true })
           }
         }
         catch {
           // An unreadable state directory: let the read of its main file report why.
-          files.push({ name: 'var/lib/seedypod/state.json', path: join(o.paths.stateDir, 'state.json'), optional: false })
+          files.push({ name: 'var/lib/thryve/state.json', path: join(o.paths.stateDir, 'state.json'), optional: false })
         }
       }
       // HomeKit's files ride along so a restore onto the same unit keeps it paired (ADR 0023).

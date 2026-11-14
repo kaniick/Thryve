@@ -25,5 +25,5 @@ Place yCovers only after thinning the sprouts: covers can trap excess moisture a
 
 ## Gaps
 
-- Gardyn's help doesn't mention humidity domes for germinating in the tower, only a vented lid over a Sprout Nursery or tray. seedypod gives no dome check.
+- Gardyn's help doesn't mention humidity domes for germinating in the tower, only a vented lid over a Sprout Nursery or tray. thryve gives no dome check.
 - Neither article says what to do with a yCube that hasn't sprouted after 21 days.

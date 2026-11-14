@@ -150,7 +150,7 @@ pub fn gather(
                 "show",
                 "--property=ActiveEnterTimestampMonotonic",
                 "--value",
-                "seedypod-core.service",
+                "thryve-core.service",
             ],
         )
         .and_then(|t| parse_core_s(&t)),

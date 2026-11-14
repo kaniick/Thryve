@@ -57,10 +57,10 @@ describe('UpdateClient', () => {
   })
 
   it('passes on a refusal with its code and message', async () => {
-    const c = new UpdateClient({ command: helper({ ok: false, code: 'checksum', error: 'seedypod-core.tar.gz doesn\'t match' }, 4), workDir: work, version: 'dev' })
+    const c = new UpdateClient({ command: helper({ ok: false, code: 'checksum', error: 'thryve-core.tar.gz doesn\'t match' }, 4), workDir: work, version: 'dev' })
     const err = await c.start().catch(e => e as UpdateRefused)
     expect(err).toBeInstanceOf(UpdateRefused)
-    expect(err).toMatchObject({ code: 'checksum', message: 'seedypod-core.tar.gz doesn\'t match' })
+    expect(err).toMatchObject({ code: 'checksum', message: 'thryve-core.tar.gz doesn\'t match' })
     expect(c.watching).toBe(false)
   })
 
@@ -112,20 +112,20 @@ describe('UpdateClient', () => {
     const seen: CoreEvent[] = []
     events.subscribe(e => seen.push(e))
     status('downloading', '2026-11-08T01:00:00.000Z')
-    writeFileSync(join(work, 'update.log'), 'downloading seedypod-core.tar.gz\n')
+    writeFileSync(join(work, 'update.log'), 'downloading thryve-core.tar.gz\n')
     // A core that starts mid-update follows it.
     const c = new UpdateClient({ command: null, workDir: work, version: 'dev', events, pollMs: 60_000 })
     expect(c.watching).toBe(true)
     c.tick()
     c.tick()
-    appendFileSync(join(work, 'update.log'), 'seedypod-core.tar.gz: 10 bytes, sha256 abc… matches\n')
+    appendFileSync(join(work, 'update.log'), 'thryve-core.tar.gz: 10 bytes, sha256 abc… matches\n')
     status('stopping', '2026-11-08T01:00:01.000Z')
     c.tick()
     status('done', '2026-11-08T01:00:09.000Z')
     c.tick()
     expect(seen).toEqual([
-      { kind: 'update', state: 'downloading', lines: ['downloading seedypod-core.tar.gz'] },
-      { kind: 'update', state: 'stopping', lines: ['seedypod-core.tar.gz: 10 bytes, sha256 abc… matches'] },
+      { kind: 'update', state: 'downloading', lines: ['downloading thryve-core.tar.gz'] },
+      { kind: 'update', state: 'stopping', lines: ['thryve-core.tar.gz: 10 bytes, sha256 abc… matches'] },
       { kind: 'update', state: 'done', lines: [] },
     ])
     expect(c.watching).toBe(false)
@@ -156,7 +156,7 @@ describe('UpdateClient', () => {
 
 describe('updateCommand', () => {
   it('takes an override, and otherwise sudo and the installed helper when it is there', () => {
-    expect(updateCommand({ SEEDYPOD_UPDATE_CMD: '["node","scripts/seedypod-update.cjs"]' })).toEqual(['node', 'scripts/seedypod-update.cjs'])
+    expect(updateCommand({ THRYVE_UPDATE_CMD: '["node","scripts/thryve-update.cjs"]' })).toEqual(['node', 'scripts/thryve-update.cjs'])
     expect(updateCommand({})).toBeNull()
   })
 })

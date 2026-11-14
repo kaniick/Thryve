@@ -69,9 +69,9 @@ describe('S3Sink', () => {
   it('lists under a folder, strips the prefix and follows continuation tokens', async () => {
     const pages: Record<string, string> = {
       '': `<ListBucketResult><IsTruncated>true</IsTruncated><NextContinuationToken>t&amp;2</NextContinuationToken>
-        <Contents><Key>kitchen/backups/seedypod-backup-u-20261001-030000.tar.gz</Key><LastModified>2026-10-01T03:00:01.000Z</LastModified><Size>2048</Size></Contents></ListBucketResult>`,
+        <Contents><Key>kitchen/backups/thryve-backup-u-20261001-030000.tar.gz</Key><LastModified>2026-10-01T03:00:01.000Z</LastModified><Size>2048</Size></Contents></ListBucketResult>`,
       't&2': `<ListBucketResult><IsTruncated>false</IsTruncated>
-        <Contents><Key>kitchen/backups/seedypod-backup-u-20261002-030000.tar.gz</Key><LastModified>2026-10-02T03:00:01.000Z</LastModified><Size>4096</Size></Contents></ListBucketResult>`,
+        <Contents><Key>kitchen/backups/thryve-backup-u-20261002-030000.tar.gz</Key><LastModified>2026-10-02T03:00:01.000Z</LastModified><Size>4096</Size></Contents></ListBucketResult>`,
     }
     const seen: URL[] = []
     const sink = new S3Sink(cfg, (async (input: RequestInfo | URL) => {
@@ -81,8 +81,8 @@ describe('S3Sink', () => {
     }) as typeof fetch)
     const got = await sink.list('backups/')
     expect(got).toEqual([
-      { key: 'backups/seedypod-backup-u-20261001-030000.tar.gz', size: 2048, lastModified: '2026-10-01T03:00:01.000Z' },
-      { key: 'backups/seedypod-backup-u-20261002-030000.tar.gz', size: 4096, lastModified: '2026-10-02T03:00:01.000Z' },
+      { key: 'backups/thryve-backup-u-20261001-030000.tar.gz', size: 2048, lastModified: '2026-10-01T03:00:01.000Z' },
+      { key: 'backups/thryve-backup-u-20261002-030000.tar.gz', size: 4096, lastModified: '2026-10-02T03:00:01.000Z' },
     ])
     expect(seen[0]?.pathname).toBe('/pods')
     expect(seen[0]?.searchParams.get('prefix')).toBe('kitchen/backups/')
@@ -151,7 +151,7 @@ describe('MirroredSink', () => {
     await sink.flush()
     expect(s3.objects.has('/pods/kitchen/old.jpg')).toBe(true)
     expect(await sink.test()).toEqual({ ok: true, detail: 'wrote, read back and deleted a probe object' })
-    expect([...s3.objects.keys()].some(k => k.includes('.seedypod-probe'))).toBe(false)
+    expect([...s3.objects.keys()].some(k => k.includes('.thryve-probe'))).toBe(false)
   })
 
   it('reports a failing bucket from test() and a broken mirror read as a miss', async () => {

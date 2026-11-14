@@ -25,10 +25,10 @@ MJPEG, and both sit behind one USB 2.0 hub on a Pi Zero W: one ARMv6 core and
 
 ### What things cost on a real unit
 
-Measured on 2026-11-08 on a Gardyn 3.0 running seedypod OS (Pi Zero W, kernel
+Measured on 2026-11-08 on a Gardyn 3.0 running thryve OS (Pi Zero W, kernel
 `armv6l`). Busy share comes from `/proc/stat` deltas over each step, so USB,
 IRQ and kernel work count too. Camera steps ran under
-`flock /tmp/seedypod-camera.lock`. Core, hald and avahi were running, so the
+`flock /tmp/thryve-camera.lock`. Core, hald and avahi were running, so the
 idle unit was already 28 % busy. The CPU column is the whole core over the
 step, baseline included; the cost of the step is what lies above 28 %.
 
@@ -104,7 +104,7 @@ contention reasons.
   - `prepareStream` and `handleStreamRequest` refuse with "live view is off".
   - Code: `src/homekit/accessories/camera.ts`.
 - **Home Assistant:** core's bridge publishes discovery for an MQTT `camera`
-  per camera, `<unit>_core_camera_<name>` on `seedypod/<unit>/core/camera/<name>`.
+  per camera, `<unit>_core_camera_<name>` on `thryve/<unit>/core/camera/<name>`.
   It sends the newest stored still, raw JPEG and retained, on connect and
   after every stored still. A still already on the topic isn't sent again.
   `GET /api/camera/<name>/latest.jpg` (`cache-control: no-cache`) serves the

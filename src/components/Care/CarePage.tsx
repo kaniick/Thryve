@@ -9,8 +9,8 @@ import { Chores } from '@/src/components/Water/Chores'
 import { TankLog } from '@/src/components/Water/TankLog'
 import { trpc } from '@/src/utils/trpc'
 
-const ADR = 'https://github.com/seedypod/core/blob/dev/docs/adr/0029-care-engine-and-agent-boundary.md'
-const MCP_DOCS = 'https://seedypod.github.io/core/mcp/'
+const ADR = 'https://github.com/kaniick/Thryve/blob/dev/docs/adr/0029-care-engine-and-agent-boundary.md'
+const MCP_DOCS = 'https://github.com/kaniick/Thryve/tree/dev/docs'
 
 /**
  * Care (ADR-0029) in one place: what a planted unit is missing, the chores with
@@ -74,7 +74,7 @@ function SetupIssues() {
 /** Bring your own model: the unit's MCP endpoint, and what an assistant may and may not do there. */
 function Assistant() {
   const url = `${window.location.origin}/api/mcp`
-  const command = `claude mcp add --transport http seedypod ${url}`
+  const command = `claude mcp add --transport http thryve ${url}`
   const [copied, setCopied] = useState(false)
   const copy = () => {
     void navigator.clipboard?.writeText(command).then(() => setCopied(true), () => {})

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# seedypod HAL (hald) installer for a Raspberry Pi running Raspberry Pi OS.
-# Usage: curl -fsSL https://raw.githubusercontent.com/seedypod/core/main/scripts/install-hal | bash
+# thryve HAL (hald) installer for a Raspberry Pi running Raspberry Pi OS.
+# Usage: curl -fsSL https://raw.githubusercontent.com/kaniick/Thryve/main/scripts/install-hal | bash
 #        scripts/install-hal [--version vX.Y.Z] [--binary ./hald] [--no-enable]
 #                            [--mqtt-lan | --no-broker] [--no-wear] [--no-boot]
 #
 # Downloads the hald binary for this CPU from the latest GitHub Release of
-# seedypod/core, installs it to /usr/local/bin, writes a commented
-# /etc/seedypod/hal.toml if absent, creates the `seedypod` service user in the
+# kaniick/Thryve, installs it to /usr/local/bin, writes a commented
+# /etc/thryve/hal.toml if absent, creates the `thryve` service user in the
 # gpio/i2c/video groups, enables I²C and the PWM overlay, installs the
 # Mosquitto MQTT broker (127.0.0.1:1883, for hald and core on this Pi), and
 # installs and enables hald.service. It also cuts SD card writes (ADR-0021):
@@ -21,15 +21,30 @@
 #                such as Home Assistant's Mosquitto add-on
 #   --no-wear    leave journald, swap and the root mount options as they are
 #   --no-boot    leave cloud-init, rpi-swap's swap file and Mosquitto's start order as they are
-# Output is in colour on a terminal only; SEEDYPOD_COLOR=always or never overrides that.
+# Output is in colour on a terminal only; THRYVE_COLOR=always or never overrides that.
 set -euo pipefail
+
+# Honour seedypod's SEEDYPOD_* names when the matching THRYVE_* is unset, so a
+# unit mid-migration still starts. THRYVE_* always wins.
+if [ -z "${THRYVE_SKIP_LEGACY_ENV:-}" ]; then
+  while IFS='=' read -r key val; do
+    [ -n "$key" ] || continue
+    suffix=${key#SEEDYPOD_}
+    dest=THRYVE_${suffix}
+    if [ -z "${!dest:-}" ]; then
+      export "$dest=$val"
+    fi
+  done <<EOF
+$(env | grep '^SEEDYPOD_' || true)
+EOF
+fi
 
 # ---- output --------------------------------------------------------------------
 # Colour only on a terminal, which curl | bash still writes to. A log, tee or the OS
-# image bake gets plain text, as do NO_COLOR and TERM=dumb. SEEDYPOD_COLOR=always or
+# image bake gets plain text, as do NO_COLOR and TERM=dumb. THRYVE_COLOR=always or
 # never overrides all of that, for tests. Each stream is decided on its own.
 ui_colour() {
-  case "${SEEDYPOD_COLOR:-}" in always) return 0 ;; never) return 1 ;; esac
+  case "${THRYVE_COLOR:-}" in always) return 0 ;; never) return 1 ;; esac
   [ -t "$1" ] && [ -z "${NO_COLOR:-}" ] && [ "${TERM:-dumb}" != dumb ]
 }
 UI_OK="" UI_STEP="" UI_DIM="" UI_BOLD="" UI_OFF="" UI_WARN="" UI_ERR="" UI_EOFF=""
@@ -48,7 +63,7 @@ fail() { printf '%s✗ %s%s\n' "$UI_ERR" "$*" "$UI_EOFF" >&2; }
 # Nothing at all off a terminal. One line where the blocks can't show: no colour, no
 # UTF-8, or a window narrower than the logo.
 banner() {
-  [ -t 1 ] || [ "${SEEDYPOD_COLOR:-}" = always ] || return 0
+  [ -t 1 ] || [ "${THRYVE_COLOR:-}" = always ] || return 0
   local cols i beside=1
   # Asked of the terminal itself: inside $( ) stdout is a pipe, and under curl | bash so is stdin.
   cols="$(stty size 2>/dev/null </dev/tty || true)"
@@ -56,7 +71,7 @@ banner() {
   cols="${cols:-80}"
   case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in *[Uu][Tt][Ff]-8*|*[Uu][Tt][Ff]8*) ;; *) cols=0 ;; esac
   if [ -z "$UI_OFF" ] || [ "$cols" -lt "$UI_LOGO_COLS" ]; then
-    printf '%sseedypod %s%s\n\n' "$UI_BOLD" "$1" "$UI_OFF"
+    printf '%sthryve %s%s\n\n' "$UI_BOLD" "$1" "$UI_OFF"
     return 0
   fi
   [ "$cols" -gt $((UI_LOGO_COL + ${#1})) ] || beside=0
@@ -70,30 +85,30 @@ banner() {
   printf '\n'
 }
 # >>> logo: scripts/login-logo/generate.mjs writes this block (pnpm logo:generate)
-UI_LOGO_COLS=54
+UI_LOGO_COLS=52
 UI_LOGO_COL=46
 UI_LOGO_ROW=8
 UI_LOGO=(
-'                                      \e[38;5;193m▄▄▄\e[0m'
-'       \e[38;5;120;48;5;120m▀▀▀\e[48;5;84m▀\e[49m                     ▄▄▄\e[38;5;156;48;5;120m▀▀▀\e[48;5;156m▀▀\e[38;5;192m▀\e[0m'
-'  \e[38;5;84;48;5;42m▀\e[48;5;41m▀\e[49m   \e[48;5;84m▀▀▀▀\e[49m▄▄▄▄              ▄\e[48;5;84m▀▀▀\e[48;5;83m▀▀\e[38;5;120m▀▀\e[48;5;119m▀\e[48;5;120m▀\e[38;5;156m▀\e[48;5;156m▀\e[0m'
-'         \e[38;5;84m▀\e[48;5;84m▀▀▀\e[48;5;42m▀▀\e[38;5;42;49m▄▄\e[38;5;41m▄        \e[38;5;42m▄\e[38;5;84;48;5;42m▀\e[38;5;42m▀\e[48;5;41m▀\e[38;5;78m▀\e[38;5;77m▀\e[48;5;77m▀▀▀▀\e[38;5;83m▀\e[48;5;83m▀\e[38;5;119;48;5;119m▀▀\e[38;5;156;48;5;156m▀\e[0m'
-'     \e[38;5;84;48;5;42m▀▀▀\e[49m   \e[48;5;42m▀\e[38;5;42m▀▀▀▀▀\e[38;5;35;48;5;35m▀\e[38;5;29;48;5;29m▀\e[38;5;23;49m▄     \e[38;5;42;48;5;42m▀\e[48;5;36m▀\e[48;5;35m▀\e[38;5;41;48;5;41m▀▀▀▀\e[48;5;35m▀\e[48;5;41m▀\e[38;5;77;48;5;77m▀▀▀▀\e[38;5;83;48;5;83m▀\e[38;5;119;48;5;119m▀\e[38;5;156;48;5;156m▀\e[0m'
-'     \e[38;5;42m▄▄▄▄▄ ▀▀\e[48;5;42m▀▀\e[38;5;35;48;5;35m▀▀▀▀\e[48;5;29m▀\e[38;5;23;48;5;23m▀\e[49m▄  \e[38;5;36;48;5;35m▀▀\e[38;5;35m▀▀▀▀\e[48;5;23m▀\e[38;5;29;48;5;35m▀\e[38;5;35;48;5;41m▀\e[38;5;41m▀▀\e[38;5;77m▀▀\e[48;5;77m▀▀\e[38;5;119;48;5;119m▀\e[0m'
-'     \e[38;5;42;48;5;42m▀\e[48;5;36m▀▀\e[38;5;36;48;5;35m▀\e[38;5;35m▀\e[49m   \e[38;5;42;48;5;35m▀▀\e[38;5;35m▀▀\e[48;5;29m▀\e[38;5;29;48;5;23m▀\e[38;5;23m▀▀\e[38;5;235;48;5;235m▀\e[38;5;23;49m▄\e[38;5;29;48;5;29m▀▀▀▀▀\e[48;5;23m▀\e[38;5;23;48;5;29m▀\e[38;5;35;48;5;41m▀\e[38;5;41;48;5;35m▀▀▀▀▀\e[48;5;41m▀\e[38;5;77m▀\e[48;5;77m▀\e[38;5;84;49m▀\e[0m'
-'     \e[38;5;36;48;5;36m▀▀\e[38;5;35;48;5;35m▀▀▀\e[49m  \e[38;5;29;48;5;29m▀▀▀\e[38;5;36;48;5;36m▀▀\e[38;5;35;48;5;35m▀\e[38;5;23;48;5;23m▀▀▀\e[38;5;235;48;5;235m▀▀\e[38;5;23;48;5;23m▀▀▀\e[38;5;29m▀\e[38;5;23;48;5;235m▀\e[48;5;35m▀\e[38;5;35m▀▀▀▀▀▀▀▀\e[38;5;41;48;5;41m▀\e[38;5;77;49m▀\e[0m'
-'               \e[38;5;29;48;5;29m▀\e[48;5;23m▀▀\e[38;5;23m▀▀▀\e[38;5;235;48;5;235m▀\e[49m█\e[38;5;23;48;5;235m▀\e[48;5;23m▀\e[48;5;235m▀\e[38;5;235;48;5;23m▀\e[38;5;29;48;5;35m▀\e[38;5;35;48;5;29m▀▀\e[38;5;29m▀▀▀▀\e[38;5;35m▀\e[48;5;35m▀\e[49m▀         \e[1;38;5;78mse\e[38;5;84me\e[38;5;120mdyp\e[38;5;156mod\e[0m'
-'          \e[38;5;29;48;5;23m▀▀\e[38;5;23m▀\e[49m  ▀▀▀\e[48;5;23m▀▀▀\e[38;5;235;48;5;236m▀\e[48;5;235m▀▀\e[38;5;23;48;5;236m▀\e[38;5;235;48;5;235m▀\e[38;5;29;48;5;29m▀▀▀▀▀▀▀\e[49m▀\e[38;5;35m▀\e[0m'
-'          \e[38;5;23m▀▀▀     \e[48;5;23m▀▀▀▀\e[38;5;235;48;5;235m▀▀▀\e[38;5;23;48;5;29m▀\e[38;5;29m▀▀\e[49m▀▀▀\e[0m'
-'               \e[38;5;195m▄\e[38;5;152m▄\e[38;5;109m▄\e[38;5;66m▄\e[38;5;65m▄\e[38;5;23m▄\e[38;5;188;48;5;23m▀\e[38;5;239m▀\e[38;5;235;48;5;235m▀\e[38;5;236;48;5;23m▀\e[38;5;35;48;5;35m▀\e[38;5;115;48;5;29m▀\e[38;5;194m▀\e[38;5;71;49m▄\e[38;5;78m▄\e[38;5;114m▄\e[38;5;157m▄\e[38;5;194m▄\e[38;5;255m▄\e[0m'
-'            \e[38;5;195m▄\e[48;5;189m▀\e[38;5;152;48;5;146m▀\e[38;5;66;48;5;236m▀\e[38;5;23;48;5;235m▀\e[38;5;236m▀\e[38;5;235m▀▀▀▀▀\e[38;5;23;48;5;23m▀▀\e[38;5;29;48;5;29m▀\e[38;5;236;48;5;23m▀\e[38;5;23m▀▀▀\e[38;5;29m▀\e[38;5;35;48;5;29m▀\e[38;5;41m▀\e[38;5;121;48;5;78m▀\e[38;5;255;48;5;255m▀▀\e[0m'
-'           \e[38;5;189m▄\e[48;5;189m▀\e[48;5;153m▀▀\e[38;5;152m▀\e[38;5;109m▀\e[38;5;66m▀\e[38;5;239m▀\e[38;5;23m▀\e[38;5;236;48;5;152m▀▀\e[38;5;23m▀▀\e[48;5;151m▀▀\e[48;5;152m▀▀\e[48;5;194m▀\e[38;5;29m▀\e[38;5;71m▀\e[38;5;114m▀\e[38;5;152;48;5;254m▀\e[38;5;255m▀▀\e[48;5;255m▀\e[38;5;231m▀\e[0m'
-'           \e[38;5;189;48;5;153m▀\e[38;5;153m▀\e[48;5;147m▀▀▀▀▀▀▀\e[38;5;152;48;5;146m▀▀▀▀▀▀▀▀\e[48;5;250m▀\e[38;5;251m▀\e[48;5;251m▀▀\e[38;5;252;48;5;252m▀\e[38;5;253;48;5;188m▀\e[38;5;254;48;5;253m▀\e[38;5;255;48;5;254m▀\e[48;5;255m▀\e[38;5;231m▀\e[0m'
-'          \e[38;5;153;48;5;153m▀▀\e[38;5;111;48;5;111m▀▀▀▀▀\e[38;5;147m▀▀\e[38;5;146;48;5;110m▀▀▀▀▀▀▀▀▀\e[48;5;109m▀\e[38;5;250;48;5;249m▀▀\e[48;5;250m▀\e[38;5;251;48;5;251m▀\e[38;5;252m▀\e[38;5;188;48;5;252m▀\e[38;5;254;48;5;253m▀\e[38;5;255;48;5;254m▀\e[48;5;255m▀\e[0m'
-'           \e[38;5;117;48;5;111m▀\e[38;5;111;48;5;75m▀\e[48;5;69m▀▀▀▀▀\e[48;5;104m▀\e[38;5;110m▀▀▀▀▀▀\e[48;5;103m▀\e[48;5;109m▀\e[38;5;109m▀▀▀▀\e[38;5;249m▀\e[38;5;250;48;5;250m▀\e[38;5;152;48;5;152m▀\e[38;5;252m▀\e[38;5;253;48;5;188m▀\e[38;5;254;48;5;254m▀\e[38;5;255;48;5;255m▀\e[0m'
-'           \e[38;5;111m▀\e[38;5;75;48;5;75m▀\e[38;5;69;48;5;69m▀▀▀▀▀\e[38;5;68;48;5;68m▀▀▀▀▀\e[48;5;67m▀\e[38;5;67m▀▀▀▀\e[38;5;109m▀\e[48;5;73m▀\e[48;5;109m▀▀▀\e[38;5;152;48;5;152m▀▀\e[38;5;188;48;5;188m▀\e[38;5;194;48;5;194m▀\e[0m'
-'             \e[38;5;69m▀\e[48;5;69m▀\e[38;5;63;48;5;27m▀▀\e[48;5;63m▀\e[38;5;62;48;5;62m▀▀▀▀▀\e[38;5;67;48;5;61m▀▀\e[48;5;67m▀▀▀▀\e[38;5;73;48;5;73m▀▀\e[38;5;109;48;5;109m▀\e[38;5;110;48;5;116m▀\e[38;5;116m▀\e[38;5;152;48;5;152m▀\e[38;5;158;49m▀\e[0m'
-'                \e[38;5;27m▀▀▀\e[38;5;26m▀\e[48;5;27m▀\e[48;5;26m▀▀\e[38;5;61m▀\e[48;5;32m▀\e[38;5;67;48;5;67m▀▀▀\e[49m▀\e[38;5;73m▀▀\e[38;5;80m▀\e[38;5;116m▀\e[0m'
+'            \e[38;5;65m▄██\e[48;5;71m▀\e[38;5;71;48;5;65m▀\e[38;5;65;49m█▄\e[0m'
+'            \e[38;5;65;48;5;65m▀\e[48;5;71m▀\e[38;5;71;48;5;65m▀\e[38;5;65m▀\e[49m███             \e[38;5;71m▄▄▄█▄▄▄\e[0m'
+'           \e[38;5;65m▀\e[38;5;71;48;5;65m▀\e[38;5;65;49m████\e[48;5;65m▀\e[48;5;71m▀\e[38;5;71;49m▀          ▄█████████▄\e[0m'
+'            \e[38;5;65m███\e[48;5;65m▀\e[48;5;71m▀\e[38;5;71;48;5;65m▀\e[38;5;65;49m█       \e[38;5;71m▄\e[48;5;71m▀▀▀▀▀▀▀▀▀▀▀▀▀▀\e[0m'
+'         \e[38;5;65m▄▄██\e[48;5;65m▀\e[48;5;71m▀\e[38;5;71;48;5;65m▀\e[38;5;65m▀\e[49m███▄\e[38;5;71m▄  \e[38;5;65m▄████████████████\e[0m'
+'        \e[38;5;65m████\e[48;5;71m▀\e[38;5;71;48;5;65m▀\e[38;5;65;49m█████\e[48;5;71m▀\e[38;5;71;48;5;65m▀\e[38;5;65;49m██ ████████████████\e[0m'
+'       \e[38;5;65m██\e[48;5;65m▀\e[48;5;71m▀\e[38;5;71;48;5;65m▀\e[38;5;65m▀\e[49m███\e[48;5;65m▀\e[48;5;71m▀\e[38;5;71;48;5;65m▀\e[38;5;65m▀\e[49m████████████████▄███\e[0m'
+'       \e[38;5;65m█\e[48;5;71m▀\e[38;5;71;48;5;65m▀\e[38;5;65;49m█████\e[48;5;71m▀\e[38;5;71;48;5;65m▀\e[38;5;65;49m████\e[48;5;65m▀\e[48;5;71m▀\e[38;5;71m▀\e[38;5;65;48;5;65m▀\e[49m███████████████\e[0m'
+'       \e[38;5;71;48;5;65m▀\e[38;5;65m▀\e[49m███\e[48;5;65m▀\e[48;5;71m▀\e[38;5;71;48;5;65m▀\e[38;5;65m▀\e[49m███\e[48;5;65m▀\e[48;5;71m▀\e[38;5;71;48;5;65m▀\e[38;5;65m▀\e[49m█\e[48;5;65m▀\e[49m██████████████       \e[1;38;5;78mth\e[38;5;84mr\e[38;5;120my\e[38;5;156mve\e[0m'
+'        \e[38;5;65m██\e[48;5;65m▀\e[48;5;71m▀\e[38;5;71;48;5;65m▀\e[38;5;65;49m████\e[48;5;65m▀\e[48;5;71m▀\e[38;5;71m▀\e[38;5;65;48;5;65m▀\e[49m██ \e[38;5;29;48;5;29m▀\e[38;5;65m▀\e[49m████████▄██▀\e[0m'
+'         \e[38;5;65m▄▄\e[48;5;65m▀\e[49m███\e[48;5;65m▀\e[48;5;71m▀\e[38;5;71;48;5;65m▀\e[38;5;65;49m▄▄▀▀  \e[38;5;29m██ \e[38;5;65m▀▄▀▀█▀▀▀▀\e[0m'
+'           \e[38;5;23m▄▄▄▄\e[38;5;71;48;5;23m▀\e[38;5;23;49m▄▄▄▄▄▄▄▄\e[38;5;29;48;5;29m▀▀\e[38;5;23;49m▄▄▄▄▄▄▄\e[0m'
+'            \e[38;5;236;48;5;236m▀\e[38;5;23;49m███████████\e[48;5;23m▀▀\e[49m█████\e[48;5;23m▀\e[0m'
+'            \e[38;5;236m█\e[38;5;23m███████████████████\e[0m'
+'            \e[38;5;236m▀\e[38;5;23;48;5;23m▀\e[49m█████████████████▀\e[0m'
+'             \e[38;5;23m██████████████████\e[0m'
+'             \e[38;5;23m██████████████████\e[0m'
+'             \e[38;5;23m▀████████████████▀\e[0m'
+'              \e[38;5;23m████████████████\e[0m'
+'              \e[38;5;23m████████████████\e[0m'
 )
 # <<< logo
 
@@ -101,9 +116,9 @@ UI_LOGO=(
 # Each change is checked once applied and rolled back if the check fails, so a
 # setting this OS can't take leaves it as it was. ROOT prefixes the files these
 # touch; tests/scripts/install-hal.wear.test.ts sources this file with
-# SEEDYPOD_LIB_ONLY=1 and runs them against a scratch root with stub commands.
-ROOT="${SEEDYPOD_ROOT:-}"
-JOURNALD_CONF="$ROOT/etc/systemd/journald.conf.d/50-seedypod-volatile.conf"
+# THRYVE_LIB_ONLY=1 and runs them against a scratch root with stub commands.
+ROOT="${THRYVE_ROOT:-}"
+JOURNALD_CONF="$ROOT/etc/systemd/journald.conf.d/50-thryve-volatile.conf"
 ZRAM_CONF="$ROOT/etc/systemd/zram-generator.conf"
 ZRAM_GENERATOR="$ROOT/usr/lib/systemd/system-generators/zram-generator"
 
@@ -114,7 +129,7 @@ wear_journald() {
     step "journal already kept in RAM"; return 0
   fi
   $SUDO mkdir -p "$(dirname "$JOURNALD_CONF")"
-  printf '%s\n' "# Written by seedypod scripts/install-hal (ADR-0021): logs in RAM, lost on reboot." "$want" | $SUDO tee "$JOURNALD_CONF" >/dev/null
+  printf '%s\n' "# Written by thryve scripts/install-hal (ADR-0021): logs in RAM, lost on reboot." "$want" | $SUDO tee "$JOURNALD_CONF" >/dev/null
   if $SUDO systemctl restart systemd-journald && systemctl is-active --quiet systemd-journald; then
     step "journal kept in RAM (32 MB, cleared on reboot; docs/DEBUGGING.md shows how to keep it for a session)"
     return 0
@@ -140,11 +155,11 @@ wear_swap() {
       warn "   zram isn't available (no systemd-zram-generator); swap left as it was"
       return 1
     fi
-    local backup="$ZRAM_CONF.seedypod-bak"
+    local backup="$ZRAM_CONF.thryve-bak"
     if [ -f "$ZRAM_CONF" ]; then $SUDO cp -p "$ZRAM_CONF" "$backup"; fi
     $SUDO mkdir -p "$(dirname "$ZRAM_CONF")"
     $SUDO tee "$ZRAM_CONF" >/dev/null <<'CONF'
-# Written by seedypod scripts/install-hal (ADR-0021): swap in compressed RAM, not on the SD card.
+# Written by thryve scripts/install-hal (ADR-0021): swap in compressed RAM, not on the SD card.
 [zram0]
 zram-size = min(ram / 2, 512)
 compression-algorithm = zstd
@@ -182,7 +197,7 @@ wear_noatime() {
   if root_opts "$fstab" | tr ',' '\n' | grep -x noatime >/dev/null; then
     step "/ already mounted noatime"; return 0
   fi
-  local backup="$fstab.seedypod-bak"
+  local backup="$fstab.thryve-bak"
   $SUDO cp -p "$fstab" "$backup"
   awk 'BEGIN { OFS = "\t" } $1 !~ /^#/ && $2 == "/" { $4 = $4 ",noatime" } { print }' "$backup" | $SUDO tee "$fstab" >/dev/null
   if findmnt --verify --tab-file "$fstab" >/dev/null 2>&1 \
@@ -208,18 +223,18 @@ apply_wear_settings() {
 }
 
 # ---- cameras: stable names by USB port -----------------------------------------
-# /dev/videoN can swap across reboots; hald prefers /dev/seedypod/camera-<name>.
+# /dev/videoN can swap across reboots; hald prefers /dev/thryve/camera-<name>.
 # The hub may not be up during the install, so a udev rule runs the same step
 # when a camera appears; hald --sync-camera-rules pins both once both are there.
-CAMERA_RULES="$ROOT/etc/udev/rules.d/70-seedypod-cameras.rules"
-CAMERA_SYNC_RULE="$ROOT/etc/udev/rules.d/71-seedypod-camera-sync.rules"
-CAMERA_SYNC_UNIT="$ROOT/etc/systemd/system/seedypod-camera-rules.service"
+CAMERA_RULES="$ROOT/etc/udev/rules.d/70-thryve-cameras.rules"
+CAMERA_SYNC_RULE="$ROOT/etc/udev/rules.d/71-thryve-camera-sync.rules"
+CAMERA_SYNC_UNIT="$ROOT/etc/systemd/system/thryve-camera-rules.service"
 
 install_camera_rules() {
   local hald="$1"
   # Earlier installs could name the Pi's on-chip video nodes as cameras.
   if [ -f "$CAMERA_RULES" ] && grep -q 'KERNELS=="bcm2835' "$CAMERA_RULES"; then
-    $SUDO rm -f "$CAMERA_RULES" "$ROOT"/dev/seedypod/camera-*
+    $SUDO rm -f "$CAMERA_RULES" "$ROOT"/dev/thryve/camera-*
     step "removed camera rules that matched the Pi's on-chip video nodes"
   fi
   $SUDO mkdir -p "$(dirname "$CAMERA_SYNC_RULE")" "$(dirname "$CAMERA_SYNC_UNIT")"
@@ -228,7 +243,7 @@ install_camera_rules() {
   UNIT_CHANGED=0
   put_unit "$CAMERA_SYNC_UNIT" <<UNIT
 [Unit]
-Description=Pin seedypod camera names to their USB ports
+Description=Pin thryve camera names to their USB ports
 
 [Service]
 Type=oneshot
@@ -236,8 +251,8 @@ ExecStartPre=/bin/sleep 5
 ExecStart=$hald --sync-camera-rules
 UNIT
   $SUDO tee "$CAMERA_SYNC_RULE" >/dev/null <<'RULE'
-# Written by seedypod scripts/install-hal: pin camera names when a camera appears.
-ACTION=="add", SUBSYSTEM=="video4linux", SUBSYSTEMS=="usb", ATTR{index}=="0", TAG+="systemd", ENV{SYSTEMD_WANTS}+="seedypod-camera-rules.service"
+# Written by thryve scripts/install-hal: pin camera names when a camera appears.
+ACTION=="add", SUBSYSTEM=="video4linux", SUBSYSTEMS=="usb", ATTR{index}=="0", TAG+="systemd", ENV{SYSTEMD_WANTS}+="thryve-camera-rules.service"
 RULE
   if [ "$UNIT_CHANGED" -eq 1 ]; then $SUDO systemctl daemon-reload || true; fi
   $SUDO udevadm control --reload || true
@@ -262,7 +277,7 @@ RULE
 # tests/scripts/install-hal.boot.test.ts runs them the same way.
 CLOUD_DISABLED="$ROOT/etc/cloud/cloud-init.disabled"
 RPI_SWAP_GENERATOR="$ROOT/usr/lib/systemd/system-generators/rpi-swap-generator"
-RPI_SWAP_CONF="$ROOT/etc/rpi/swap.conf.d/50-seedypod.conf"
+RPI_SWAP_CONF="$ROOT/etc/rpi/swap.conf.d/50-thryve.conf"
 MOSQ_VENDOR_UNIT="$ROOT/usr/lib/systemd/system/mosquitto.service"
 MOSQ_UNIT="$ROOT/etc/systemd/system/mosquitto.service"
 
@@ -324,7 +339,7 @@ boot_swap() {
     step "rpi-swap has its own Mechanism set, so it's left alone"; return 0
   fi
   $SUDO mkdir -p "$(dirname "$RPI_SWAP_CONF")"
-  printf '%s\n' "# Written by seedypod scripts/install-hal: no swap file on the SD card." "$want" | $SUDO tee "$RPI_SWAP_CONF" >/dev/null
+  printf '%s\n' "# Written by thryve scripts/install-hal: no swap file on the SD card." "$want" | $SUDO tee "$RPI_SWAP_CONF" >/dev/null
   if $SUDO systemctl daemon-reload && systemctl cat dev-zram0.swap >/dev/null 2>&1 \
     && ! systemctl show -p Requires --value systemd-zram-setup@zram0.service | grep rpi-setup-loop >/dev/null; then
     step "swap is zram alone from the next boot (no swap file on the card)"
@@ -342,7 +357,7 @@ boot_swap() {
 boot_broker() {
   [ -f "$MOSQ_VENDOR_UNIT" ] || return 0
   local want
-  want="$(printf '%s\n' "# Written by seedypod scripts/install-hal: the vendor unit, not waiting for the network."; grep -v 'network-online.target' "$MOSQ_VENDOR_UNIT")"
+  want="$(printf '%s\n' "# Written by thryve scripts/install-hal: the vendor unit, not waiting for the network."; grep -v 'network-online.target' "$MOSQ_VENDOR_UNIT")"
   if [ -f "$MOSQ_UNIT" ] && cmp -s "$MOSQ_UNIT" <(printf '%s\n' "$want"); then
     step "Mosquitto already starts without waiting for the network"; return 0
   fi
@@ -367,7 +382,7 @@ apply_boot_settings() {
   return 0
 }
 
-# The login Imager set can be called seedypod too. useradd then has nothing to do and
+# The login Imager set can be called thryve too. useradd then has nothing to do and
 # hald runs as that login. It works, so warn rather than touch someone's account.
 warn_shared_login() {
   case "$(getent passwd "$1" | cut -d: -f7)" in
@@ -380,7 +395,7 @@ warn_shared_login() {
 # ---- nothing reboots mid-install -----------------------------------------------
 # hald --usb-recover won't reboot for the USB hub while a file is in here. It's in
 # /run, so if this dies mid-way a reboot clears it. Never worth failing an install for.
-BUSY_DIR="$ROOT/run/seedypod-busy"
+BUSY_DIR="$ROOT/run/thryve-busy"
 mark_busy() { { $SUDO mkdir -p "$BUSY_DIR" && $SUDO touch "$BUSY_DIR/$1"; } 2>/dev/null || true; }
 clear_busy() { $SUDO rm -f "$BUSY_DIR/$1" 2>/dev/null || true; }
 
@@ -388,7 +403,7 @@ clear_busy() { $SUDO rm -f "$BUSY_DIR/$1" 2>/dev/null || true; }
 # The hub doesn't always enumerate at boot. Runs as root because hald can't write
 # to sysfs; it waits boot_wait_s itself, and simple keeps that wait out of the boot.
 # No Restart=: a bus it can't bring up is left for the alert hald raises.
-USB_RECOVER_UNIT="$ROOT/etc/systemd/system/seedypod-usb-recover.service"
+USB_RECOVER_UNIT="$ROOT/etc/systemd/system/thryve-usb-recover.service"
 
 install_usb_recovery() {
   local hald="$1" conf="$2" enable="$3"
@@ -397,7 +412,7 @@ install_usb_recovery() {
   put_unit "$USB_RECOVER_UNIT" <<UNIT
 [Unit]
 Description=Re-enumerate a USB hub that didn't come up at boot
-Documentation=https://github.com/seedypod/core/blob/main/docs/hardware/hal.md#usb-recovery
+Documentation=https://github.com/kaniick/Thryve/blob/main/docs/hardware/hal.md#usb-recovery
 
 [Service]
 Type=simple
@@ -408,7 +423,7 @@ WantedBy=multi-user.target
 UNIT
   if [ "$UNIT_CHANGED" -eq 1 ]; then $SUDO systemctl daemon-reload || true; fi
   if [ "$enable" -eq 1 ]; then
-    $SUDO systemctl enable seedypod-usb-recover.service >/dev/null 2>&1 || true
+    $SUDO systemctl enable thryve-usb-recover.service >/dev/null 2>&1 || true
     step "USB hub recovery runs at each boot, and does nothing if the hub came up"
   fi
 }
@@ -441,8 +456,8 @@ needs_reload() { [ "$(systemctl show -p NeedDaemonReload --value "$1" 2>/dev/nul
 # A restart owed outlives the run that owed it. Written before the change it's for, so
 # a deploy that dies half way still restarts hald on the rerun, instead of reporting
 # success with the old binary driving the pump.
-HALD_RESTART_OWED="$ROOT/var/lib/seedypod/.restart-hald"
-CORE_RESTART_OWED="$ROOT/var/lib/seedypod/.restart-core"
+HALD_RESTART_OWED="$ROOT/var/lib/thryve/.restart-hald"
+CORE_RESTART_OWED="$ROOT/var/lib/thryve/.restart-core"
 
 owe_restart() { $SUDO touch "$1"; }
 
@@ -457,26 +472,26 @@ restart_hald_if_owed() {
 # A running core only picks up the new group on restart.
 restart_core_if_owed() {
   [ -e "$CORE_RESTART_OWED" ] || return 0
-  $SUDO systemctl try-restart seedypod-core.service >/dev/null 2>&1 || true
+  $SUDO systemctl try-restart thryve-core.service >/dev/null 2>&1 || true
   $SUDO rm -f "$CORE_RESTART_OWED"
 }
 
-if [ "${SEEDYPOD_LIB_ONLY:-}" = 1 ]; then return 0; fi
+if [ "${THRYVE_LIB_ONLY:-}" = 1 ]; then return 0; fi
 
-REPO="${SEEDYPOD_REPO:-seedypod/core}"
-VERSION="${SEEDYPOD_HAL_VERSION:-latest}"
+REPO="${THRYVE_REPO:-kaniick/Thryve}"
+VERSION="${THRYVE_HAL_VERSION:-latest}"
 BINARY=""
 ENABLE=1
 BROKER=local
 WEAR=1
 BOOT=1
 PREFIX=/usr/local/bin
-CONF_DIR=/etc/seedypod
-STATE_DIR=/var/lib/seedypod
-# The OS image names this account seedypod-hal, so that a login can be called
-# seedypod. A rerun keeps whatever hald already runs as.
-SERVICE_USER="${SEEDYPOD_SERVICE_USER:-$(sed -n 's/^User=//p' /etc/systemd/system/hald.service 2>/dev/null | head -1 || true)}"
-SERVICE_USER="${SERVICE_USER:-seedypod}"
+CONF_DIR=/etc/thryve
+STATE_DIR=/var/lib/thryve
+# The OS image names this account thryve-hal, so that a login can be called
+# thryve. A rerun keeps whatever hald already runs as.
+SERVICE_USER="${THRYVE_SERVICE_USER:-$(sed -n 's/^User=//p' /etc/systemd/system/hald.service 2>/dev/null | head -1 || true)}"
+SERVICE_USER="${SERVICE_USER:-thryve}"
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -546,10 +561,10 @@ for g in gpio i2c video; do
 done
 $SUDO chown "$SERVICE_USER:$SERVICE_USER" "$STATE_DIR"
 # Core runs as the install user and reads hal.toml, hald's state and the broker
-# password for its backups (ADR-0021): it joins the seedypod group, read-only.
-CORE_USER="${SEEDYPOD_CORE_USER:-${SUDO_USER:-}}"
+# password for its backups (ADR-0021): it joins the thryve group, read-only.
+CORE_USER="${THRYVE_CORE_USER:-${SUDO_USER:-}}"
 if [ -z "$CORE_USER" ] && [ "$(id -u)" -ne 0 ]; then CORE_USER="$(id -un)"; fi
-if [ -z "$CORE_USER" ] && [ -d /opt/seedypod ]; then CORE_USER="$(stat -c %U /opt/seedypod 2>/dev/null || true)"; fi
+if [ -z "$CORE_USER" ] && [ -d /opt/thryve ]; then CORE_USER="$(stat -c %U /opt/thryve 2>/dev/null || true)"; fi
 if [ -n "$CORE_USER" ] && [ "$CORE_USER" != root ] && id -u "$CORE_USER" >/dev/null 2>&1; then
   if ! in_group "$CORE_USER" "$SERVICE_USER"; then
     owe_restart "$CORE_RESTART_OWED"
@@ -600,8 +615,8 @@ fi
 
 # ---- MQTT broker ---------------------------------------------------------------
 # hald and core talk over MQTT and both default to mqtt://127.0.0.1:1883.
-MOSQ_CONF=/etc/mosquitto/conf.d/seedypod.conf
-MOSQ_PASSWD=/etc/mosquitto/seedypod.passwd
+MOSQ_CONF=/etc/mosquitto/conf.d/thryve.conf
+MOSQ_PASSWD=/etc/mosquitto/thryve.passwd
 if [ "$BROKER" != none ]; then
   MOSQ_CHANGED=0
   if ! have_broker; then
@@ -616,7 +631,7 @@ if [ "$BROKER" != none ]; then
     step "writing $MOSQ_CONF (127.0.0.1:1883, no password: only processes on this Pi can reach it)"
     MOSQ_CHANGED=1
     $SUDO tee "$MOSQ_CONF" >/dev/null <<'CONF'
-# Written by seedypod scripts/install-hal. Each listener has its own auth.
+# Written by thryve scripts/install-hal. Each listener has its own auth.
 per_listener_settings true
 
 # hald and core on this Pi.
@@ -629,7 +644,7 @@ CONF
     HA_PASS="$(head -c 18 /dev/urandom | base64 | tr -d '/+=' | head -c 24)"
     $SUDO mosquitto_passwd -b -c "$MOSQ_PASSWD" homeassistant "$HA_PASS"
     # Mosquitto warns (and newer releases refuse) unless its own user owns the file and
-    # it isn't world-readable; group seedypod lets core put it in backups (ADR-0021).
+    # it isn't world-readable; group thryve lets core put it in backups (ADR-0021).
     $SUDO chown "mosquitto:$SERVICE_USER" "$MOSQ_PASSWD" 2>/dev/null || true
     $SUDO chmod 0640 "$MOSQ_PASSWD"
     $SUDO tee -a "$MOSQ_CONF" >/dev/null <<CONF
@@ -668,7 +683,7 @@ I2C_BUS="$(sed -n 's/^bus *= *\([0-9]*\).*/\1/p' "$CONF_DIR/hal.toml" | head -1)
 UNIT_CHANGED=0
 put_unit /etc/systemd/system/hald.service <<UNIT
 [Unit]
-Description=seedypod hardware daemon (hald)
+Description=thryve hardware daemon (hald)
 Documentation=https://github.com/$REPO/blob/main/docs/hardware/hal.md
 # Not network-online.target: the pump and lights must run without Wi-Fi, and hald's
 # broker is on this Pi. mDNS picks an address up whenever one arrives.
@@ -679,11 +694,11 @@ After=mosquitto.service
 # and udev's group ownership. Bounded, then on regardless: the pump's interlocks fail safe.
 ExecStartPre=-/usr/bin/timeout 30 /bin/sh -c 'until [ -w /sys/class/pwm/pwmchip0/export ] && [ -r /dev/i2c-${I2C_BUS:-1} ]; do sleep 1; done'
 ExecStart=$PREFIX/hald --config $CONF_DIR/hal.toml
-Environment=RUST_LOG=info SEEDYPOD_RECORDING_POLICY_FILE=/opt/seedypod/data/recording-policy.json
+Environment=RUST_LOG=info THRYVE_RECORDING_POLICY_FILE=/opt/thryve/data/recording-policy.json
 User=$SERVICE_USER
 Group=$SERVICE_USER
 SupplementaryGroups=gpio i2c video
-StateDirectory=seedypod
+StateDirectory=thryve
 Restart=always
 RestartSec=3
 KillSignal=SIGTERM

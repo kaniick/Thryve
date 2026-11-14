@@ -9,7 +9,7 @@ vi.mock('@/src/utils/trpc', () => ({
   trpc: { care: { starterRules: { useQuery: () => ({ data: data.get('starters') }) } } },
 }))
 
-const cite = { note: 'knowledge/nutrients/gardyn-feeding-guidance.md', section: 'pH and EC', url: 'https://github.com/seedypod/core/blob/dev/knowledge/nutrients/gardyn-feeding-guidance.md#ph-and-ec' }
+const cite = { note: 'knowledge/nutrients/gardyn-feeding-guidance.md', section: 'pH and EC', url: 'https://github.com/kaniick/Thryve/blob/dev/knowledge/nutrients/gardyn-feeding-guidance.md#ph-and-ec' }
 const rule = (name: string, value: number) => ({ name, priority: 50, cooldownMin: 240, trigger: { kind: 'tick' as const, everyMin: 15 }, conditions: { kind: 'and' as const, conditions: [{ kind: 'compare' as const, op: '<' as const, left: { kind: 'signal' as const, signal: 'sensor.water_level_pct' }, right: { kind: 'literal' as const, value } }] }, actions: [{ kind: 'notify' as const, message: name }] })
 const starter = (id: Starter['id'], extra: Partial<Starter> = {}): Starter => ({ id, title: `${id} title`, description: `${id} description`, sensors: [], unavailable: null, added: false, citations: [cite], rule: rule(`${id} rule`, 50), ...extra })
 

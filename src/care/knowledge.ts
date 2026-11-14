@@ -13,7 +13,7 @@ export interface Citation {
   url: string
 }
 
-const REPO = 'https://github.com/seedypod/core/blob/dev/'
+const REPO = 'https://github.com/kaniick/Thryve/blob/dev/'
 
 /** GitHub's heading anchor: lower case, punctuation dropped, spaces to hyphens. */
 export const anchor = (heading: string) => heading.trim().toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu, '').replace(/\s/g, '-')

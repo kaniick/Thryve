@@ -4,7 +4,7 @@
 // searches this copy and only swaps in the live index when the browser can
 // reach the docs site.
 //
-//   pnpm docs:sync-index                       # the live https://seedypod.github.io/search-index.json
+//   pnpm docs:sync-index                       # the live https://github.com/kaniick/Thryve/tree/dev/docs (bundled snapshot in src/components/Search/docsIndex.json)
 //   pnpm docs:sync-index <site>/out/search-index.json   # a local docs site build
 import { readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'

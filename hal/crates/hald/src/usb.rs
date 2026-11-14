@@ -47,10 +47,10 @@ const REBOOTS_FILE: &str = "usb-reboots";
 
 /// `install`, `install-hal` and the restore helper each leave a file here while
 /// they run. It's in `/run`, so one that died mid-way can't hold reboots for good.
-const BUSY_DIR: &str = "run/seedypod-busy";
+const BUSY_DIR: &str = "run/thryve-busy";
 
 /// core's setup hotspot, as NetworkManager names it (`src/network/wifi.ts`).
-const SETUP_CONNECTION: &str = "seedypod-setup";
+const SETUP_CONNECTION: &str = "thryve-setup";
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum BusState {
@@ -179,8 +179,8 @@ pub struct Boot<'a> {
 /// What still has to finish on a new card, so a reboot can't interrupt it. `unit.env`
 /// is the last thing first boot writes; neither applies off an image.
 fn setup_pending(root: &Path) -> Option<&'static str> {
-    let unit_env = std::fs::metadata(root.join("var/lib/seedypod-image/unit.env"));
-    if root.join("usr/local/sbin/seedypod-first-boot").exists() && unit_env.map_or(true, |m| m.len() == 0) {
+    let unit_env = std::fs::metadata(root.join("var/lib/thryve-image/unit.env"));
+    if root.join("usr/local/sbin/thryve-first-boot").exists() && unit_env.map_or(true, |m| m.len() == 0) {
         return Some("first boot hasn't finished");
     }
     let cloud = root.join("etc/cloud");
@@ -998,9 +998,9 @@ mod tests {
     fn first_boot_finishing_during_the_wait_lets_the_reboot_go_ahead() {
         let root = fake_sysfs("first-boot-wait", "dwc_otg");
         std::fs::create_dir_all(root.join("usr/local/sbin")).unwrap();
-        std::fs::write(root.join("usr/local/sbin/seedypod-first-boot"), "").unwrap();
-        std::fs::create_dir_all(root.join("var/lib/seedypod-image")).unwrap();
-        let unit_env = root.join("var/lib/seedypod-image/unit.env");
+        std::fs::write(root.join("usr/local/sbin/thryve-first-boot"), "").unwrap();
+        std::fs::create_dir_all(root.join("var/lib/thryve-image")).unwrap();
+        let unit_env = root.join("var/lib/thryve-image/unit.env");
         let what = Boot {
             sysfs: &root,
             state_dir: &root,
@@ -1032,8 +1032,8 @@ mod tests {
 
     #[test]
     fn the_setup_hotspot_is_found_by_its_connection_name() {
-        assert!(hotspot_in("seedypod-setup\nlo\n"));
-        assert!(!hotspot_in("seedypod-wifi\nlo\n"));
+        assert!(hotspot_in("thryve-setup\nlo\n"));
+        assert!(!hotspot_in("thryve-wifi\nlo\n"));
         assert!(!hotspot_in(""));
     }
 
@@ -1089,14 +1089,14 @@ mod tests {
         let root = fake_sysfs("first-boot", "dwc_otg");
         let waiting = Recovery::NotRebooting("first boot hasn't finished".into());
         std::fs::create_dir_all(root.join("usr/local/sbin")).unwrap();
-        std::fs::write(root.join("usr/local/sbin/seedypod-first-boot"), "").unwrap();
+        std::fs::write(root.join("usr/local/sbin/thryve-first-boot"), "").unwrap();
         assert_eq!(boot(&root), waiting);
         // First boot writes this last, through a temp file; empty means it didn't finish.
-        std::fs::create_dir_all(root.join("var/lib/seedypod-image")).unwrap();
-        std::fs::write(root.join("var/lib/seedypod-image/unit.env"), "").unwrap();
+        std::fs::create_dir_all(root.join("var/lib/thryve-image")).unwrap();
+        std::fs::write(root.join("var/lib/thryve-image/unit.env"), "").unwrap();
         assert_eq!(boot(&root), waiting);
         assert_eq!(counted(&root), None);
-        std::fs::write(root.join("var/lib/seedypod-image/unit.env"), "HAL_UNIT_ID=u1\n").unwrap();
+        std::fs::write(root.join("var/lib/thryve-image/unit.env"), "HAL_UNIT_ID=u1\n").unwrap();
         assert_eq!(boot(&root), Recovery::Reboot { attempt: 1, limit: 4 });
         let _ = std::fs::remove_dir_all(root);
     }

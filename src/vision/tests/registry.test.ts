@@ -70,11 +70,11 @@ describe('model registry', () => {
 
   it('says where each running file is on disk, for podvision (#191), when the files have paths', () => {
     const { r, files } = registry()
-    files.shipped = () => ({ text: shippedText, path: '/opt/seedypod/models/pod-state.json' })
+    files.shipped = () => ({ text: shippedText, path: '/opt/thryve/models/pod-state.json' })
     const paths = files as MemFiles & { path?: (sha: string) => string }
     const text = model('On disk')
     const id = r.upload(text, sha256(text), { enable: true }).id
-    expect(r.specs().map(s => s.path)).toEqual(['/opt/seedypod/models/pod-state.json', undefined])
+    expect(r.specs().map(s => s.path)).toEqual(['/opt/thryve/models/pod-state.json', undefined])
     paths.path = sha => `/data/models/${sha}.json`
     expect(r.specs().find(s => s.id === 'pod-state-on-disk')?.path).toBe(`/data/models/${sha256(text)}.json`)
     expect(id).toBe(sha256(text).slice(0, 12))
@@ -100,7 +100,7 @@ describe('model registry', () => {
     const text = model('x')
     refused(() => r.upload(text, 'abc'), 400, /64 hex/)
     refused(() => r.upload(text, sha256('other')), 400, /sha256 mismatch/)
-    refused(() => r.upload('{"format":"onnx"}', sha256('{"format":"onnx"}')), 400, /invalid weights file: not a seedypod-cnn/)
+    refused(() => r.upload('{"format":"onnx"}', sha256('{"format":"onnx"}')), 400, /invalid weights file: not a thryve-cnn/)
     refused(() => r.upload('nope', sha256('nope')), 400, /not JSON/)
     const wrongClasses = JSON.stringify({ ...parity.model, classes: ['a', 'b', 'c', 'd', 'e'] })
     refused(() => r.upload(wrongClasses, sha256(wrongClasses)), 400, /classes must be/)

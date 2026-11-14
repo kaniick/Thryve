@@ -21,20 +21,20 @@ How code gets from `dev` to a unit (mirrors [sleepypod/core](https://sleepypod.g
   `nightly.link` with `scripts/install --branch <name>`.
 - **Local** → `scripts/deploy user@host` builds here and ships over SSH.
 - **OS image** → `os-image.yml` runs `scripts/build-image` after each `dev` and
-  `main` release and attaches `seedypod-os.img.xz`, its sha256 and an Imager
+  `main` release and attaches `thryve-os.img.xz`, its sha256 and an Imager
   repository to `dev-latest` or the tag. A new push never cancels it; pushes
   queue behind it and only the newest builds, so `dev-latest`'s image can lag
-  its tarball by a build. `seedypod-os-manifest.txt` says which commit it's from.
+  its tarball by a build. `thryve-os-manifest.txt` says which commit it's from.
   Pull requests only run it when they touch the build, using `dev-latest`'s
   assets, and keep the image as a 7-day artifact to flash. Locally, with Docker:
   `scripts/build-image <dir-of-release-assets> <out-dir>`. Move to a new Raspberry
   Pi OS in `scripts/image/base.env`.
 
 The unit runs two systemd services: `hald` (Rust, owns hardware) and
-`seedypod-core` (Node, `:3000`). Both restart on failure. Core is LAN-only;
+`thryve-core` (Node, `:3000`). Both restart on failure. Core is LAN-only;
 no outbound connections are made by either service.
 
-- **On the unit** → `seedypod-update` (root, [ADR 0026](adr/0026-web-update.md))
+- **On the unit** → `thryve-update` (root, [ADR 0026](adr/0026-web-update.md))
   installs the newest `vX.Y.Z` (stable) or `dev-latest` (dev) release when
   someone asks it to. It's the one thing on the unit that goes online, and only
   to GitHub's releases. Every asset it downloads needs a checksum: a
@@ -45,10 +45,10 @@ no outbound connections are made by either service.
 | Name | Kind | Used by | How to get it |
 |---|---|---|---|
 | `VERCEL_TOKEN` | secret | `vercel.yml` | vercel.com/account/settings/tokens → Create, scoped to *therealng's projects* |
-| `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID` | secrets | `vercel.yml` | set: team `therealngs-projects`, project `seedypod-demo` (`vercel project inspect seedypod-demo`) |
+| `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID` | secrets | `vercel.yml` | set: team `therealngs-projects`, project `thryve-demo` (`vercel project inspect thryve-demo`) |
 | `VERCEL_ENABLED` | variable = `true` | `vercel.yml` | Settings → Variables; the workflow is skipped until set |
-| `BACKMERGE_DEPLOY_KEY` | secret | `back-merge.yml` | private half of a write deploy key on `seedypod/core` only (*back-merge (GitHub Actions, Dev ruleset bypass)*). Deploy keys are on the `Dev` ruleset's bypass list, so the merge commit can go straight to `dev`; set up already. To rotate it, add a new deploy key and replace this secret |
+| `BACKMERGE_DEPLOY_KEY` | secret | `back-merge.yml` | private half of a write deploy key on `kaniick/Thryve` only (*back-merge (GitHub Actions, Dev ruleset bypass)*). Deploy keys are on the `Dev` ruleset's bypass list, so the merge commit can go straight to `dev`; set up already. To rotate it, add a new deploy key and replace this secret |
 
 Coverage needs no secret: `test.yml` and `rust.yml` upload to Codecov with GitHub OIDC (`use_oidc: true`, `id-token: write`), and fork PRs fall back to Codecov's tokenless upload. No `CODECOV_TOKEN` secret is needed.
 
-Renovate runs as the Mend Renovate GitHub App on the `seedypod` org (no token; install it from github.com/apps/renovate). It reads `renovate.json`: minor/patch automerge after 3 days, Mondays, through GitHub auto-merge and the `dev` merge queue; majors and the core stack (react, router, hono, vite, rppal, tokio…) stay manual; cargo is enabled; vulnerability alerts get the `security` label.
+Renovate runs as the Mend Renovate GitHub App on the `thryve` org (no token; install it from github.com/apps/renovate). It reads `renovate.json`: minor/patch automerge after 3 days, Mondays, through GitHub auto-merge and the `dev` merge queue; majors and the core stack (react, router, hono, vite, rppal, tokio…) stay manual; cargo is enabled; vulnerability alerts get the `security` label.

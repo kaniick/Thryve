@@ -1,16 +1,16 @@
 #!/usr/bin/env node
 /* eslint-disable @typescript-eslint/no-require-imports */
-// seedypod update helper (ADR-0026). Installed root-owned at
-// /usr/local/sbin/seedypod-update by scripts/install, which writes the install
+// thryve update helper (ADR-0026). Installed root-owned at
+// /usr/local/sbin/thryve-update by scripts/install, which writes the install
 // prefix in and lets core's user run it with sudo, with these arguments only.
 // Node built-ins only; it must not load anything the core user can write.
 //
-// Usage: seedypod-update --status                 print the channel, what's installed and the last run
-//        seedypod-update --channel stable|dev     remember the channel to update from
-//        seedypod-update --check                  ask GitHub for the newest release on that channel
-//        seedypod-update --start                  check, then update in its own unit (what core calls)
-//        seedypod-update --now                    check, then update here (over SSH)
-//        seedypod-update --rollback               put back what the last update replaced (over SSH)
+// Usage: thryve-update --status                 print the channel, what's installed and the last run
+//        thryve-update --channel stable|dev     remember the channel to update from
+//        thryve-update --check                  ask GitHub for the newest release on that channel
+//        thryve-update --start                  check, then update in its own unit (what core calls)
+//        thryve-update --now                    check, then update here (over SSH)
+//        thryve-update --rollback               put back what the last update replaced (over SSH)
 // It only downloads release assets CI built, checks each one's sha256, and
 // never compiles: a release that would need it is refused. A failed health
 // check puts the previous version back, hald and podvision (#191) with it.
@@ -25,29 +25,36 @@ const os = require('node:os')
 const path = require('node:path')
 
 const INSTALLED_PREFIX = '__PREFIX__'
-const REPO = 'seedypod/core'
+const REPO = 'kaniick/Thryve'
 const CHANNELS = { stable: 'latest', dev: 'dev-latest' }
 const isRoot = typeof process.getuid === 'function' && process.getuid() === 0
 // Overrides exist for tests; as root (under sudo) only the installed paths count.
-const env = name => (isRoot ? undefined : process.env[name]) || undefined
-const prefix = env('SEEDYPOD_UPDATE_PREFIX') ?? (INSTALLED_PREFIX.startsWith('__') ? path.resolve(__dirname, '..') : INSTALLED_PREFIX)
+const env = (name) => {
+  if (isRoot) return undefined
+  const v = process.env[name]
+  if (v) return v
+  // seedypod names, for a unit mid-migration (ignored as root; paths are baked in).
+  if (name.startsWith('THRYVE_')) return process.env['SEEDYPOD_' + name.slice(7)] || undefined
+  return undefined
+}
+const prefix = env('THRYVE_UPDATE_PREFIX') ?? (INSTALLED_PREFIX.startsWith('__') ? path.resolve(__dirname, '..') : INSTALLED_PREFIX)
 
 const P = {
   prefix,
   next: `${prefix}.next`,
   previous: `${prefix}.previous`,
-  work: env('SEEDYPOD_UPDATE_WORK') ?? '/var/lib/seedypod-update',
-  api: env('SEEDYPOD_UPDATE_API') ?? 'https://api.github.com',
-  downloads: env('SEEDYPOD_UPDATE_DOWNLOADS') ?? `https://github.com/${REPO}/releases/download/`,
-  coreUnit: env('SEEDYPOD_UPDATE_CORE_UNIT') ?? '/etc/systemd/system/seedypod-core.service',
-  haldUnit: env('SEEDYPOD_UPDATE_HALD_UNIT') ?? '/etc/systemd/system/hald.service',
-  hald: env('SEEDYPOD_UPDATE_HALD') ?? '/usr/local/bin/hald',
-  podvision: env('SEEDYPOD_UPDATE_PODVISION') ?? '/usr/local/bin/podvision',
-  target: env('SEEDYPOD_UPDATE_TARGET'),
-  sbin: env('SEEDYPOD_UPDATE_SBIN') ?? '/usr/local/sbin',
-  compileCache: env('SEEDYPOD_UPDATE_COMPILE_CACHE') ?? '/var/cache/seedypod/compile-cache',
-  busy: env('SEEDYPOD_UPDATE_BUSY') ?? '/run/seedypod-busy',
-  share: env('SEEDYPOD_UPDATE_SHARE') ?? '/usr/local/share/seedypod',
+  work: env('THRYVE_UPDATE_WORK') ?? '/var/lib/thryve-update',
+  api: env('THRYVE_UPDATE_API') ?? 'https://api.github.com',
+  downloads: env('THRYVE_UPDATE_DOWNLOADS') ?? `https://github.com/${REPO}/releases/download/`,
+  coreUnit: env('THRYVE_UPDATE_CORE_UNIT') ?? '/etc/systemd/system/thryve-core.service',
+  haldUnit: env('THRYVE_UPDATE_HALD_UNIT') ?? '/etc/systemd/system/hald.service',
+  hald: env('THRYVE_UPDATE_HALD') ?? '/usr/local/bin/hald',
+  podvision: env('THRYVE_UPDATE_PODVISION') ?? '/usr/local/bin/podvision',
+  target: env('THRYVE_UPDATE_TARGET'),
+  sbin: env('THRYVE_UPDATE_SBIN') ?? '/usr/local/sbin',
+  compileCache: env('THRYVE_UPDATE_COMPILE_CACHE') ?? '/var/cache/thryve/compile-cache',
+  busy: env('THRYVE_UPDATE_BUSY') ?? '/run/thryve-busy',
+  share: env('THRYVE_UPDATE_SHARE') ?? '/usr/local/share/thryve',
 }
 const STATUS = path.join(P.work, 'status.json')
 const LOG = path.join(P.work, 'update.log')
@@ -63,10 +70,10 @@ const META = path.join(P.previous, 'meta.json')
 const KEEP = name => name === 'data' || name === 'node_modules' || name === '.pnpm-store' || name.startsWith('.env')
 // The SSH login screen's files under P.share (scripts/install's install_login_logo).
 const LOGIN_FILES = ['login-logo', 'login-stats', 'logo.frames']
-const REQUIRED = ['server/dist/index.js', 'web/dist/index.html', 'package.json', 'pnpm-lock.yaml', '.git-info', 'scripts/seedypod-update.cjs', 'scripts/seedypod-restore.cjs']
+const REQUIRED = ['server/dist/index.js', 'web/dist/index.html', 'package.json', 'pnpm-lock.yaml', '.git-info', 'scripts/thryve-update.cjs', 'scripts/thryve-restore.cjs']
 // A Pi Zero W can take minutes to start core, more with migrations to run.
-const HEALTH_TIMEOUT_S = Number(env('SEEDYPOD_UPDATE_HEALTH_TIMEOUT') ?? 600)
-const POLL_MS = Number(env('SEEDYPOD_UPDATE_POLL_MS') ?? 2000)
+const HEALTH_TIMEOUT_S = Number(env('THRYVE_UPDATE_HEALTH_TIMEOUT') ?? 600)
+const POLL_MS = Number(env('THRYVE_UPDATE_POLL_MS') ?? 2000)
 const PNPM_TIMEOUT_MS = 30 * 60_000
 const MAX_ASSET_BYTES = 512 * 1024 * 1024
 
@@ -139,7 +146,7 @@ function installed() {
 // ---- GitHub ----------------------------------------------------------------------------
 
 async function get(url, accept) {
-  const r = await fetch(url, { headers: { 'accept': accept, 'user-agent': 'seedypod-update' }, redirect: 'follow', signal: AbortSignal.timeout(60_000) })
+  const r = await fetch(url, { headers: { 'accept': accept, 'user-agent': 'thryve-update' }, redirect: 'follow', signal: AbortSignal.timeout(60_000) })
   if (r.status === 404) throw new Refused('no-release', `no release at ${url}`)
   if (!r.ok) throw new Error(`GitHub answered ${r.status} for ${url}${r.status === 403 ? ' (rate limited? try again in an hour)' : ''}`)
   return r
@@ -198,7 +205,7 @@ async function check() {
   const ch = channel()
   const release = await resolve(ch)
   const here = installed()
-  const missing = ['seedypod-core.tar.gz']
+  const missing = ['thryve-core.tar.gz']
   if (updatesHald()) missing.push(`hald-${haldTarget()}`)
   const absent = missing.filter(n => !release.assets[n])
   const unchecked = missing.filter(n => release.assets[n] && !release.assets[n].digest && !release.assets[`${n}.sha256`])
@@ -239,7 +246,7 @@ function sha256(file) {
 async function download(url, file) {
   for (let attempt = 1; ; attempt++) {
     try {
-      const r = await fetch(url, { headers: { 'user-agent': 'seedypod-update' }, redirect: 'follow', signal: AbortSignal.timeout(15 * 60_000) })
+      const r = await fetch(url, { headers: { 'user-agent': 'thryve-update' }, redirect: 'follow', signal: AbortSignal.timeout(15 * 60_000) })
       if (!r.ok || !r.body) throw new Error(`HTTP ${r.status}`)
       const out = fs.openSync(file, 'w', 0o644)
       let bytes = 0
@@ -316,7 +323,7 @@ function run(cmd, args, o = {}) {
 }
 
 async function systemctl(...args) {
-  const cmd = env('SEEDYPOD_SYSTEMCTL') ? JSON.parse(env('SEEDYPOD_SYSTEMCTL')) : ['systemctl']
+  const cmd = env('THRYVE_SYSTEMCTL') ? JSON.parse(env('THRYVE_SYSTEMCTL')) : ['systemctl']
   return (await run(cmd[0], [...cmd.slice(1), ...args])).code === 0
 }
 
@@ -356,7 +363,7 @@ function corePort() {
   }
 }
 
-const coreUrl = () => env('SEEDYPOD_UPDATE_CORE_URL') ?? `http://127.0.0.1:${corePort()}`
+const coreUrl = () => env('THRYVE_UPDATE_CORE_URL') ?? `http://127.0.0.1:${corePort()}`
 
 async function coreAnswer() {
   try {
@@ -514,7 +521,7 @@ function unlock() {
 // ---- the update --------------------------------------------------------------------------------
 
 const sqliteVersion = lockfile => /^ {2}better-sqlite3@([0-9][^:(]*):$/m.exec(fs.readFileSync(lockfile, 'utf8'))?.[1] ?? null
-const depsStamp = () => path.join(P.prefix, 'node_modules', `.seedypod-lock-${process.version}`)
+const depsStamp = () => path.join(P.prefix, 'node_modules', `.thryve-lock-${process.version}`)
 
 function depsChanged(stage) {
   try {
@@ -539,9 +546,9 @@ async function unpack(tarball) {
   fs.rmSync(P.next, { recursive: true, force: true })
   fs.mkdirSync(P.next, { recursive: true, mode: 0o755 })
   const r = await run('tar', ['-xzf', tarball, '-C', P.next, '--no-same-owner'])
-  if (r.code !== 0) throw new Refused('invalid', `seedypod-core.tar.gz didn't unpack: ${r.out.trim()}`)
+  if (r.code !== 0) throw new Refused('invalid', `thryve-core.tar.gz didn't unpack: ${r.out.trim()}`)
   // A release from before ADR-0026 would leave the unit with no way to update from the web.
-  if (!fs.existsSync(path.join(P.next, 'scripts/seedypod-update.cjs'))) throw new Refused('needs-install', 'this release is older than updating from the web; install it over SSH with scripts/install')
+  if (!fs.existsSync(path.join(P.next, 'scripts/thryve-update.cjs'))) throw new Refused('needs-install', 'this release is older than updating from the web; install it over SSH with scripts/install')
   for (const f of REQUIRED) if (!fs.existsSync(path.join(P.next, f))) throw new Refused('invalid', `the release is missing ${f}`)
   for (const n of fs.readdirSync(P.next)) if (KEEP(n)) fs.rmSync(path.join(P.next, n), { recursive: true, force: true })
   const want = wantedNodeMajor(P.next)
@@ -568,7 +575,7 @@ async function sqlitePrebuilt(release, stage) {
 }
 
 function pnpmCommand() {
-  if (env('SEEDYPOD_UPDATE_PNPM')) return JSON.parse(env('SEEDYPOD_UPDATE_PNPM'))
+  if (env('THRYVE_UPDATE_PNPM')) return JSON.parse(env('THRYVE_UPDATE_PNPM'))
   return fs.existsSync('/usr/local/bin/pnpm') ? ['/usr/local/bin/pnpm'] : ['/usr/local/bin/corepack', 'pnpm']
 }
 
@@ -605,12 +612,12 @@ async function installDeps(acct, sqlite) {
   own(depsStamp(), acct)
 }
 
-const DB_FILES = ['seedypod.db', 'seedypod.db-wal', 'seedypod.db-shm']
+const DB_FILES = ['thryve.db', 'thryve.db-wal', 'thryve.db-shm']
 
 async function startAndCheck(meta, version) {
   setStatus({ state: 'starting' })
   if (meta.hald) await systemctl('start', 'hald')
-  await systemctl('start', 'seedypod-core')
+  await systemctl('start', 'thryve-core')
   setStatus({ state: 'health' })
   log(`waiting up to ${HEALTH_TIMEOUT_S} s for core ${version ?? ''} to answer`)
   return healthy(version, meta.halOnline)
@@ -618,7 +625,7 @@ async function startAndCheck(meta, version) {
 
 /** Puts back everything `meta` says the update replaced, then starts the services on it. */
 async function putBack(meta) {
-  await systemctl('stop', 'seedypod-core')
+  await systemctl('stop', 'thryve-core')
   if (meta.hald) await systemctl('stop', 'hald')
   for (const n of meta.placed ?? []) fs.rmSync(path.join(P.prefix, n), { recursive: true, force: true })
   for (const n of meta.moved ?? []) {
@@ -670,7 +677,7 @@ async function rollBack(meta, reason) {
     fs.rmSync(P.previous, { recursive: true, force: true })
   }
   catch (e) {
-    // Leaves <prefix>.previous for seedypod-update --rollback over SSH.
+    // Leaves <prefix>.previous for thryve-update --rollback over SSH.
     r = { ok: false, error: e.message }
   }
   if (r.ok) {
@@ -685,7 +692,7 @@ async function rollBack(meta, reason) {
 
 async function apply() {
   const plan = readJson(PLAN)
-  if (!plan?.release) throw new Error('nothing planned; run seedypod-update --start')
+  if (!plan?.release) throw new Error('nothing planned; run thryve-update --start')
   const { release } = plan
   const acct = coreAccount()
   const fromVersion = installed().version
@@ -693,7 +700,7 @@ async function apply() {
   log(`updating ${fromVersion ?? 'core'} to ${release.channel} ${release.tag} (${release.commit.slice(0, 7)})`)
 
   // 1. Download and check everything before the unit is touched.
-  const tarball = await fetchAsset(release, 'seedypod-core.tar.gz')
+  const tarball = await fetchAsset(release, 'thryve-core.tar.gz')
   setStatus({ state: 'verifying' })
   await unpack(tarball)
   const to = gitInfo(P.next)
@@ -729,7 +736,7 @@ async function apply() {
   // The helpers come from the checked release, before its files are handed to core's account.
   const helpers = path.join(DL, 'helpers')
   fs.mkdirSync(helpers, { recursive: true, mode: 0o700 })
-  for (const n of ['seedypod-update.cjs', 'seedypod-restore.cjs']) fs.copyFileSync(path.join(P.next, 'scripts', n), path.join(helpers, n))
+  for (const n of ['thryve-update.cjs', 'thryve-restore.cjs']) fs.copyFileSync(path.join(P.next, 'scripts', n), path.join(helpers, n))
   for (const n of LOGIN_FILES) {
     const from = path.join(P.next, 'scripts/login-logo', n)
     if (fs.existsSync(from)) fs.copyFileSync(from, path.join(helpers, n))
@@ -744,7 +751,7 @@ async function apply() {
   const meta = { at: new Date().toISOString(), fromVersion, toVersion: to.version, tag: release.tag, moved: [], placed: [], nodeModules: false, db: false, hald: false, podvision: false, halOnline }
   writeJson(META, meta)
   try {
-    await systemctl('stop', 'seedypod-core')
+    await systemctl('stop', 'thryve-core')
     if (hald) await systemctl('stop', 'hald')
     setStatus({ state: 'swapping' })
     const data = path.join(P.prefix, 'data')
@@ -810,7 +817,7 @@ async function apply() {
     await rollBack(meta, health.error)
     return { ok: false, code: 'rolled-back', error: health.error }
   }
-  for (const n of ['seedypod-update.cjs', 'seedypod-restore.cjs']) {
+  for (const n of ['thryve-update.cjs', 'thryve-restore.cjs']) {
     try {
       installHelper(path.join(helpers, n), n.replace(/\.cjs$/, ''))
     }
@@ -831,11 +838,11 @@ async function apply() {
   return { ok: true, version: to.version, tag: release.tag }
 }
 
-/** Runs the update after this process exits: stopping seedypod-core would stop a child of core with it. */
+/** Runs the update after this process exits: stopping thryve-core would stop a child of core with it. */
 function detach() {
   const self = [process.execPath, __filename, '--apply']
-  if (env('SEEDYPOD_UPDATE_DETACH') !== 'fork' && isRoot && fs.existsSync('/usr/bin/systemd-run')) {
-    execFileSync('/usr/bin/systemd-run', ['--quiet', '--collect', `--unit=seedypod-update-${Date.now()}`, '--description=seedypod update (ADR-0026)', ...self])
+  if (env('THRYVE_UPDATE_DETACH') !== 'fork' && isRoot && fs.existsSync('/usr/bin/systemd-run')) {
+    execFileSync('/usr/bin/systemd-run', ['--quiet', '--collect', `--unit=thryve-update-${Date.now()}`, '--description=thryve update (ADR-0026)', ...self])
     return
   }
   spawn(self[0], self.slice(1), { detached: true, stdio: 'ignore', env: process.env }).unref()
@@ -859,7 +866,7 @@ function result(code, obj) {
   process.exitCode = code
 }
 
-const USAGE = 'usage: seedypod-update --status | --channel stable|dev | --check | --start | --now | --rollback\n'
+const USAGE = 'usage: thryve-update --status | --channel stable|dev | --check | --start | --now | --rollback\n'
 const RUNNING = new Set(['queued', 'downloading', 'verifying', 'stopping', 'swapping', 'installing', 'starting', 'health', 'rolling-back'])
 const EXIT = { 'usage': 2, 'checksum': 4, 'invalid': 4, 'missing-asset': 4, 'current': 4, 'needs-install': 4, 'no-release': 4, 'busy': 5 }
 

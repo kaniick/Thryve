@@ -20,7 +20,7 @@ import { NAV_GROUPS, navItems, type NavItem } from './navItems'
 const STAGES = ['germination', 'seedling', 'vegetative', 'harvest'] as const
 const SECTION = 'px-2.5 pb-1 font-mono text-[10px] font-medium uppercase tracking-[0.1em] text-fg-3'
 const FOOT_ROW = 'flex items-center gap-2.5 rounded-[7px] px-2.5 py-[7px] text-[14px] leading-5 text-fg-2 hover:text-fg'
-export const COLLAPSED_KEY = 'seedypod.navCollapsed'
+export const COLLAPSED_KEY = 'thryve.navCollapsed'
 
 /** The nav groups this viewer has folded away; all open when nothing is saved. */
 function savedCollapsed(): Set<string> {
@@ -198,7 +198,7 @@ export function Sidebar({ status }: { status: { name: string, line: string, onli
     <aside className="sticky top-0 hidden h-dvh w-[244px] shrink-0 flex-col gap-3.5 overflow-y-auto border-r border-line bg-surface px-3 pb-3 pt-[18px] min-[900px]:flex">
       <Link to="/" className="flex items-center gap-2.5 px-2">
         <img src="/brand/icon-64.png" alt="" width={26} height={26} className="size-[26px]" />
-        <span className="font-semibold tracking-tight">seedypod</span>
+        <span className="font-semibold tracking-tight">thryve</span>
       </Link>
       <SidebarSearch className="w-full" />
       <Readings />

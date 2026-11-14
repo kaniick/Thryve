@@ -69,7 +69,7 @@ Meters: 42 owners mention one; VIVOSUN is named most (11), then Apera (2), cheap
 
 ## Maintainer report
 
-The seedypod maintainer grows leafy greens on MaxiGro and finds it works well for that phase (reported 2026-11-09, firsthand, not measured).
+The thryve maintainer grows leafy greens on MaxiGro and finds it works well for that phase (reported 2026-11-09, firsthand, not measured).
 
 ## Gaps
 

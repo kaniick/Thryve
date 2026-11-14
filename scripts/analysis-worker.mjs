@@ -6,19 +6,19 @@
 // Swap `score` for anything: a PlantCV pipeline, an ONNX model, a GPU job.
 //
 // Usage:
-//   SEEDYPOD_URL=http://seedypod.local SEEDYPOD_INGEST_TOKEN=… \
-//   [SEEDYPOD_API_KEY=…] node scripts/analysis-worker.mjs [--limit 48] [--id exg-strict] [--version 1]
+//   THRYVE_URL=http://thryve.local THRYVE_INGEST_TOKEN=… \
+//   [THRYVE_API_KEY=…] node scripts/analysis-worker.mjs [--limit 48] [--id exg-strict] [--version 1]
 import { decode } from 'jpeg-js'
 
 const args = Object.fromEntries(process.argv.slice(2).reduce((acc, a, i, all) => (a.startsWith('--') ? [...acc, [a.slice(2), all[i + 1]]] : acc), []))
-const base = (process.env.SEEDYPOD_URL ?? 'http://127.0.0.1:3000').replace(/\/+$/, '')
-const token = process.env.SEEDYPOD_INGEST_TOKEN
-const apiKey = process.env.SEEDYPOD_API_KEY
+const base = (process.env.THRYVE_URL ?? 'http://127.0.0.1:3000').replace(/\/+$/, '')
+const token = process.env.THRYVE_INGEST_TOKEN
+const apiKey = process.env.THRYVE_API_KEY
 const analyzer = args.id ?? 'exg-strict'
 const version = Number(args.version ?? 1)
 const limit = Number(args.limit ?? 48)
 if (!token) {
-  console.error('SEEDYPOD_INGEST_TOKEN is required (Settings → Off-device storage and analysis → Generate)')
+  console.error('THRYVE_INGEST_TOKEN is required (Settings → Off-device storage and analysis → Generate)')
   process.exit(2)
 }
 const readHeaders = apiKey ? { 'x-api-key': apiKey } : {}

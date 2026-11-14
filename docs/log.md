@@ -16,7 +16,7 @@
 
 - **Update**: Recorded the first bring-up on a real unit in the [handoff](HANDOFF.md), with the open USB hub fault and next steps.
 - **Update**: Added a marker check for telling the cameras apart to [Maintenance](MAINTENANCE.md#check-which-camera-is-which), and recorded the camera ports and USB routing confirmed on a real unit in the [hardware map](hardware/pin-map.md).
-- **Update**: [ADR 0021](adr/0021-sd-card-wear-and-recovery.md) phase 4 built as amended: seedypod OS, the official Raspberry Pi OS Lite customised in a chroot by the installers themselves. [Installation](INSTALLATION.md) makes it the recommended path, and [Deployment](DEPLOYMENT.md) and [Maintenance](MAINTENANCE.md) cover it.
+- **Update**: [ADR 0021](adr/0021-sd-card-wear-and-recovery.md) phase 4 built as amended: thryve OS, the official Raspberry Pi OS Lite customised in a chroot by the installers themselves. [Installation](INSTALLATION.md) makes it the recommended path, and [Deployment](DEPLOYMENT.md) and [Maintenance](MAINTENANCE.md) cover it.
 - **Update**: [ADR 0021](adr/0021-sd-card-wear-and-recovery.md) covers the Database view under **Settings → SD card**: what's writing to the card, table by table, from a read-only scan on a worker thread. [Maintenance](MAINTENANCE.md) and [Debugging](DEBUGGING.md) point to it.
 - **Update**: [Installation](INSTALLATION.md) covers the SSH login logo, how to turn it off and how to remove it.
 
@@ -31,7 +31,7 @@
 
 ## 2026-11-01
 
-- **Update**: [ADR 0017](adr/0017-ios-client.md): core now advertises `_seedypod._tcp` over Bonjour; [Installation](INSTALLATION.md) covers the TXT keys and `SEEDYPOD_MDNS=0`.
+- **Update**: [ADR 0017](adr/0017-ios-client.md): core now advertises `_thryve._tcp` over Bonjour; [Installation](INSTALLATION.md) covers the TXT keys and `THRYVE_MDNS=0`.
 - **Creation**: [ADR 0023](adr/0023-homekit.md), HomeKit: the accessory mapping, the per-unit identity (porting sleepypod ADR 0020), the ciao advertiser and HomeKit in backups. [Maintenance](MAINTENANCE.md) and [Privacy](PRIVACY.md) cover the backup and the local-only pairing.
 
 ## 2026-10-31

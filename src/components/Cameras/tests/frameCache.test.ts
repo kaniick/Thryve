@@ -79,7 +79,7 @@ describe('FrameCache', () => {
     await c.load('a', '/a/100')
     // Another tab (or the browser) removed the bytes behind this tab's index.
     const db = await new Promise<IDBDatabase>((resolve) => {
-      const r = idb.open('seedypod-frames', 1)
+      const r = idb.open('thryve-frames', 1)
       r.onsuccess = () => resolve(r.result)
     })
     await new Promise<void>((resolve) => {

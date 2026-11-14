@@ -10,7 +10,7 @@ import { join, resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 const scripts = resolve(import.meta.dirname, '../../scripts')
-const UNIT_ENV = 'var/lib/seedypod-image/unit.env'
+const UNIT_ENV = 'var/lib/thryve-image/unit.env'
 
 const STUBS: Record<string, string> = {
   systemctl: 'echo "systemctl $*" >> "$STATE/log"',
@@ -44,7 +44,7 @@ afterEach(() => rmSync(dir, { recursive: true, force: true }))
 function boot(...args: string[]) {
   const r = spawnSync('bash', [join(scripts, 'image/first-boot'), ...args], {
     encoding: 'utf8',
-    env: { PATH: `${bin}:${process.env.PATH}`, SEEDYPOD_ROOT: root, SEEDYPOD_IMAGE_LIB: scripts, STATE: state },
+    env: { PATH: `${bin}:${process.env.PATH}`, THRYVE_ROOT: root, THRYVE_IMAGE_LIB: scripts, STATE: state },
   })
   return { code: r.status, out: r.stdout, err: r.stderr }
 }
@@ -70,7 +70,7 @@ describe('the first boot', () => {
 
   it('applies the installer\'s SD card settings, on a running system', () => {
     boot()
-    expect(readFileSync(join(root, 'etc/systemd/journald.conf.d/50-seedypod-volatile.conf'), 'utf8')).toContain('Storage=volatile')
+    expect(readFileSync(join(root, 'etc/systemd/journald.conf.d/50-thryve-volatile.conf'), 'utf8')).toContain('Storage=volatile')
     expect(log()).toContain('systemctl restart systemd-journald')
   })
 
@@ -89,7 +89,7 @@ describe('cloud-init', () => {
 
   beforeEach(() => {
     mkdirSync(join(root, 'etc/cloud'))
-    writeFileSync(join(bin, 'nmcli'), '#!/bin/sh\nprintf "802-11-wireless:/etc/NetworkManager/system-connections/seedypod-wifi.nmconnection\\n"\n')
+    writeFileSync(join(bin, 'nmcli'), '#!/bin/sh\nprintf "802-11-wireless:/etc/NetworkManager/system-connections/thryve-wifi.nmconnection\\n"\n')
     chmodSync(join(bin, 'nmcli'), 0o755)
   })
 
