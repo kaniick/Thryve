@@ -50,6 +50,12 @@ export interface DeviceSettings {
   mirrorAccessKeyId: string | null
   mirrorSecretAccessKey: string | null
   autopilotEnabled: boolean
+  /**
+   * Pump power, 1–100 % duty: what a run that doesn't name its own speed drives the pump at, and the
+   * most any run from core may. 100 is how the stock Gardyn firmware runs it. hald's
+   * `limits.pump_max_duty` still caps it (ADR-0009).
+   */
+  pumpPower: number
   /** HomeKit bridge (ADR 0023); off until turned on in Settings. Changed only through `homekit.setEnabled`. */
   homekitEnabled: boolean
   /** False until the owner picks Welcome → Set up a new garden, or restores a backup. */
@@ -523,6 +529,7 @@ export const DEFAULT_SETTINGS: Omit<DeviceSettings, 'updatedAt'> = {
   mirrorAccessKeyId: null,
   mirrorSecretAccessKey: null,
   autopilotEnabled: true,
+  pumpPower: 100,
   homekitEnabled: false,
   setupComplete: false,
 }

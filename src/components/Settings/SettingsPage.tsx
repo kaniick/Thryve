@@ -1,6 +1,6 @@
 import { Link } from '@tanstack/react-router'
 import type { LucideIcon } from 'lucide-react'
-import { Archive, BellRing, Camera, ChevronDown, Cloud, CloudUpload, Download, Droplets, HardDrive, House, Info, KeyRound, LocateFixed, Radio, RefreshCw, Ruler, Settings2, Wifi } from 'lucide-react'
+import { Archive, BellRing, Camera, ChevronDown, Cloud, CloudUpload, Download, Droplets, HardDrive, House, Info, KeyRound, LocateFixed, Radio, RefreshCw, Ruler, Settings2, Waves, Wifi } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { RestorePanel, RestoreProgress } from '@/src/components/Backup/RestorePanel'
 import { Button, KeyValue } from '@/src/components/ds/core'
@@ -8,6 +8,7 @@ import { Alert } from '@/src/components/ds/feedback'
 import { SegmentedControl, Stepper, TextField, Toggle } from '@/src/components/ds/forms'
 import { SubNav } from '@/src/components/ds/layout'
 import { HomeKitSection } from '@/src/components/Settings/HomeKitSection'
+import { PumpSection } from '@/src/components/Settings/PumpSection'
 import { Row, Section } from '@/src/components/Settings/Section'
 import { UpdateSection } from '@/src/components/Settings/UpdateSection'
 import type { inferRouterOutputs } from '@trpc/server'
@@ -20,12 +21,13 @@ import { apiBase, trpc } from '@/src/utils/trpc'
 type SettingsView = inferRouterOutputs<AppRouter>['settings']['get']
 type GrowView = inferRouterOutputs<AppRouter>['grow']['current']
 
-type SectionId = 'unit' | 'tank' | 'reminders' | 'cameras' | 'api' | 'off-device' | 'storage' | 'backup' | 'home-assistant' | 'homekit' | 'wifi' | 'update' | 'about'
+type SectionId = 'unit' | 'tank' | 'pump' | 'reminders' | 'cameras' | 'api' | 'off-device' | 'storage' | 'backup' | 'home-assistant' | 'homekit' | 'wifi' | 'update' | 'about'
 
 /** In-page nav, in page order. Anchors are what ⌘K search links to. */
 const SECTIONS: ReadonlyArray<{ id: SectionId, label: string, icon: LucideIcon }> = [
   { id: 'unit', label: 'Unit', icon: Settings2 },
   { id: 'tank', label: 'Tank', icon: Droplets },
+  { id: 'pump', label: 'Pump', icon: Waves },
   { id: 'reminders', label: 'Reminders', icon: BellRing },
   { id: 'cameras', label: 'Cameras', icon: Camera },
   { id: 'api', label: 'API access', icon: KeyRound },
@@ -174,6 +176,8 @@ function SettingsForm({ s, coreVersion, coreHost, system, onSave, saving }: {
     delete rest.hasAnalysisIngestToken
     delete rest.hasMirrorSecret
     delete rest.updatedAt
+    // The Pump card saves its own power as the slider lets go; a stale copy here mustn't undo it.
+    delete rest.pumpPower
     onSave(rest)
   }
   const original = s as Record<string, unknown>
@@ -235,6 +239,8 @@ function SettingsForm({ s, coreVersion, coreHost, system, onSave, saving }: {
               </div>
             )}
           </Section>
+
+          <PumpSection />
 
           <Reminders d={d} s={s} grow={grow.data} onChange={(k, v) => setD({ ...d, [k]: v })} />
 

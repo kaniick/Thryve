@@ -30,12 +30,21 @@ afterAll(async () => {
 })
 
 describe('core HTTP surface', () => {
-  it('REST facade answers and clamps through the HAL', async () => {
-    const r = await fetch(`${base}/api/pump/run-once`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ durationS: 30, level: 100 }) })
+  it('REST facade answers and clamps through the pump power and the HAL', async () => {
+    const post = (path: string, body: unknown) => fetch(`${base}/api${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+    // Full power by default, as the stock Gardyn firmware runs the pump.
+    expect(await fetch(`${base}/api/pump/power`).then(r => r.json())).toEqual({ power: 100, halMaxDuty: 100, effective: 100 })
+    const r = await post('/pump/run-once', { durationS: 30, level: 100 })
     expect(r.status).toBe(200)
     const s = await r.json() as { level: number, remainingS: number }
-    expect(s.level).toBe(30)
+    expect(s.level).toBe(100)
     expect(s.remainingS).toBe(30)
+    expect(await post('/pump/power', { power: 40 }).then(r => r.json())).toEqual({ power: 40, halMaxDuty: 100, effective: 40 })
+    expect((await post('/pump/run-once', { durationS: 30 }).then(r => r.json()) as { level: number }).level).toBe(40)
+    expect((await post('/pump/run-once', { durationS: 30, level: 100 }).then(r => r.json()) as { level: number }).level).toBe(40)
+    expect((await post('/pump/power', { power: 0 })).status).toBe(400)
+    await post('/pump/power', { power: 100 })
+    await post('/pump/stop', {})
   })
 
   it('serves each camera\'s newest stored still at a fixed URL, and nothing before the first', async () => {

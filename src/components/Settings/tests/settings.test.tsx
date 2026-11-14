@@ -22,13 +22,14 @@ vi.mock('@/src/utils/trpc', () => {
   return {
     apiBase: () => '',
     trpc: {
-      useUtils: () => ({ settings: { invalidate: vi.fn() } }),
+      useUtils: () => ({ settings: { invalidate: vi.fn() }, pump: { invalidate: vi.fn() } }),
       settings: { get: query('settings'), update: mutation('update') },
       system: { info: query('info') },
       backup: { status: query('backup'), runNow: mutation('run'), restoreInfo: query('restoreInfo'), undo: mutation('undo'), list: query('bucketList'), browse: mutation('browse'), restoreFromBucket: mutation('fromBucket') },
       storage: { flash: query('flash'), mirror: query('mirror'), testMirror: mutation('test'), syncMirror: mutation('sync') },
       sensors: { latest: query('sensors') },
       grow: { current: query('grow') },
+      pump: { power: query('pumpPower'), get: query('pump'), setPower: mutation('update'), runOnce: mutation('run'), stop: mutation('update') },
       homekit: { status: query('homekit'), setEnabled: mutation('update'), resetPairing: mutation('update') },
       update: { status: query('updateInfo'), check: mutation('update'), setChannel: mutation('update'), start: mutation('update') },
     },
@@ -311,6 +312,16 @@ describe('Settings: header and section nav', () => {
     expect([parsePlace('91, 0'), parsePlace('0, 181'), parsePlace('a, b'), parsePlace('1, 2, 3')]).toEqual([undefined, undefined, undefined, undefined])
   })
 
+  it('leaves the pump power to its own card, so Save never undoes it', () => {
+    data.set('settings', { ...settings, pumpPower: 60 })
+    render(<SettingsPage />)
+    fireEvent.change(field('Name'), { target: { value: 'Kitchen' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    const patch = calls.update.mock.calls[0]?.[0] as Record<string, unknown>
+    expect(patch.unitName).toBe('Kitchen')
+    expect('pumpPower' in patch).toBe(false)
+  })
+
   it('keeps a timezone the browser does not list', () => {
     data.set('settings', { ...settings, timezone: 'Mars/Olympus' })
     render(<SettingsPage />)
@@ -323,7 +334,7 @@ describe('Settings: header and section nav', () => {
     render(<SettingsPage />)
     const nav = screen.getByRole('navigation')
     const labels = Array.from(nav.querySelectorAll('button'), b => b.textContent)
-    expect(labels).toEqual(['Unit', 'Tank', 'Reminders', 'Cameras', 'API access', 'Storage', 'SD card', 'Backup', 'Home Assistant', 'Apple Home', 'Wi-Fi', 'Updates', 'About'])
+    expect(labels).toEqual(['Unit', 'Tank', 'Pump', 'Reminders', 'Cameras', 'API access', 'Storage', 'SD card', 'Backup', 'Home Assistant', 'Apple Home', 'Wi-Fi', 'Updates', 'About'])
     for (const id of ['unit', 'tank', 'reminders', 'cameras', 'api', 'off-device', 'storage', 'backup', 'home-assistant', 'homekit', 'wifi', 'update', 'about']) expect(document.getElementById(id)).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Backup' }))
     expect(scroll).toHaveBeenCalled()
@@ -340,7 +351,7 @@ describe('Settings: header and section nav', () => {
       disconnect = vi.fn()
     })
     render(<SettingsPage />)
-    expect(observe).toHaveBeenCalledTimes(13)
+    expect(observe).toHaveBeenCalledTimes(14)
     const entry = (id: string, isIntersecting: boolean) => ({ target: document.getElementById(id), isIntersecting }) as unknown as IntersectionObserverEntry
     act(() => cb([entry('cameras', true), entry('api', true)], {} as IntersectionObserver))
     expect(screen.getByRole('button', { name: 'Cameras' }).getAttribute('aria-current')).toBe('page')

@@ -91,6 +91,9 @@ pub struct Limits {
     pub pump_dry_after_s: u64,
     /// How long after a start the current isn't judged, while the pump spins up.
     pub pump_dry_grace_s: u64,
+    /// Soft start: how long a start ramps up to its level, so the pump's inrush
+    /// doesn't brown the Pi out. 0 switches it straight on, as stock does.
+    pub pump_soft_start_ms: u64,
     pub distance_samples: usize,
     pub distance_timeout_ms: u64,
     /// Quiet time between pings, so one doesn't hear the last one's echo.
@@ -376,7 +379,8 @@ impl Default for Limits {
     fn default() -> Self {
         Self {
             pump_max_run_s: 900,
-            pump_max_duty: 30.0,
+            // Stock Gardyn firmware switches the pump plain on: 30 % can't lift water to the top.
+            pump_max_duty: hal_core::safety::DEFAULT_MAX_DUTY,
             water_low_cm: Some(16.0),
             // The board runs ~47 °C with the lights at 100 %; stock sets the
             // PCT2075 alert at 70 °C.
@@ -384,6 +388,7 @@ impl Default for Limits {
             pump_dry_current_a: None,
             pump_dry_after_s: 5,
             pump_dry_grace_s: 3,
+            pump_soft_start_ms: hal_core::safety::DEFAULT_SOFT_START_MS,
             distance_samples: 5,
             distance_timeout_ms: 60,
             distance_gap_ms: 60,
@@ -462,6 +467,7 @@ impl From<&Limits> for PumpLimits {
             dry_current_a: l.pump_dry_current_a,
             dry_current_s: l.pump_dry_after_s,
             dry_grace_s: l.pump_dry_grace_s,
+            soft_start_ms: l.pump_soft_start_ms,
         }
     }
 }
@@ -599,6 +605,12 @@ impl Config {
         if !(0.0..=100.0).contains(&self.limits.pump_max_duty) {
             errs.push("limits.pump_max_duty must be 0–100".into());
         }
+        if self.limits.pump_soft_start_ms > hal_core::safety::MAX_SOFT_START_MS {
+            errs.push(format!(
+                "limits.pump_soft_start_ms must be 0–{}",
+                hal_core::safety::MAX_SOFT_START_MS
+            ));
+        }
         if self.limits.pump_max_run_s == 0 {
             errs.push("limits.pump_max_run_s must be ≥ 1".into());
         }
@@ -727,7 +739,9 @@ pub const DEFAULT_CONFIG_TOML: &str = r##"# thryve hald configuration. Every pin
 
 [limits]
 # pump_max_run_s = 900    # every pump run is bounded (ADR-0009)
-# pump_max_duty = 30.0    # the board browns out above ~30 %
+# pump_max_duty = 100.0   # the most any run may drive; stock Gardyn runs the pump fully on.
+#                          # If the Pi reboots when the pump starts, lower it or lengthen the ramp
+# pump_soft_start_ms = 1500 # ramp a start up over this long (0–10000); 0 switches it straight on
 # water_low_cm = 16.0     # dry-run interlock; comment out to disable
 # over_temp_c = 65.0      # PCB cutoff; comment out to disable
 # pump_dry_current_a = 1.2 # pump current guard: off until set (needs the ina219). Stops a running
@@ -988,6 +1002,7 @@ http_bind = "nope"
 mqtt_url = "http://x"
 [limits]
 pump_max_duty = 150
+pump_soft_start_ms = 20000
 pump_dry_current_a = 5.0
 pump_dry_after_s = 0
 [tank]
@@ -1025,6 +1040,7 @@ kind = "pwm_pump"
             "http_bind",
             "mqtt_url",
             "pump_max_duty",
+            "pump_soft_start_ms must be 0–10000",
             "pump_dry_current_a must be above 0 and below i2c.ina219_max_amps (3.2)",
             "pump_dry_after_s must be ≥ 1",
             "tank.full_cm",
@@ -1058,10 +1074,29 @@ kind = "pwm_pump"
     }
 
     #[test]
+    fn the_pump_runs_full_power_with_a_tunable_soft_start() {
+        let c = Config::default();
+        assert_eq!(
+            (c.limits.pump_max_duty, c.limits.pump_soft_start_ms),
+            (100.0, 1500)
+        );
+        let tuned: Config =
+            toml::from_str("[limits]\npump_max_duty = 60\npump_soft_start_ms = 3000\n").unwrap();
+        assert!(tuned.validate().is_empty());
+        let p: PumpLimits = (&tuned.limits).into();
+        assert_eq!((p.max_duty, p.soft_start_ms), (60.0, 3000));
+        let stock: Config = toml::from_str("[limits]\npump_soft_start_ms = 0\n").unwrap();
+        assert!(stock.validate().is_empty());
+        let long: Config = toml::from_str("[limits]\npump_soft_start_ms = 10001\n").unwrap();
+        assert!(long.validate().iter().any(|e| e.contains("pump_soft_start_ms")));
+    }
+
+    #[test]
     fn limits_convert_to_guard_types() {
         let c = Config::default();
         let p: PumpLimits = (&c.limits).into();
-        assert_eq!(p.max_duty, 30.0);
+        assert_eq!(p.max_duty, 100.0);
+        assert_eq!(p.soft_start_ms, 1500);
         // No baseline yet: the current guard ships off, with the guard's own timings.
         let guard = PumpLimits::default();
         assert_eq!(p.dry_current_a, None);

@@ -321,9 +321,19 @@ export function createMcpServer(ctx: Context): McpServer {
   }, async i => text(await caller.light.set(i)))
 
   server.registerTool('run_pump', {
-    description: 'Run the water pump for duration_s seconds at level (% of the HAL-enforced max duty, default max). The HAL clamps duration to its max-run limit and refuses when the tank is low or a fault is latched; a refusal returns an error.',
+    description: 'Run the water pump for duration_s seconds at level (% duty; default the pump power from pump_power, and never above it or the HAL-enforced max duty). The HAL ramps each start up over its soft start, clamps duration to its max-run limit and refuses when the tank is low or a fault is latched; a refusal returns an error.',
     inputSchema: { duration_s: z.number().int().positive().max(3600), level: z.number().min(1).max(100).optional() },
   }, async i => text(await caller.pump.runOnce({ durationS: i.duration_s, level: i.level })))
+
+  server.registerTool('pump_power', {
+    description: 'The pump power: the % duty runs without their own speed drive (schedules, the run button, Home Assistant and HomeKit through core), and the most any run from core may use; halMaxDuty is hald\'s cap over it and effective what a run drives now. 100 is full power, how the stock Gardyn firmware runs the pump.',
+    inputSchema: {},
+  }, async () => text(await caller.pump.power()))
+
+  server.registerTool('set_pump_power', {
+    description: 'Set the pump power, 1–100 % duty. Raise it if the water doesn\'t reach the top of the tower; lower it (or lengthen hald\'s soft start) if the unit reboots when the pump starts. Confirm with the person first.',
+    inputSchema: { power: z.number().int().min(1).max(100) },
+  }, async i => text(await caller.pump.setPower({ power: i.power })))
 
   server.registerTool('stop_pump', { description: 'Stop the pump immediately.', inputSchema: {} }, async () => text(await caller.pump.stop()))
 

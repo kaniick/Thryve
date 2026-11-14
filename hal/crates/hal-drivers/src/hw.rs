@@ -142,7 +142,8 @@ impl PwmOut for HwPwm {
     }
 }
 
-/// Software PWM on any GPIO: rppal times it on a dedicated thread.
+/// Software PWM on any GPIO: rppal times it on a dedicated thread. 0 and 100 %
+/// are plain off and on, with no thread.
 pub struct SoftPwm {
     pin: OutputPin,
     hz: f64,
@@ -164,6 +165,13 @@ impl PwmOut for SoftPwm {
         if duty <= 0.0 {
             self.pin.clear_pwm().map_err(bus_err)?;
             self.pin.set_low();
+            Ok(())
+        } else if duty >= 1.0 {
+            // Full power is the pin held high, as the stock firmware drives the pump: no
+            // PWM thread busy-waiting on a single-core Zero, and none of its per-period
+            // low glitch (rppal drops the pin low at the end of every period, even at 100 %).
+            self.pin.clear_pwm().map_err(bus_err)?;
+            self.pin.set_high();
             Ok(())
         } else {
             self.pin

@@ -1,0 +1,1 @@
+ALTER TABLE `device_settings` ADD `pumpPower` integer DEFAULT 100 NOT NULL;

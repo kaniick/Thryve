@@ -2,6 +2,7 @@ import { TRPCError } from '@trpc/server'
 import { z } from 'zod'
 import type { ActuatorId } from '../../hardware/contract'
 import { ActuatorCommand, ActuatorState } from '../../hardware/contract'
+import { pumpPower } from '../../hardware/pumpPower'
 import { HalRefused } from '../../hardware/sim'
 import { publicProcedure, router } from '../trpc'
 
@@ -17,6 +18,18 @@ async function set(ctx: Parameters<Parameters<typeof publicProcedure.mutation>[0
     if (e instanceof HalRefused) throw new TRPCError({ code: 'PRECONDITION_FAILED', message: e.message })
     throw e
   }
+}
+
+const PumpPower = z.object({
+  power: z.number().int().min(1).max(100).describe('Pump power, % duty: runs without their own speed use it, and none from core goes above it'),
+  halMaxDuty: z.number().nullable().describe('hald\'s limits.pump_max_duty, which caps every run; null while hald is offline'),
+  effective: z.number().describe('What a run without its own speed drives now: the lower of power and halMaxDuty'),
+})
+
+function powerView(ctx: Parameters<Parameters<typeof publicProcedure.query>[0]>[0]['ctx']): z.infer<typeof PumpPower> {
+  const power = pumpPower(ctx.store.settings.get().pumpPower)
+  const halMaxDuty = ctx.hal.snapshot().system?.limits.pumpMaxDuty ?? null
+  return { power, halMaxDuty, effective: halMaxDuty === null ? power : Math.min(power, halMaxDuty) }
 }
 
 const LightOwner = z.object({ source: z.enum(['manual', 'autopilot', 'schedule']).nullable(), level: z.number().nullable(), leaseId: z.string().nullable(), manualUntil: z.string().nullable(), schedule: z.number().nullable() })
@@ -93,6 +106,19 @@ export const pumpRouter = router({
     .input(z.object({ durationS: z.number().int().positive(), level: z.number().min(1).max(100).optional() }))
     .output(ActuatorState)
     .mutation(({ ctx, input }) => set(ctx, 'pump', { on: true, level: input.level, durationS: input.durationS })),
+  power: publicProcedure
+    .meta({ openapi: { method: 'GET', path: '/pump/power', tags: ['pump'], summary: 'Pump power: the % duty runs without their own speed use, and the HAL cap over it' } })
+    .output(PumpPower)
+    .query(({ ctx }) => powerView(ctx)),
+  setPower: publicProcedure
+    .meta({ openapi: { method: 'POST', path: '/pump/power', tags: ['pump'], summary: 'Set the pump power, 1–100 % duty. Lower it if the unit reboots when the pump starts' } })
+    .input(z.object({ power: z.number().int().min(1).max(100) }))
+    .output(PumpPower)
+    .mutation(({ ctx, input }) => {
+      ctx.store.settings.update({ pumpPower: input.power })
+      ctx.events.emit({ kind: 'mutation', path: 'settings' })
+      return powerView(ctx)
+    }),
   stop: publicProcedure
     .meta({ openapi: { method: 'POST', path: '/pump/stop', tags: ['pump'] } })
     .input(z.void())

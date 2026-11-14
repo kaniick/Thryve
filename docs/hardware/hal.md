@@ -60,15 +60,16 @@ prints every key with its default; the important ones:
 | top | `mdns` | true | Advertise `_thryve-hal._tcp`. |
 | top | `light_fade_ms` | 800 | How long a full swing of the light takes. Smaller changes take less. 0 for no fade. At most 60000. |
 | `[pins]` | `light_pwm`/`light_pwm_channel`/`light_hz` | 18 / 0 / 20000 | Hardware PWM. GPIO18 is channel 2 on a Pi 5. |
-| `[pins]` | `pump_pwm`/`pump_hz` | 24 / 50 | Software PWM on a dedicated thread. |
+| `[pins]` | `pump_pwm`/`pump_hz` | 24 / 50 | Software PWM on a dedicated thread; 0 % and 100 % are the pin held low and high, with no thread. GPIO24 has no hardware PWM channel. |
 | `[pins]` | `distance_trigger`/`distance_echo` | 26 / 19 | DYP-A01. |
 | `[pins]` | `button`, `over_temp_alert` | 13, 25 | |
 | `[i2c]` | `bus`, `pct2075`, `ina219`, `dht20`, `am2320` | 1, 0x48, 0x40, 0x38, 0x5C | |
 | `[i2c]` | `ezo_ph`, `ezo_ec`, `ezo_rtd` | 0x63, 0x64, 0x66 | Only used by explicit `[[sensor]]` entries. |
 | `[i2c]` | `ina219_shunt_ohms`, `ina219_max_amps` | 0.08, 3.2 | Calibration register derived from these. |
-| `[limits]` | `pump_max_run_s`, `pump_max_duty` | 900, 30 | ADR-0009. |
+| `[limits]` | `pump_max_run_s`, `pump_max_duty` | 900, 100 | ADR-0009. 100 % is how the stock Gardyn firmware runs the pump (plain on); seedypod's 30 % didn't lift water to the top. Core's pump power (Settings → Pump) sits under this cap. |
+| `[limits]` | `pump_soft_start_ms` | 1500 | Each start ramps from 15 % of its level to all of it over this long, in 50 ms steps, so the pump's inrush doesn't brown the Pi out. 0–10000; 0 switches straight on, as stock does. A stop or trip still cuts the pump at once. If the Pi reboots when the pump starts, lengthen this or lower the power. |
 | `[limits]` | `water_low_cm`, `over_temp_c` | 16, 65 | Comment out to disable an interlock. |
-| `[limits]` | `pump_dry_current_a`, `pump_dry_after_s`, `pump_dry_grace_s` | **unset**, 5, 3 | The pump current guard (#220): off until a cutoff is set, and off without an INA219. Past the grace after a start, a pump that reads below the cutoff for `pump_dry_after_s` is pulling air and stops with a dry-run. Set the cutoff below the wet current at the lowest duty you run; the one reading so far is 1.87 A wet at 30 %. |
+| `[limits]` | `pump_dry_current_a`, `pump_dry_after_s`, `pump_dry_grace_s` | **unset**, 5, 3 | The pump current guard (#220): off until a cutoff is set, and off without an INA219. Past the grace (plus the soft start) after a start, a pump that reads below the cutoff for `pump_dry_after_s` is pulling air and stops with a dry-run. Set the cutoff below the wet current at the lowest duty you run; the one reading so far is 1.87 A wet at 30 %. |
 | `[limits]` | `distance_samples`, `distance_timeout_ms`, `distance_gap_ms`, `distance_max_cm` | 5, 60, 60, empty × 1.5 | Median of N pings, taken `distance_gap_ms` apart so one ping doesn't hear the last one's echo. With an even count of answers the lower middle one counts, since stray echoes only read long. A ping further than `distance_max_cm` (the tank's empty depth plus half again by default) is a stray echo and counts as no answer. Fewer than two answers within 3 cm of the median marks the distance, and the level from it, `suspect`; two that agree are a reading however many pings were dropped. |
 | `[tank]` | `full_cm`, `empty_cm` | 5, 20 | Geometry for `water_level_pct`. |
 | `[button]` | `debounce_ms`, `double_window_ms`, `long_press_ms`, `setup_hold_ms`, `active_low`, `pump_run_s` | 30, 400, 1000, 10000, true, 300 | |
@@ -138,7 +139,9 @@ QoS 1 throughout. Client id `hald-<unit-id>`.
 
 Semantics worth knowing:
 
-- **Pump**: `{"on":true}` runs at the last/ max duty for `pump_max_run_s`;
+- **Pump**: `{"on":true}` runs at the last/ max duty for `pump_max_run_s`
+  (core fills in its pump power for a start without a `level`), ramping up
+  over `pump_soft_start_ms`;
   `level` is clamped to `pump_max_duty`; `durationS` is clamped to
   `pump_max_run_s`. A start is refused when the median water distance ≥
   `water_low_cm` (or the ranger is unavailable), while `water_low` is active,

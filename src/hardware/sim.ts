@@ -23,7 +23,8 @@ export interface SimHalOptions {
   limits?: Partial<SystemInfo['limits']>
 }
 
-const DEFAULT_LIMITS: SystemInfo['limits'] = { pumpMaxRunS: 900, pumpMaxDuty: 30, waterLowCm: 16 }
+// As hald ships: the pump runs fully on, as the stock Gardyn firmware drives it.
+const DEFAULT_LIMITS: SystemInfo['limits'] = { pumpMaxRunS: 900, pumpMaxDuty: 100, waterLowCm: 16 }
 
 /** What hald can add at runtime: the same descriptors hald publishes (the fixture is checked against hald's `SensorKind`s). */
 const ADDABLE = DeviceKindInfo.array().parse(kindsFixture)
