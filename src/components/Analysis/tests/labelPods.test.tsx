@@ -2,7 +2,7 @@
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { podRegions } from '@/src/vision/regions'
-import { HISTORY, LabelPods, PAGE, rounds } from '../LabelPods'
+import { HISTORY, LabelPods, NOT_VISIBLE, PAGE, rounds } from '../LabelPods'
 
 // Pod codes have their own tests (podCodes.test.tsx).
 vi.mock('../PodCodes', () => ({ PodCodes: () => null }))
@@ -10,9 +10,9 @@ vi.mock('../PodOrder', () => ({ PodOrder: () => null }))
 
 const { data, calls, invalidate, mutation, infinite } = vi.hoisted(() => ({
   data: new Map<string, unknown>(),
-  calls: { frames: vi.fn(), get: vi.fn(), labels: vi.fn(), setLabel: vi.fn(), accept: vi.fn(), labelList: vi.fn(), fetchNextPage: vi.fn() },
+  calls: { frames: vi.fn(), get: vi.fn(), labels: vi.fn(), setLabel: vi.fn(), accept: vi.fn(), dismiss: vi.fn(), restore: vi.fn(), labelList: vi.fn(), fetchNextPage: vi.fn() },
   invalidate: vi.fn(),
-  mutation: { fail: false, error: null as null | { message: string }, acceptFail: false, acceptError: null as null | { message: string } },
+  mutation: { fail: false, error: null as null | { message: string }, acceptFail: false, acceptError: null as null | { message: string }, dismissFail: false, dismissError: null as null | { message: string }, restoreError: null as null | { message: string } },
   infinite: { hasNextPage: false, isLoading: false },
 }))
 
@@ -35,6 +35,23 @@ vi.mock('@/src/utils/trpc', () => ({
         return { data: opts?.enabled === false ? undefined : data.get(`labels:${input.captureId}`) }
       } },
       suggestions: { useQuery: (input: { captureId: string }, opts?: { enabled?: boolean }) => ({ data: opts?.enabled === false ? undefined : data.get(`hints:${input.captureId}`) }) },
+      dismissals: { useQuery: (input: { captureId: string }, opts?: { enabled?: boolean }) => ({ data: opts?.enabled === false ? undefined : data.get(`dismissed:${input.captureId}`) }) },
+      dismissSuggestion: { useMutation: (o: { onSuccess?: () => void, onError?: (e: Error, v: unknown) => void }) => ({
+        error: mutation.dismissError,
+        mutate: (v: unknown) => {
+          calls.dismiss(v)
+          if (mutation.dismissFail) o.onError?.(new Error('nope'), v)
+          else o.onSuccess?.()
+        },
+      }) },
+      restoreSuggestion: { useMutation: (o: { onSuccess?: () => void, onError?: (e: Error, v: unknown) => void }) => ({
+        error: mutation.restoreError,
+        mutate: (v: unknown) => {
+          calls.restore(v)
+          if (mutation.dismissFail) o.onError?.(new Error('nope'), v)
+          else o.onSuccess?.()
+        },
+      }) },
       acceptSuggestions: { useMutation: (o: { onSuccess?: () => void, onError?: (e: Error, v: unknown) => void }) => ({
         error: mutation.acceptError,
         isPending: false,
@@ -81,6 +98,9 @@ beforeEach(() => {
   mutation.error = null
   mutation.acceptFail = false
   mutation.acceptError = null
+  mutation.dismissFail = false
+  mutation.dismissError = null
+  mutation.restoreError = null
   infinite.hasNextPage = false
   infinite.isLoading = false
 })
@@ -116,7 +136,10 @@ describe('LabelPods', () => {
     expect(chip('Sprouted').getAttribute('title')).toBe('Only seed leaves: the first pair of small, rounded leaves')
     expect(chip('Growing').getAttribute('title')).toBe('True leaves showing (the plant\'s own leaf shape), not ready yet')
     expect(chip('Seeded').getAttribute('title')).toBe('A yCube in, nothing visible yet')
-    expect(screen.getByText('Tap a dashed pod with no label picked to accept its suggestion. Pick a label and tap pods to set it; tap again with the same label, or use Clear, to remove it.')).toBeTruthy()
+    expect(screen.getByText('Tap a dashed pod with no label picked to accept its suggestion. Pick a label and tap pods to set it; tap again with the same label, or use Clear, to remove it. Clear also removes a suggestion from a pod that can\'t be seen, on that photo only; tap again with Clear to bring it back.')).toBeTruthy()
+    expect(chip('Clear').getAttribute('title')).toBe('Taps take a pod\'s label off, or dismiss its suggestion')
+    // Without a way to the pod boxes, no link to them.
+    expect(screen.queryByRole('button', { name: /Box not on a pod/ })).toBeNull()
     expect(screen.getByText(/Empty is capped, Seeded has a yCube/)).toBeTruthy()
     fireEvent.click(chip('Seeded'))
     fireEvent.click(pod(7))
@@ -427,9 +450,10 @@ describe('LabelPods suggestions (#261)', () => {
     expect(pod(2).getAttribute('aria-pressed')).toBe('false')
     expect(pod(2).className).toContain('border-dashed')
     expect(pod(2).getAttribute('data-suggested')).toBe('sprouted')
-    expect(pod(2).getAttribute('title')).toBe(`Suggested sprouted: last labelled sprouted on ${new Date(FROM).toLocaleDateString([], { day: 'numeric', month: 'short' })}`)
-    expect(pod(3).getAttribute('title')).toBe('Suggested growing: pod-state 86%')
-    expect(pod(4).getAttribute('title')).toBe('Suggested seeded: the pod record says seeded')
+    expect(pod(2).getAttribute('title')).toBe(`Suggested sprouted: last labelled sprouted on ${new Date(FROM).toLocaleDateString([], { day: 'numeric', month: 'short' })}. ${NOT_VISIBLE}`)
+    expect(pod(3).getAttribute('title')).toBe(`Suggested growing: pod-state 86%. ${NOT_VISIBLE}`)
+    expect(pod(4).getAttribute('title')).toBe(`Suggested seeded: the pod record says seeded. ${NOT_VISIBLE}`)
+    expect(NOT_VISIBLE).toContain('Analysis → Latest photos → Pod bounds → Edit boxes')
     // A saved label replaces its suggestion.
     expect(pod(5).textContent).toBe('5 · growing')
     expect(pod(5).className).toContain('border-solid')
@@ -499,5 +523,119 @@ describe('LabelPods suggestions (#261)', () => {
     data.set('stats', stats)
     render(<LabelPods boxes={boxes} />)
     expect(screen.queryByTestId('label-sources')).toBeNull()
+  })
+})
+
+describe('LabelPods dismissed suggestions (#261)', () => {
+  const hint = (slot: number, l: string) => ({ slot, label: l, by: 'record', confidence: null, from: null })
+  const accept = () => screen.queryByRole('button', { name: 'Accept the rest on the lower photo' })
+  const lowerPod = (slot: number) => screen.getByRole('button', { name: new RegExp(`^Pod ${slot}:`) })
+  beforeEach(() => {
+    data.set('frames:lower', [frame('lower', 0)])
+    data.set('hints:lower-0', [hint(22, 'seeded'), hint(25, 'seeded'), hint(28, 'seeded'), hint(29, 'seeded')])
+    data.set('labels:lower-0', [{ ...label('lower-0', 20, 'growing'), camera: 'lower' }])
+  })
+  const lower = () => fireEvent.click(screen.getByRole('tab', { name: 'Lower' }))
+
+  it('dismisses a suggestion with Clear, hiding its tag, and brings it back with Clear again', () => {
+    render(<LabelPods boxes={boxes} />)
+    lower()
+    expect(lowerPod(28).textContent).toBe('28 · seeded?')
+    fireEvent.click(chip('Clear'))
+    fireEvent.click(lowerPod(28))
+    expect(calls.dismiss).toHaveBeenLastCalledWith({ captureId: 'lower-0', slot: 28 })
+    expect(calls.setLabel).not.toHaveBeenCalled()
+    expect(invalidate).toHaveBeenCalled()
+    // The tag disappears, and the box says how to undo it.
+    expect(lowerPod(28).textContent).toBe('28')
+    expect(lowerPod(28).getAttribute('data-suggested')).toBeNull()
+    expect(lowerPod(28).getAttribute('data-dismissed')).toBe('true')
+    expect(lowerPod(28).getAttribute('aria-label')).toBe('Pod 28: suggestion dismissed')
+    expect(lowerPod(28).getAttribute('title')).toBe('Suggestion dismissed on this photo. Tap with Clear to bring it back.')
+    expect(accept()?.textContent).toBe('Accept the rest (3)')
+
+    fireEvent.click(lowerPod(28))
+    expect(calls.restore).toHaveBeenLastCalledWith({ captureId: 'lower-0', slot: 28 })
+    expect(lowerPod(28).textContent).toBe('28 · seeded?')
+    expect(lowerPod(28).getAttribute('data-dismissed')).toBeNull()
+    expect(accept()?.textContent).toBe('Accept the rest (4)')
+    // Clear on a pod with neither a label nor a suggestion does nothing.
+    fireEvent.click(lowerPod(16))
+    expect(calls.dismiss).toHaveBeenCalledTimes(1)
+    expect(calls.restore).toHaveBeenCalledTimes(1)
+  })
+
+  it('reads dismissals from the unit, so a reload keeps them, and Accept the rest skips them', () => {
+    data.set('dismissed:lower-0', [{ slot: 28, dismissedAt: '2026-11-14T10:00:00Z' }, { slot: 29, dismissedAt: '2026-11-14T10:00:01Z' }])
+    render(<LabelPods boxes={boxes} />)
+    lower()
+    expect(lowerPod(28).textContent).toBe('28')
+    expect(lowerPod(29).getAttribute('aria-label')).toBe('Pod 29: suggestion dismissed')
+    // A tap with no label picked doesn't accept a dismissed suggestion.
+    fireEvent.click(lowerPod(28))
+    expect(calls.setLabel).not.toHaveBeenCalled()
+    expect(accept()?.textContent).toBe('Accept the rest (2)')
+    fireEvent.click(accept() as HTMLElement)
+    expect(calls.accept).toHaveBeenCalledWith({ captureId: 'lower-0' })
+    expect([22, 25].map(s => lowerPod(s).getAttribute('aria-label'))).toEqual(['Pod 22: seeded', 'Pod 25: seeded'])
+    expect([28, 29].map(s => lowerPod(s).getAttribute('aria-label'))).toEqual(['Pod 28: suggestion dismissed', 'Pod 29: suggestion dismissed'])
+    // A label picked on a dismissed pod still saves.
+    fireEvent.click(chip('Empty'))
+    fireEvent.click(lowerPod(29))
+    expect(calls.setLabel).toHaveBeenLastCalledWith({ captureId: 'lower-0', slot: 29, label: 'empty' })
+    expect(lowerPod(29).getAttribute('aria-label')).toBe('Pod 29: empty')
+    expect(lowerPod(29).getAttribute('data-dismissed')).toBeNull()
+  })
+
+  it('still takes a saved label off with Clear, not dismissing anything', () => {
+    render(<LabelPods boxes={boxes} />)
+    lower()
+    fireEvent.click(chip('Clear'))
+    fireEvent.click(lowerPod(20))
+    expect(calls.setLabel).toHaveBeenLastCalledWith({ captureId: 'lower-0', slot: 20, label: null })
+    expect(calls.dismiss).not.toHaveBeenCalled()
+    expect(lowerPod(20).getAttribute('aria-label')).toBe('Pod 20: not labelled')
+  })
+
+  it('forgets an unsaved dismissal on another photo, and puts the tag back when the unit refuses', () => {
+    data.set('frames:lower', [frame('lower', 0), frame('lower', 1)])
+    render(<LabelPods boxes={boxes} />)
+    lower()
+    fireEvent.click(chip('Clear'))
+    fireEvent.click(lowerPod(22))
+    expect(lowerPod(22).textContent).toBe('22')
+    fireEvent.click(screen.getByRole('button', { name: 'Older photo' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Newer photo' }))
+    // Taps shown ahead of the unit go with the photo; back on it, the unit's list (empty here) decides.
+    expect(lowerPod(22).textContent).toBe('22 · seeded?')
+    cleanup()
+
+    mutation.dismissFail = true
+    mutation.dismissError = { message: 'pod 22 is not on the upper camera' }
+    render(<LabelPods boxes={boxes} />)
+    lower()
+    fireEvent.click(chip('Clear'))
+    fireEvent.click(lowerPod(22))
+    expect(lowerPod(22).textContent).toBe('22 · seeded?')
+    expect(screen.getByText('pod 22 is not on the upper camera')).toBeTruthy()
+    // A refused restore keeps the dismissal shown.
+    data.set('dismissed:lower-0', [{ slot: 25, dismissedAt: '2026-11-14T10:00:00Z' }])
+    mutation.dismissError = null
+    mutation.restoreError = { message: 'no capture lower-0' }
+    cleanup()
+    render(<LabelPods boxes={boxes} />)
+    lower()
+    fireEvent.click(chip('Clear'))
+    fireEvent.click(lowerPod(25))
+    expect(calls.restore).toHaveBeenLastCalledWith({ captureId: 'lower-0', slot: 25 })
+    expect(lowerPod(25).getAttribute('aria-label')).toBe('Pod 25: suggestion dismissed')
+    expect(screen.getByText('no capture lower-0')).toBeTruthy()
+  })
+
+  it('links to the pod boxes for a box that isn\'t on a pod', () => {
+    const edit = vi.fn()
+    render(<LabelPods boxes={boxes} onEditBoxes={edit} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Box not on a pod? Move it in Pod bounds' }))
+    expect(edit).toHaveBeenCalledTimes(1)
   })
 })

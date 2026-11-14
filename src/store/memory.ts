@@ -1,5 +1,5 @@
 import type { SensorId } from '../hardware/contract'
-import type { AlertRow, Automation, AutomationRun, AnalysisPoint, AnalysisRow, AnalyzerStats, BackupRecord, Capture, CustomPlant, DeviceSettings, FlashSample, GrowCycle, GrowProtocolState, GrowStage, PlanRow, PlantProfile, Pod, PodCodePair, PodCodeRead, PodLabel, PodLabelCursor, PodLabelInput, PodLabelSource, PodLabelValue, SavedSchedule, Schedule, ScheduleRun, Store, TankAction, TankActionKind, TelemetryPoint } from './types'
+import type { AlertRow, Automation, AutomationRun, AnalysisPoint, AnalysisRow, AnalyzerStats, BackupRecord, Capture, CustomPlant, DeviceSettings, FlashSample, GrowCycle, GrowProtocolState, GrowStage, PlanRow, PlantProfile, Pod, PodCodePair, PodCodeRead, PodLabel, PodLabelCursor, PodLabelInput, PodLabelSource, PodLabelValue, SavedSchedule, Schedule, ScheduleRun, Store, SuggestionDismissal, TankAction, TankActionKind, TelemetryPoint } from './types'
 import type { AutomationRule } from '../autopilot/types'
 import { DEFAULT_SETTINGS, POD_LABELS, profileKey } from './types'
 
@@ -28,6 +28,7 @@ export class MemoryStore implements Store {
   private nextAutomationId = 1
   private nextRunId = 1
   private readonly labelRows = new Map<string, PodLabel>()
+  private readonly dismissalRows = new Map<string, SuggestionDismissal>()
   private readonly codePairs = new Map<string, PodCodePair>()
   private readonly codeReads = new Map<number, PodCodeRead>()
   private readonly tankRows: TankAction[] = []
@@ -382,6 +383,21 @@ export class MemoryStore implements Store {
       }
       return [...m.values()].sort((a, b) => b.ts.localeCompare(a.ts) || a.captureId.localeCompare(b.captureId)).slice(0, limit)
     },
+  }
+
+  dismissals = {
+    dismiss: (d: SuggestionDismissal): SuggestionDismissal => {
+      const k = `${d.captureId}#${d.slot}`
+      const row = { ...d, dismissedAt: this.dismissalRows.get(k)?.dismissedAt ?? d.dismissedAt }
+      this.dismissalRows.set(k, row)
+      return { ...row }
+    },
+    restore: (captureId: string, slot: number): boolean => this.dismissalRows.delete(`${captureId}#${slot}`),
+    forCapture: (captureId: string): SuggestionDismissal[] =>
+      [...this.dismissalRows.values()].filter(d => d.captureId === captureId).sort((a, b) => a.slot - b.slot).map(d => ({ ...d })),
+    range: (fromTs: string, toTs: string): SuggestionDismissal[] =>
+      [...this.dismissalRows.values()].filter(d => d.ts >= fromTs && d.ts <= toTs)
+        .sort((a, b) => a.ts.localeCompare(b.ts) || a.captureId.localeCompare(b.captureId) || a.slot - b.slot).map(d => ({ ...d })),
   }
 
   podCodes = {

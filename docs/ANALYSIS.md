@@ -132,6 +132,11 @@ pod shows. **Analysis → Label pods** is where you give them.
    *pod-state 86%*). With no label picked, tap a pod to accept its
    suggestion. **Accept the rest** under each photo accepts every remaining
    suggestion on it; pods without one stay unlabelled.
+   If a pod can't be seen on the photo, or its box sits over the tower
+   rather than a cup, pick **Clear** and tap it: that
+   [dismisses the suggestion](#dismissed-suggestions) on that photo, so
+   **Accept the rest** skips it. Tap it again with **Clear** to bring the
+   suggestion back.
 3. For the pods that changed, or that have no suggestion, pick a label (tap
    the picked one again to put it down):
    - **Empty**: a capped pod, no yCube.
@@ -142,6 +147,8 @@ pod shows. **Analysis → Label pods** is where you give them.
 4. Tap each pod that shows it. A tap sets the label, over any suggestion. To
    remove a label, tap the pod again with the same label, or pick **Clear**
    and tap it. To change a label, pick the other one and tap the pod again.
+   **Clear** on a pod with a saved label removes the label; only on a pod
+   with just a suggestion does it dismiss the suggestion.
 
 When a pod is labelled, its plant and sowing date go with the label, so a
 season of labels keeps the right species and age after pods are replanted.
@@ -206,6 +213,31 @@ one unlabelled. `GET /api/vision/captures/{captureId}/labels`,
 for the next page). The `list_labels` MCP tool returns the same, and
 `list_analyses` the summary under `labels`. Labelling stays in the app:
 agents can read labels but not set or clear them.
+
+### Dismissed suggestions
+
+A suggestion can point at a pod the photo doesn't show: the pod is hidden,
+or its box isn't on a pod at all (on the lower camera a box can sit over the
+tower body). **Clear** on such a pod dismisses its suggestion on that photo
+only; the dashed tag goes, and the box's tooltip says it was dismissed. The
+unit keeps the dismissal, so a reload doesn't bring the suggestion back.
+`GET /api/vision/captures/{captureId}/suggestions` leaves dismissed pods out,
+and **Accept the rest** (`POST …/suggestions/accept`) skips them on the unit,
+not only in the app. A label picked on a dismissed pod is saved as `picked`,
+since there was no suggestion to accept or correct.
+
+A dismissal is not a label. It never shows in the label counts, the
+`picked`/`accepted`/`corrected` line, **All labels** or `labels.jsonl`; the
+dataset export carries dismissals in their own file,
+`suggestion_dismissals.json`. Nothing hides a pod on its own: a box that
+doesn't sit on a pod should be moved in **Analysis → Latest photos → Pod
+bounds → Edit boxes** (the tooltip on each suggested pod says so, and the
+link under the label chips opens it).
+
+Scripts use `PUT /api/vision/captures/{captureId}/suggestions/{slot}/dismissal`
+to dismiss, `DELETE` on the same path to bring the suggestion back, and
+`GET /api/vision/captures/{captureId}/suggestions/dismissals` to list a
+photo's dismissals (`slot`, `dismissedAt`).
 
 ### Pod codes
 
@@ -311,16 +343,22 @@ with or without the photos. Scripts can use
 `GET /api/datasets/export?from=…&to=…&images=0|1` directly. Everything sits
 under one folder, `seedypod-<unit>-<yyyymmdd from>-<yyyymmdd to>/`:
 
-- `manifest.json`: format (`seedypod-dataset` version 3, since `labels.jsonl`
-  gained `source` and the suggestion fields and `pod_codes.json` came in),
-  window, unit, core version,
-  analysers, and row counts (`counts.labels` among them).
+- `manifest.json`: format (`seedypod-dataset` version 4, since
+  `suggestion_dismissals.json` came in; version 3 added `source` and the
+  suggestion fields to `labels.jsonl`, and `pod_codes.json`), window, unit,
+  core version, analysers, and row counts (`counts.labels` and
+  `counts.dismissals` among them).
 - `captures.jsonl`, `analyses.jsonl` and `telemetry.jsonl`: one record per line.
 - `labels.jsonl`: one labelled pod per line (see below).
 - `regions.json`: every pod's box per camera, as fractions of the frame.
 - `pods.json` and `grow_cycles.json`: what was planted where, and when.
 - `pod_codes.json`: every dot code → plant pair you confirmed (`code`,
   `plant`, `confirmedAt`), whenever it was confirmed (`counts.podCodes`).
+- `suggestion_dismissals.json`: every pod whose suggestion you
+  [dismissed](#dismissed-suggestions) on a photo taken in the window
+  (`captureId`, `ts` the photo's time, `slot`, `dismissedAt`), ordered by
+  photo time, then photo, then pod. Not labels: a trainer can use them to
+  drop pods that can't be seen, or to find boxes that need moving.
 - `images/<capture id>.jpg`: the photos.
 - `README.md`: the layout above, in the archive itself.
 

@@ -440,6 +440,25 @@ for (const [name, make] of impls) {
       expect(store.podLabels.counts()).toMatchObject({ seeded: 1, growing: 0 })
     })
 
+    it('suggestion dismissals upsert per photo and pod, keep the first time, and never count as labels (#261)', () => {
+      store = make()
+      const d = (captureId: string, ts: string, slot: number, dismissedAt = '2026-11-09T00:00:00.000Z') => store.dismissals.dismiss({ captureId, ts, slot, dismissedAt })
+      expect(store.dismissals.forCapture('lower-b')).toEqual([])
+      expect(d('lower-b', '2026-11-02T00:00:00.000Z', 28)).toEqual({ captureId: 'lower-b', ts: '2026-11-02T00:00:00.000Z', slot: 28, dismissedAt: '2026-11-09T00:00:00.000Z' })
+      expect(d('lower-b', '2026-11-02T00:00:00.000Z', 28, '2026-11-10T00:00:00.000Z')).toMatchObject({ dismissedAt: '2026-11-09T00:00:00.000Z' })
+      d('lower-b', '2026-11-02T00:00:00.000Z', 22)
+      d('lower-a', '2026-11-01T00:00:00.000Z', 25)
+      expect(store.dismissals.forCapture('lower-b').map(r => r.slot)).toEqual([22, 28])
+      expect(store.dismissals.range('2026-11-01T00:00:00.000Z', '2026-11-03T00:00:00.000Z').map(r => `${r.captureId}:${r.slot}`)).toEqual(['lower-a:25', 'lower-b:22', 'lower-b:28'])
+      expect(store.dismissals.range('2026-11-02T00:00:00.000Z', '2026-11-03T00:00:00.000Z')).toHaveLength(2)
+      expect(store.podLabels.forCapture('lower-b')).toEqual([])
+      expect(store.podLabels.counts()).toEqual({ empty: 0, seeded: 0, sprouted: 0, growing: 0, ready: 0, unhealthy: 0 })
+      expect(store.podLabels.captures()).toEqual([])
+      expect(store.dismissals.restore('lower-b', 28)).toBe(true)
+      expect(store.dismissals.restore('lower-b', 28)).toBe(false)
+      expect(store.dismissals.forCapture('lower-b')).toEqual([{ captureId: 'lower-b', ts: '2026-11-02T00:00:00.000Z', slot: 22, dismissedAt: '2026-11-09T00:00:00.000Z' }])
+    })
+
     it('pod codes keep only confirmed pairs, and each camera\'s latest reads (#224)', () => {
       store = make()
       expect(store.podCodes.pairs()).toEqual([])
@@ -582,6 +601,31 @@ describe('SqliteStore on disk', () => {
       const store = new SqliteStore({ url })
       expect(store.podLabels.forCapture('upper-1')).toEqual([{ captureId: 'upper-1', ts: '2026-11-01T00:00:00.000Z', camera: 'upper', slot: 2, label: 'growing', labelledAt: '2026-11-09T00:00:00.000Z', plant: 'Basil', plantedAt: '2026-10-20', source: 'picked', suggested: null, suggestedBy: null, suggestedConfidence: null }])
       expect(store.podLabels.bySource()).toEqual([{ source: 'picked', suggestedBy: null, n: 1 }])
+      store.close()
+    }
+    finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('adds suggestion dismissals to a database at 0022, leaving its labels alone (#261)', () => {
+    const root = mkdtempSync(join(tmpdir(), 'store-'))
+    try {
+      const url = join(root, 'old.db')
+      const journal = JSON.parse(readFileSync(join(defaultMigrationsFolder(), 'meta/_journal.json'), 'utf8')) as { entries: { tag: string }[] }
+      const old = join(root, 'migrations-0022')
+      cpSync(defaultMigrationsFolder(), old, { recursive: true })
+      writeFileSync(join(old, 'meta/_journal.json'), JSON.stringify({ ...journal, entries: journal.entries.filter(e => e.tag < '0023') }))
+      const db = new Database(url)
+      migrate(drizzle(db), { migrationsFolder: old })
+      expect(db.prepare('SELECT name FROM sqlite_master WHERE name = ?').get('suggestion_dismissals')).toBeUndefined()
+      db.prepare('INSERT INTO pod_labels (captureId, ts, camera, slot, label, labelledAt, source) VALUES (?, ?, ?, ?, ?, ?, ?)').run('lower-1', '2026-11-01T00:00:00.000Z', 'lower', 22, 'seeded', '2026-11-09T00:00:00.000Z', 'accepted')
+      db.close()
+      const store = new SqliteStore({ url })
+      expect(store.dismissals.forCapture('lower-1')).toEqual([])
+      store.dismissals.dismiss({ captureId: 'lower-1', ts: '2026-11-01T00:00:00.000Z', slot: 28, dismissedAt: '2026-11-10T00:00:00.000Z' })
+      expect(store.dismissals.forCapture('lower-1').map(d => d.slot)).toEqual([28])
+      expect(store.podLabels.forCapture('lower-1')).toMatchObject([{ slot: 22, label: 'seeded', source: 'accepted' }])
       store.close()
     }
     finally {

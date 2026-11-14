@@ -129,6 +129,7 @@ const LabelCounts = z.object(Object.fromEntries(POD_LABELS.map(l => [l, z.number
 const SourceCounts = z.object(Object.fromEntries(LABEL_SOURCES.map(s => [s, z.number()])) as Record<PodLabelSource, z.ZodNumber>)
 /** A pod's suggestion, with the photo time of the label it carries. */
 const SuggestionOut = z.object({ slot: z.number(), label: LabelValue, by: z.string(), confidence: z.number().nullable(), from: z.string().nullable() })
+const PodRef = z.object({ captureId: z.string(), slot: z.number().int().min(1).max(30) })
 
 interface Shot { ts: string, camera: Camera }
 
@@ -146,8 +147,9 @@ function shotOf(ctx: Context, captureId: string): Shot {
  */
 const inPhoto = (pod: Pod | undefined, day: string) => (pod?.plant && pod.plantedAt && pod.status !== 'empty' && pod.plantedAt.slice(0, 10) <= day ? pod : null)
 
-/** What the tagger suggests for each of a photo's pods (#261), by slot. */
+/** What the tagger suggests for each of a photo's pods (#261), by slot. A pod whose suggestion was dismissed on the photo has none. */
 function suggestionsFor(ctx: Context, captureId: string, shot: Shot): Map<number, Suggestion> {
+  const dismissed = new Set(ctx.store.dismissals.forCapture(captureId).map(d => d.slot))
   const tz = ctx.store.settings.get().timezone
   const dayOf = (ts: string) => localTime(new Date(ts), tz).date
   const day = dayOf(shot.ts)
@@ -159,6 +161,7 @@ function suggestionsFor(ctx: Context, captureId: string, shot: Shot): Map<number
   const model = new Map(rows.filter(r => r.version === version).map(r => [r.slot, r.detail]))
   const out = new Map<number, Suggestion>()
   for (const slot of cameraSlots(shot.camera)) {
+    if (dismissed.has(slot)) continue
     const pod = inPhoto(pods.get(slot), day)
     const l = last.get(slot)
     const d = model.get(slot)
@@ -171,6 +174,13 @@ function suggestionsFor(ctx: Context, captureId: string, shot: Shot): Map<number
     if (s) out.set(slot, s)
   }
   return out
+}
+
+/** A photo's time and camera, refusing a pod the photo's camera doesn't see. */
+function podShot(ctx: Context, captureId: string, slot: number): Shot {
+  const shot = shotOf(ctx, captureId)
+  if (cameraOf(slot) !== shot.camera) throw new TRPCError({ code: 'BAD_REQUEST', message: `pod ${slot} is not on the ${shot.camera} camera` })
+  return shot
 }
 
 /** Save a label with the pod's plant as the photo shows it, and how it stands to the pod's suggestion. */
@@ -320,12 +330,12 @@ export const visionRouter = router({
       }
     }),
   suggestions: publicProcedure
-    .meta({ openapi: { method: 'GET', path: '/vision/captures/{captureId}/suggestions', tags: ['vision'], summary: 'The tagger\'s suggested label for each pod in one capture (#261): the pod\'s last label on an earlier photo, or pod-state at 0.8 or more. A suggestion is not a label until accepted' } })
+    .meta({ openapi: { method: 'GET', path: '/vision/captures/{captureId}/suggestions', tags: ['vision'], summary: 'The tagger\'s suggested label for each pod in one capture (#261): the pod\'s last label on an earlier photo, or pod-state at 0.8 or more. Pods whose suggestion was dismissed are left out. A suggestion is not a label until accepted' } })
     .input(z.object({ captureId: z.string() }))
     .output(z.array(SuggestionOut))
     .query(({ ctx, input }) => [...suggestionsFor(ctx, input.captureId, shotOf(ctx, input.captureId))].map(([slot, s]) => ({ slot, ...s }))),
   acceptSuggestions: publicProcedure
-    .meta({ openapi: { method: 'POST', path: '/vision/captures/{captureId}/suggestions/accept', tags: ['vision'], summary: 'Accept the rest (#261): save every unlabelled pod\'s suggestion in one capture as accepted; pods with no suggestion stay unlabelled' } })
+    .meta({ openapi: { method: 'POST', path: '/vision/captures/{captureId}/suggestions/accept', tags: ['vision'], summary: 'Accept the rest (#261): save every unlabelled pod\'s suggestion in one capture as accepted; pods with no suggestion, or a dismissed one, stay unlabelled' } })
     .input(z.object({ captureId: z.string() }))
     .output(z.object({ captureId: z.string(), slots: z.array(z.number()) }))
     .mutation(({ ctx, input }) => {
@@ -340,14 +350,37 @@ export const visionRouter = router({
       if (slots.length) ctx.events.emit({ kind: 'mutation', path: 'labels' })
       return { captureId: input.captureId, slots }
     }),
+  dismissals: publicProcedure
+    .meta({ openapi: { method: 'GET', path: '/vision/captures/{captureId}/suggestions/dismissals', tags: ['vision'], summary: 'The pods whose suggestion was dismissed on one capture (#261), by slot: not visible there, or not a pod. A dismissal is not a label' } })
+    .input(z.object({ captureId: z.string() }))
+    .output(z.array(z.object({ slot: z.number(), dismissedAt: z.string() })))
+    .query(({ ctx, input }) => ctx.store.dismissals.forCapture(input.captureId).map(({ slot, dismissedAt }) => ({ slot, dismissedAt }))),
+  dismissSuggestion: publicProcedure
+    .meta({ openapi: { method: 'PUT', path: '/vision/captures/{captureId}/suggestions/{slot}/dismissal', tags: ['vision'], summary: 'Dismiss one pod\'s suggestion on one capture (#261), for a pod that can\'t be seen there or a box that isn\'t on a pod: suggestions leave it out and Accept the rest skips it. Nothing is labelled' } })
+    .input(PodRef)
+    .output(z.object({ captureId: z.string(), slot: z.number(), dismissedAt: z.string() }))
+    .mutation(({ ctx, input }) => {
+      const shot = podShot(ctx, input.captureId, input.slot)
+      const d = ctx.store.dismissals.dismiss({ captureId: input.captureId, ts: shot.ts, slot: input.slot, dismissedAt: (ctx.now?.() ?? new Date()).toISOString() })
+      ctx.events.emit({ kind: 'mutation', path: 'labels' })
+      return { captureId: d.captureId, slot: d.slot, dismissedAt: d.dismissedAt }
+    }),
+  restoreSuggestion: publicProcedure
+    .meta({ openapi: { method: 'DELETE', path: '/vision/captures/{captureId}/suggestions/{slot}/dismissal', tags: ['vision'], summary: 'Bring back a pod\'s dismissed suggestion on one capture (#261)' } })
+    .input(PodRef)
+    .output(z.object({ captureId: z.string(), slot: z.number(), restored: z.boolean() }))
+    .mutation(({ ctx, input }) => {
+      const restored = ctx.store.dismissals.restore(input.captureId, input.slot)
+      if (restored) ctx.events.emit({ kind: 'mutation', path: 'labels' })
+      return { captureId: input.captureId, slot: input.slot, restored }
+    }),
   setLabel: publicProcedure
     .meta({ openapi: { method: 'PUT', path: '/vision/captures/{captureId}/labels/{slot}', tags: ['vision'], summary: 'Label one pod in a capture for training (ADR-0019); null clears the label. It is saved as accepted when it matches the pod\'s suggestion, corrected when it differs, and picked with none (#261)' } })
     .input(z.object({ captureId: z.string(), slot: z.number().int().min(1).max(30), label: LabelValue.nullable() }))
     .output(z.object({ captureId: z.string(), slot: z.number(), label: LabelValue.nullable() }))
     .mutation(({ ctx, input }) => {
       // A pruned photo's labels can still be changed or removed: they carry its time and camera.
-      const shot = shotOf(ctx, input.captureId)
-      if (cameraOf(input.slot) !== shot.camera) throw new TRPCError({ code: 'BAD_REQUEST', message: `pod ${input.slot} is not on the ${shot.camera} camera` })
+      const shot = podShot(ctx, input.captureId, input.slot)
       if (input.label === null) ctx.store.podLabels.remove(input.captureId, input.slot)
       else saveLabel(ctx, input.captureId, shot, input.slot, input.label, suggestionsFor(ctx, input.captureId, shot).get(input.slot) ?? null)
       ctx.events.emit({ kind: 'mutation', path: 'labels' })

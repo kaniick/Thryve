@@ -304,6 +304,15 @@ export type PodLabelInput = Omit<PodLabel, Suggestion> & Partial<Pick<PodLabel, 
 /** Where a page of labels ends: the last row's capture time, capture and pod. */
 export interface PodLabelCursor { ts: string, captureId: string, slot: number }
 
+/** A suggestion the grower dismissed on one photo (#261): the pod isn't visible there, or isn't a pod. Not a label. */
+export interface SuggestionDismissal {
+  captureId: string
+  /** The capture's time, denormalised so the export's window never joins. */
+  ts: string
+  slot: number
+  dismissedAt: string
+}
+
 /**
  * A yCube dot code (#224): four marks read away from the solid dot, each `o`
  * open, `|` bar, `/` slanted bar or `h` half filled.
@@ -463,6 +472,16 @@ export interface Store {
     lastBefore(ts: string): PodLabel[]
     /** Labelled captures, newest first, with how many of their pods are labelled. */
     captures(limit?: number): Array<{ captureId: string, ts: string, camera: 'upper' | 'lower', pods: number }>
+  }
+  /** Suggestions dismissed per photo and pod (#261), kept apart from labels so no count or export of labels sees them. */
+  dismissals: {
+    /** Upsert on (capture, slot): dismissing again keeps the first time. */
+    dismiss(d: SuggestionDismissal): SuggestionDismissal
+    restore(captureId: string, slot: number): boolean
+    /** By slot. */
+    forCapture(captureId: string): SuggestionDismissal[]
+    /** Dismissals whose capture time falls in [fromTs, toTs], oldest first, then by slot. */
+    range(fromTs: string, toTs: string): SuggestionDismissal[]
   }
   podCodes: {
     /** Owner-confirmed pairs, by code. */

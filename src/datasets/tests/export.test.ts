@@ -52,6 +52,9 @@ async function unit() {
   label('upper-gone', '2026-10-25T00:00:00Z', 3, 'growing')
   // A pair confirmed before the window still goes with the archive.
   store.podCodes.confirm('oo||', 'Green Bok Choy', '2026-08-01T00:00:00.000Z')
+  // Suggestions dismissed on a photo in the window and on one before it (#261).
+  store.dismissals.dismiss({ captureId: 'upper-2', ts: '2026-10-30T00:00:00Z', slot: 4, dismissedAt: '2026-10-31T09:05:00.000Z' })
+  store.dismissals.dismiss({ captureId: 'upper-0', ts: '2026-09-01T00:00:00Z', slot: 5, dismissedAt: '2026-10-31T09:06:00.000Z' })
   return core.ctx
 }
 
@@ -102,11 +105,13 @@ describe('dataset export', () => {
     expect(res.headers.get('content-type')).toBe('application/x-tar')
     expect(res.headers.get('content-disposition')).toContain('seedypod-kitchen-gardyn-20261001-20261031.tar')
     const root = join(untar(new Uint8Array(await res.arrayBuffer())), 'seedypod-kitchen-gardyn-20261001-20261031')
-    expect(readdirSync(root).sort()).toEqual(['README.md', 'analyses.jsonl', 'captures.jsonl', 'grow_cycles.json', 'images', 'labels.jsonl', 'manifest.json', 'pod_codes.json', 'pods.json', 'regions.json', 'telemetry.jsonl'])
+    expect(readdirSync(root).sort()).toEqual(['README.md', 'analyses.jsonl', 'captures.jsonl', 'grow_cycles.json', 'images', 'labels.jsonl', 'manifest.json', 'pod_codes.json', 'pods.json', 'regions.json', 'suggestion_dismissals.json', 'telemetry.jsonl'])
     const manifest = JSON.parse(readFileSync(join(root, 'manifest.json'), 'utf8')) as Record<string, unknown>
-    expect(manifest).toMatchObject({ format: { name: 'seedypod-dataset', version: 3 }, unit: { name: 'Kitchen Gardyn' }, core: 'test', primaryAnalyzer: 'green-threshold', counts: { captures: 3, analyses: 60, telemetry: 1, labels: 5, podCodes: 1 } })
+    expect(manifest).toMatchObject({ format: { name: 'seedypod-dataset', version: 4 }, unit: { name: 'Kitchen Gardyn' }, core: 'test', primaryAnalyzer: 'green-threshold', counts: { captures: 3, analyses: 60, telemetry: 1, labels: 5, podCodes: 1, dismissals: 1 } })
     // The owner's confirmed dot code → plant pairs (#259).
     expect(JSON.parse(readFileSync(join(root, 'pod_codes.json'), 'utf8'))).toEqual([{ code: 'oo||', plant: 'Green Bok Choy', confirmedAt: '2026-08-01T00:00:00.000Z' }])
+    // Dismissed suggestions in the window, apart from the labels: never a label row (#261).
+    expect(JSON.parse(readFileSync(join(root, 'suggestion_dismissals.json'), 'utf8'))).toEqual([{ captureId: 'upper-2', ts: '2026-10-30T00:00:00Z', slot: 4, dismissedAt: '2026-10-31T09:05:00.000Z' }])
     const captures = readFileSync(join(root, 'captures.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l) as { id: string, image: string | null })
     expect(captures.map(c => [c.id, c.image])).toEqual([['upper-1', 'images/upper-1.jpg'], ['demo-svg', null], ['upper-2', 'images/upper-2.jpg']])
     expect(readdirSync(join(root, 'images')).sort()).toEqual(['upper-1.jpg', 'upper-2.jpg'])
@@ -143,6 +148,7 @@ describe('dataset export', () => {
     expect(readme).toContain('labels.jsonl')
     expect(readme).toContain('`daysSinceSowing`')
     expect(readme).toContain('`pod_codes.json`')
+    expect(readme).toContain('`suggestion_dismissals.json`')
     expect(readme).toContain('`suggestedBy`')
     expect(readme).toMatch(/`seeded` \(a yCube in, nothing\s+visible yet\)/)
     expect(readme).toMatch(/map `seeded` to `empty`/)
