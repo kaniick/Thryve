@@ -65,6 +65,10 @@ export class MemoryStore implements Store {
       this.runs.push(run)
       return true
     },
+    setRunResult: (key: string, result: string): void => {
+      const run = this.runs.find(r => r.key === key)
+      if (run) run.result = result
+    },
     recentRuns: (limit = 50): ScheduleRun[] => this.runs.slice(-limit).reverse(),
   }
 
