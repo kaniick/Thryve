@@ -11,6 +11,7 @@ import { appRouter } from '../routers/app'
 import { createCallerFactory } from '../trpc'
 import { DEFAULT_REGIONS } from '../../vision/regions'
 import type { CodeReader } from '../../vision/podCodes'
+import { unitFingerprint } from '../../vision/shareCodes'
 
 async function scored(n = 3) {
   const sink = new MemorySink()
@@ -262,6 +263,26 @@ describe('pod codes (#224)', () => {
     // No capture was added, and nothing was confirmed by reading.
     expect(await c.camera.list({ limit: 10 })).toEqual([])
     expect(ctx.store.podCodes.pairs()).toEqual([])
+  })
+
+  it('builds the Share pod codes link from the catalog pairs, for the browser to open (#259)', async () => {
+    const { c, ctx } = codesCore(async () => answer([{ slot: 6, code: 'oo||' }, { slot: 7, code: 'o|hh' }, { slot: 8, code: null }]))
+    expect(await c.vision.podCodeShare()).toEqual({ url: null, pairs: [], skipped: [], crops: [] })
+    await c.vision.readPodCodes()
+    ctx.store.podCodes.confirm('oo||', 'green bok choy', 't')
+    ctx.store.podCodes.confirm('o|hh', 'Genovese Basil', 't')
+    const got = await c.vision.podCodeShare()
+    expect(got.pairs).toEqual([{ code: 'oo||', plant: 'Green Bok Choy' }])
+    expect(got.skipped).toEqual([{ code: 'o|hh', plant: 'Genovese Basil' }])
+    expect(got.crops).toEqual([{ slot: 6, code: 'oo||', plant: 'Green Bok Choy' }])
+    const q = new URL(got.url as string).searchParams
+    expect(q.get('pairs')).toBe('oo|| → Green Bok Choy')
+    expect(q.get('version')).toBe('test')
+    expect(q.get('fingerprint')).toBe(await unitFingerprint(ctx.hal.snapshot().system?.unitId as string))
+    // Without a unit id there is no fingerprint, and nothing else stands in for it.
+    const snapshot = ctx.hal.snapshot.bind(ctx.hal)
+    ctx.hal.snapshot = () => ({ ...snapshot(), system: null })
+    expect(new URL((await c.vision.podCodeShare()).url as string).searchParams.has('fingerprint')).toBe(false)
   })
 
   it('confirms and corrects a pair without touching the pod records', async () => {
