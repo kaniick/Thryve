@@ -26,7 +26,7 @@
 
 A Gardyn has a Raspberry Pi inside and a cloud subscription in front of it. Thryve replaces the cloud with software that runs on that Pi. There's no account and no telemetry, and nothing leaves your LAN unless you turn it on. It's a sibling of [sleepypod](https://sleepypod.github.io/).
 
-**No Gardyn?** Run `pnpm dev` (below). It serves the real web UI against a simulated tower. The original seedypod project also has a [hosted demo](https://seedypod.vercel.app).
+**No Gardyn?** Run `pnpm dev` (below). It serves the real web UI against a simulated tower.
 
 ## How it works
 
@@ -42,7 +42,7 @@ A Gardyn has a Raspberry Pi inside and a cloud subscription in front of it. Thry
 - **Grow tracking:** grow cycles with reminders, the tower in 3D (pods colored by status and sized by measured growth, the tank's water level, the light bars at their level) or as a table, and camera captures with per-pod growth trends.
 - **Probes:** add pH, EC and water-temperature probes from the app, with guided calibration.
 - **Integrations:** Home Assistant over MQTT, MCP for agents, optional capture mirroring to S3-compatible storage, and dataset export.
-- **iPhone app:** the tower in 3D, pod cards, light, water and alerts, from the original [seedypod/ios](https://github.com/seedypod/ios). The official app still looks up `_seedypod._tcp`; a Thryve build is not in this repo. See [the app's docs](https://seedypod.github.io/ios/).
+- **iPhone app:** the tower in 3D, pod cards, light, water and alerts, in [kaniick/Thryve-ios](https://github.com/kaniick/Thryve-ios). See [the app's docs](https://kaniick.github.io/Thryve-docs/ios/).
 - **Wi-Fi setup:** hold the button for 10 seconds to start a setup hotspot.
 - **SD card care:** logs and swap stay in RAM, a meter shows the card's writes per day, and nightly backups go to your bucket. A dead card is a reflash plus **Welcome → Restore from a backup**.
 

@@ -12,7 +12,7 @@ sources: [{"resource": "https://github.com/sleepypod/core", "title": "sleepypod/
 thryve makes no outbound connections unless you configure one. Camera stills
 and timelapses stay on the unit (or on the core host you chose) and are served
 only on your LAN. There is no account, no telemetry, and no crash reporting.
-The Vercel demo runs a simulator in your browser and talks to no backend.
+A local `pnpm dev` or `VITE_DEMO=1` build runs a simulator in your browser and talks to no backend.
 
 ## Opt-in: off-device storage and analysis
 
