@@ -200,13 +200,14 @@ function Still({ latest, view, analyzer, empty, pod, trend, analyzers, colorOf, 
   }
   return (
     <figure className="m-0 flex min-w-0 flex-col gap-1.5">
-      <div className="relative overflow-hidden rounded-[10px] bg-code" style={{ aspectRatio: ratio }}>
+      {/* Not clipped, so a pod's card can reach past the photo's edge. */}
+      <div className="relative rounded-[10px] bg-code" style={{ aspectRatio: ratio }}>
         {frame
           ? (
               <img
                 src={frame.path.startsWith('data:') ? frame.path : `${apiBase()}${frame.url}`}
                 alt={`${camera} camera at ${frame.ts}`}
-                className="absolute inset-0 size-full"
+                className="absolute inset-0 size-full rounded-[10px]"
                 onLoad={(e) => {
                   const { naturalWidth: w, naturalHeight: h } = e.currentTarget
                   if (w > 0 && h > 0) setRatio(w / h)

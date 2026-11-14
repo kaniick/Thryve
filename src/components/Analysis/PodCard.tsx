@@ -81,10 +81,13 @@ export function PodCard({ slot, box, pod, trend, readings, pinned, onClose }: {
       {readings.length > 0 && (
         <div className="flex flex-col gap-1 border-t border-line pt-2">
           {readings.map(r => (
-            <div key={r.key} className="flex items-center gap-2 text-xs">
-              <span className="h-[3px] w-2 shrink-0 rounded-[2px]" style={{ background: r.color }} />
-              <span className="min-w-0 flex-1 truncate text-fg-2" title={r.key}>{r.label}</span>
-              <span className="font-mono text-fg">{r.text}</span>
+            // A reading too long to share the line drops under its analyser's name rather than squeezing it.
+            <div key={r.key} className="flex flex-wrap items-center gap-x-2 text-xs">
+              <span className="flex min-w-0 max-w-full items-center gap-2">
+                <span className="h-[3px] w-2 shrink-0 rounded-[2px]" style={{ background: r.color }} />
+                <span className="truncate text-fg-2" title={r.key}>{r.label}</span>
+              </span>
+              <span className="ml-auto whitespace-nowrap font-mono text-fg">{r.text}</span>
             </div>
           ))}
           {empty && <span className="text-[11px] text-fg-3">Marked empty, so none of this counts as cover.</span>}

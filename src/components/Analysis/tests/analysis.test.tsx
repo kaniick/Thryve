@@ -173,6 +173,16 @@ describe('AnalysisPage', () => {
     expect(screen.queryByTestId('pod-card')).toBeNull()
   })
 
+  it('lets a pod\'s card reach past the photo\'s edge rather than cutting it off', () => {
+    render(<AnalysisPage />)
+    fireEvent.pointerEnter(screen.getAllByRole('button', { name: 'Pod 2 details' })[0] as HTMLElement)
+    const clipped: string[] = []
+    for (let el = screen.getByRole('dialog', { name: 'Pod 2' }).parentElement; el && el.tagName !== 'FIGURE'; el = el.parentElement) {
+      if (el.classList.contains('overflow-hidden')) clipped.push(el.className)
+    }
+    expect(clipped).toEqual([])
+  })
+
   it('says a pod marked empty has no cover, and hides the pod targets while the boxes are edited', () => {
     data.set('pods', [{ slot: 2, plant: null, status: 'empty', plantedAt: null, notes: '' }])
     render(<AnalysisPage />)
