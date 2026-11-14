@@ -184,6 +184,13 @@ describe('LabelPods', () => {
     expect(calls.setLabel).toHaveBeenLastCalledWith({ captureId: 'lower-0', slot: 30, label: 'growing' })
   })
 
+  it('says one pod labelled in the singular', () => {
+    data.set('frames:upper', [frame('upper', 0)])
+    data.set('stats', { ...stats, pods: 1 })
+    render(<LabelPods boxes={boxes} />)
+    expect(screen.getByText('1 pod labelled')).toBeTruthy()
+  })
+
   it('says when a camera has no photos, and takes a demo still as it is', () => {
     data.set('frames:lower', [{ ...frame('lower', 0), path: 'data:image/svg+xml;utf8,<svg/>' }])
     render(<LabelPods boxes={boxes} />)
