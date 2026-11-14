@@ -1,15 +1,14 @@
 <h1 align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="web/public/brand/dark/horizontal.png" />
-    <source media="(prefers-color-scheme: light)" srcset="web/public/brand/light/horizontal.png" />
-    <img src="web/public/brand/light/horizontal.png" width="320" alt="Thryve" />
+    <source media="(prefers-color-scheme: dark)" srcset="docs/media/thryve-wordmark-dark.png" />
+    <source media="(prefers-color-scheme: light)" srcset="docs/media/thryve-wordmark-light.png" />
+    <img src="docs/media/thryve-wordmark-light.png" width="320" alt="Thryve" />
   </picture>
 </h1>
 <p align="center"><strong>Your garden, your rules.</strong> Thryve replaces the Gardyn cloud with software on the tower's own Raspberry Pi: light, water, sensors and cameras on your network, Autopilot and camera growth analysis, an MCP server so AI agents can plan your pods, and HomeKit and Home Assistant built in.</p>
 <p align="center">
   <a href="https://github.com/kaniick/Thryve/actions/workflows/test.yml"><img src="https://github.com/kaniick/Thryve/actions/workflows/test.yml/badge.svg?branch=dev" alt="CI" /></a>
   <a href="https://github.com/kaniick/Thryve/actions/workflows/rust.yml"><img src="https://github.com/kaniick/Thryve/actions/workflows/rust.yml/badge.svg?branch=dev" alt="HAL (Rust)" /></a>
-  <a href="https://codecov.io/gh/kaniick/Thryve"><img src="https://codecov.io/gh/kaniick/Thryve/branch/dev/graph/badge.svg" alt="codecov" /></a>
   <a href="https://github.com/kaniick/Thryve/releases/latest"><img src="https://img.shields.io/github/v/release/kaniick/Thryve?sort=semver" alt="Release" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-AGPL_v3-blue.svg" alt="License: AGPL v3" /></a>
   <a href="docs/"><img src="https://img.shields.io/badge/docs-in_repo-blue" alt="Docs" /></a>
@@ -17,11 +16,11 @@
 <p align="center">
   <a href="docs/INSTALLATION.md">Get started</a> ·
   <a href="docs/">User guide</a> ·
-  <a href="docs/MIGRATION.md">Migrate from seedypod</a> ·
+  <a href="docs/MIGRATION.md">Migrate from SeedyPod</a> ·
   <a href="https://github.com/kaniick/Thryve/issues">Issues</a>
 </p>
 <p align="center">
-  <img src="docs/media/web-ui-home.webp" width="880" alt="The Thryve web UI's Home screen: the tower in 3D under its lit grow light, on day 19 of a grow with 19 pods ready to harvest (demo data)" />
+  <img src="docs/media/thryve-web-ui-home.webp" width="880" alt="The Thryve web UI's Home screen: the tower in 3D under its lit grow light, on day 19 of a grow with 19 pods ready to harvest (demo data)" />
 </p>
 
 A Gardyn has a Raspberry Pi inside and a cloud subscription in front of it. Thryve replaces the cloud with software that runs on that Pi. There's no account and no telemetry, and nothing leaves your LAN unless you turn it on. It's a sibling of [sleepypod](https://sleepypod.github.io/).
@@ -52,7 +51,7 @@ A Gardyn has a Raspberry Pi inside and a cloud subscription in front of it. Thry
 
 Back up the stock microSD card first, then follow [docs/INSTALLATION.md](docs/INSTALLATION.md). The quickest way is to [flash thryve OS](docs/INSTALLATION.md#flash-thryve-os-recommended), which has everything on it. On a fresh Raspberry Pi OS Lite, or to update, install the hardware daemon, then core:
 
-Already running seedypod on the tower? Don't reflash. Follow [docs/MIGRATION.md](docs/MIGRATION.md).
+Already running SeedyPod on the tower? Don't reflash. Follow [docs/MIGRATION.md](docs/MIGRATION.md).
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/kaniick/Thryve/dev/scripts/install-hal | bash
