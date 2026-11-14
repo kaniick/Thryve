@@ -285,7 +285,21 @@ export interface PodLabel {
   /** The pod's plant and sowing date when it was first labelled; null when it had none. */
   plant: string | null
   plantedAt: string | null
+  /** How it was saved (#261): picked with no suggestion, the suggestion accepted, or the suggestion corrected. */
+  source: PodLabelSource
+  /** What the tagger suggested; null when it suggested nothing. */
+  suggested: PodLabelValue | null
+  /** Where the suggestion came from: `carry`, `record` or `pod-state@<version>`; null with none. */
+  suggestedBy: string | null
+  /** The model's confidence, when the model made the suggestion. */
+  suggestedConfidence: number | null
 }
+
+export const LABEL_SOURCES = ['picked', 'accepted', 'corrected'] as const
+export type PodLabelSource = typeof LABEL_SOURCES[number]
+type Suggestion = 'source' | 'suggested' | 'suggestedBy' | 'suggestedConfidence'
+/** A label to save: without a suggestion it is `picked`. */
+export type PodLabelInput = Omit<PodLabel, Suggestion> & Partial<Pick<PodLabel, Suggestion>>
 
 /** Where a page of labels ends: the last row's capture time, capture and pod. */
 export interface PodLabelCursor { ts: string, captureId: string, slot: number }
@@ -431,7 +445,7 @@ export interface Store {
      * Upsert on (capture, slot): relabelling a pod replaces its label. The plant
      * snapshot from the first labelling stays, unless it was null.
      */
-    set(l: PodLabel): PodLabel
+    set(l: PodLabelInput): PodLabel
     remove(captureId: string, slot: number): boolean
     /** By slot. */
     forCapture(captureId: string): PodLabel[]
@@ -441,6 +455,10 @@ export interface Store {
     list(q: { label?: PodLabelValue, camera?: 'upper' | 'lower', limit: number, before?: PodLabelCursor }): PodLabel[]
     /** How many pods carry each label. */
     counts(): Record<PodLabelValue, number>
+    /** How many labels each source and suggester saved, by source then suggester (none first). */
+    bySource(): Array<{ source: PodLabelSource, suggestedBy: string | null, n: number }>
+    /** Each pod's label on the newest capture before `ts` that labelled it (the first by id on a tie), by slot. */
+    lastBefore(ts: string): PodLabel[]
     /** Labelled captures, newest first, with how many of their pods are labelled. */
     captures(limit?: number): Array<{ captureId: string, ts: string, camera: 'upper' | 'lower', pods: number }>
   }

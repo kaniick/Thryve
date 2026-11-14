@@ -232,6 +232,13 @@ export const podLabels = sqliteTable('pod_labels', {
   /** The pod's plant and sowing date when it was first labelled, so its history keeps them after a replant. */
   plant: text(),
   plantedAt: text(),
+  /** Picked with no suggestion, a suggestion accepted, or one corrected (#261). */
+  source: text({ enum: ['picked', 'accepted', 'corrected'] }).notNull().default('picked'),
+  suggested: text({ enum: ['empty', 'seeded', 'sprouted', 'growing', 'ready', 'unhealthy'] }),
+  /** `carry`, `record` or `pod-state@<version>`. */
+  suggestedBy: text(),
+  /** The model's confidence, when the model made the suggestion. */
+  suggestedConfidence: real(),
 }, t => [
   uniqueIndex('pod_labels_key').on(t.captureId, t.slot),
   index('pod_labels_ts').on(t.ts),

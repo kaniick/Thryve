@@ -149,14 +149,54 @@ with the chips (each shows its count), **Change** a label with the same chips,
 kept per photo and pod, and they stay after the unit prunes the photo; a
 pruned photo's labels can still be changed or removed.
 
+### Suggested labels
+
+Most pods look the same as on the last photo labelled, so the tagger suggests
+each pod's label (#261):
+
+- The pod's newest label on an earlier photo carries forward (`carry`), since
+  states change slowly. It never carries across a replant: a label saved with
+  another sowing date, or with none from before the pod's sowing day, doesn't
+  count.
+- `pod-state` overrides that only when it names a later stage
+  (empty < seeded < sprouted < growing < ready; `unhealthy` is never later)
+  with confidence 0.8 or more (`pod-state@<version>`, the newest version
+  that scored the photo).
+- With no earlier label, a confident `pod-state` guess is the suggestion on
+  its own. With neither, there is no suggestion.
+- The model has no `seeded` class, so a pod whose record is `seeded` turns an
+  `empty` suggestion into `seeded` (`record`).
+
+A suggestion is not a label. A pod nobody touched hasn't been checked, so it
+is never stored: counting it as right would grade the model on its own
+guesses. Each saved label records how it was saved in `source`:
+
+- `picked`: the pod had no suggestion (every label from before suggestions
+  reads back as `picked`).
+- `accepted`: the label is the suggestion.
+- `corrected`: the grower chose another label; the suggestion is kept in
+  `suggested`, with `suggestedBy` and, for the model, `suggestedConfidence`.
+
+Score a model only on reviewed labels (`accepted` and `corrected`).
+`GET /api/vision/labels` (and `list_analyses` under `labels`) counts labels by
+`sources`, and gives each suggester under `suggesters` with how often it was
+accepted or corrected and the share right, so you can tell whether the model
+beats "same as last time".
+
 Scripts use `PUT /api/vision/captures/{captureId}/labels/{slot}` with
-`{"label": "seeded"}` (or `null` to clear it),
-`GET /api/vision/captures/{captureId}/labels`, `GET /api/vision/labels` for
-the counts and the labelled photos, and `GET /api/vision/labels/pods` for the
-labelled pods themselves (`label`, `camera`, `limit` and `cursor`; pass the
-response's `next` back as `cursor` for the next page). The `list_labels` MCP
-tool returns the same, and `list_analyses` the summary under `labels`.
-Labelling stays in the app: agents can read labels but not set or clear them.
+`{"label": "seeded"}` (or `null` to clear it); the unit works out `source`
+from the pod's suggestion. `GET /api/vision/captures/{captureId}/suggestions`
+lists the suggestions (`slot`, `label`, `by`, `confidence`, and `from`, the
+photo time of a carried label), and
+`POST /api/vision/captures/{captureId}/suggestions/accept` saves every
+unlabelled pod's suggestion on that photo as `accepted`, leaving pods without
+one unlabelled. `GET /api/vision/captures/{captureId}/labels`,
+`GET /api/vision/labels` for the counts and the labelled photos, and
+`GET /api/vision/labels/pods` for the labelled pods themselves (`label`,
+`camera`, `limit` and `cursor`; pass the response's `next` back as `cursor`
+for the next page). The `list_labels` MCP tool returns the same, and
+`list_analyses` the summary under `labels`. Labelling stays in the app:
+agents can read labels but not set or clear them.
 
 ### Pod codes
 
@@ -231,8 +271,9 @@ with or without the photos. Scripts can use
 `GET /api/datasets/export?from=…&to=…&images=0|1` directly. Everything sits
 under one folder, `seedypod-<unit>-<yyyymmdd from>-<yyyymmdd to>/`:
 
-- `manifest.json`: format (`seedypod-dataset` version 2, since `labels.jsonl`
-  gained `seeded` and the plant fields), window, unit, core version,
+- `manifest.json`: format (`seedypod-dataset` version 3, since `labels.jsonl`
+  gained `source` and the suggestion fields and `pod_codes.json` came in),
+  window, unit, core version,
   analysers, and row counts (`counts.labels` among them).
 - `captures.jsonl`, `analyses.jsonl` and `telemetry.jsonl`: one record per line.
 - `labels.jsonl`: one labelled pod per line (see below).
@@ -244,7 +285,9 @@ under one folder, `seedypod-<unit>-<yyyymmdd from>-<yyyymmdd to>/`:
 - `README.md`: the layout above, in the archive itself.
 
 This is what you pull to a laptop to check an analyser against what you see,
-recalibrate a threshold, or train a model.
+recalibrate a threshold, or train a model. To avoid a feedback loop, weight
+`corrected` labels up, and drop or down-weight labels `accepted` from the
+model's own suggestion (`suggestedBy` `pod-state@…`) when training that model.
 
 ### Labels and pod crops
 
@@ -252,7 +295,7 @@ recalibrate a threshold, or train a model.
 the window. Rows are ordered by photo time, then photo, then pod:
 
 ```json
-{"captureId":"upper-2026-10-20T00-00-00-000Z","ts":"2026-10-20T00:00:00.000Z","camera":"upper","slot":1,"label":"growing","labelledAt":"2026-10-31T09:00:00.000Z","plant":"Basil","plantedAt":"2026-10-06","daysSinceSowing":14,"image":"images/upper-2026-10-20T00-00-00-000Z.jpg","width":1280,"height":960,"region":{"x":128,"y":192,"w":640,"h":480},"box":{"x":0.1,"y":0.2,"w":0.5,"h":0.5}}
+{"captureId":"upper-2026-10-20T00-00-00-000Z","ts":"2026-10-20T00:00:00.000Z","camera":"upper","slot":1,"label":"growing","labelledAt":"2026-10-31T09:00:00.000Z","plant":"Basil","plantedAt":"2026-10-06","daysSinceSowing":14,"source":"corrected","suggested":"sprouted","suggestedBy":"pod-state@1","suggestedConfidence":0.86,"image":"images/upper-2026-10-20T00-00-00-000Z.jpg","width":1280,"height":960,"region":{"x":128,"y":192,"w":640,"h":480},"box":{"x":0.1,"y":0.2,"w":0.5,"h":0.5}}
 ```
 
 | Field | Meaning |
@@ -263,6 +306,10 @@ the window. Rows are ordered by photo time, then photo, then pod:
 | `labelledAt` | When it was labelled |
 | `plant`, `plantedAt` | The pod's plant and sowing date when it was labelled; `null` when it had none, or for labels from before core recorded them |
 | `daysSinceSowing` | Whole days from `plantedAt` to `ts`; `null` without a sowing date |
+| `source` | How it was saved: `picked` (no suggestion), `accepted` (the suggestion) or `corrected` (another label than the suggestion); see [Suggested labels](#suggested-labels) |
+| `suggested` | What the tagger suggested, or `null` when it suggested nothing |
+| `suggestedBy` | Where the suggestion came from: `carry` (the pod's last label), `record` (a seeded pod record) or `pod-state@<version>`; `null` with no suggestion |
+| `suggestedConfidence` | The model's confidence when the model made the suggestion, else `null` |
 | `image` | The photo's path in the archive, or `null` when it isn't there (exported without photos, pruned, or a demo still) |
 | `width`, `height` | The photo's size in pixels, read from its JPEG header; `null` when the photo can't be read |
 | `region` | The pod's crop in the photo's pixels, `x`, `y`, `w`, `h` with the origin top left; `null` when the photo can't be read |
