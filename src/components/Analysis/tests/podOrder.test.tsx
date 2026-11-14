@@ -23,7 +23,7 @@ vi.mock('@/src/utils/trpc', () => ({
 }))
 
 const swapped = {
-  slots: [{ slot: 2, code: 'oo||', tower: 'Basil', record: 'Thyme', plan: 'Thyme' }, { slot: 7, code: 'o|hh', tower: 'Thyme', record: 'Basil', plan: 'Basil' }],
+  slots: [{ slot: 2, code: 'oo||', tower: 'Basil', from: 'own', record: 'Thyme', plan: 'Thyme' }, { slot: 7, code: 'o|hh', tower: 'Thyme', from: 'shared', record: 'Basil', plan: 'Basil' }],
   recordSwaps: [[2, 7]],
   recordsUnresolved: [],
   moves: [[2, 7]],
@@ -53,10 +53,12 @@ describe('PodOrder (#224)', () => {
     state.data = swapped
     render(<PodOrder />)
     expect(screen.getByTestId('order-2').textContent).toBe('Pod 2 holds Basil by its code · the record says Thyme · the plan says Thyme')
+    // A pod known only by the shared table (#259) says so; its fix still waits for the owner.
+    expect(screen.getByTestId('order-7').textContent).toBe('Pod 7 holds Thyme by a known code other units confirmed · the record says Basil · the plan says Basil')
     expect(screen.getByTestId('fix-records').textContent).toContain('Swap the records of pod 2 ↔ pod 7. Each plant keeps its sowing date and status.')
     expect(screen.getByTestId('fix-moves').textContent).toContain('Move the pods to match Autumn')
     expect(screen.getByTestId('fix-moves').textContent).toContain('On the tower, swap pod 2 ↔ pod 7, then read the codes again.')
-    expect(screen.getByText('13 pods without a confirmed code are left alone.')).toBeTruthy()
+    expect(screen.getByText('13 pods without a known code are left alone.')).toBeTruthy()
     expect(orderSummary(swapped as never)).toBe('Pods 2, 7 don\'t match their dot codes')
   })
 
@@ -76,14 +78,14 @@ describe('PodOrder (#224)', () => {
   })
 
   it('says what neither fix can settle, and that with no plan there is nothing to move to', () => {
-    state.data = { ...swapped, slots: [{ slot: 9, code: 'oo||', tower: 'Basil', record: 'Kale', plan: null }], recordSwaps: [], recordsUnresolved: [9], moves: [], movesUnresolved: [], plan: null, unknown: 1 }
+    state.data = { ...swapped, slots: [{ slot: 9, code: 'oo||', tower: 'Basil', from: 'own', record: 'Kale', plan: null }], recordSwaps: [], recordsUnresolved: [9], moves: [], movesUnresolved: [], plan: null, unknown: 1 }
     render(<PodOrder />)
     expect(screen.getByTestId('order-9').textContent).toBe('Pod 9 holds Basil by its code · the record says Kale')
     expect(screen.getByText('No swap of records fixes this.')).toBeTruthy()
     expect(screen.getByText('Pod 9: no other read pod\'s record has that plant, so these stay as they are.')).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Update records' })).toBeNull()
     expect(screen.getByText('No plan has been applied, so there is nothing to move them to.')).toBeTruthy()
-    expect(screen.getByText('1 pod without a confirmed code is left alone.')).toBeTruthy()
+    expect(screen.getByText('1 pod without a known code is left alone.')).toBeTruthy()
   })
 
   it('names a plan pod no swap on the tower can fill', () => {

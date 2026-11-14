@@ -166,17 +166,37 @@ full-size pod-ID still on each camera and reads it. That's slow on a Pi Zero,
 and a camera whose still is dark, damaged or fails keeps its last reads. Each
 row shows what the pod reads as and the plant that code is:
 
-- With no plant confirmed for the code, it offers the pod record's plant as
-  a guess (`Basil?`). **Confirm** saves the pair.
+- With no plant confirmed for the code, it offers the
+  [shared table](#shared-pod-codes)'s plant as a known code
+  (`Basil · known code`), or else the pod record's plant as a guess
+  (`Basil?`). **Confirm** saves the pair.
 - **Correct** (or **Say which**, when the pod has no plant) saves the code
   as another plant.
-- A confirmed code shows its plant with a tick.
+- A confirmed code shows its plant with a tick. If the shared table names
+  another plant for it, the row says so; yours is kept.
 
 The unit also reads them once a day, during the 12:00 hour local time, when
 the grow light is most likely on.
 
 Only pairs the owner has confirmed are kept, and confirming or correcting one
 never changes a pod's record or a plan.
+
+#### Shared pod codes
+
+Gardyn's codes are the same on every unit, so core ships a table of codes
+other owners confirmed (#259), `src/vision/podCodes.json`. It is bundled with
+each release and reaches a unit only through an update: a unit never fetches
+it. Each entry has the code, the plant (a name from the plant catalog), how
+many units named that plant, and a status:
+
+- `confirmed`: two or more units agree, or a maintainer checked a crop.
+- `pending`: one unit so far. Never suggested.
+- `ambiguous`: units name different plants for the code. Never suggested.
+
+What a code is comes from, in order: your confirmed pair, then a `confirmed`
+shared entry, then the pod record. A known code is still only a suggestion:
+it needs **Confirm**, which saves your own pair, before anything counts it as
+yours. The dataset export carries your confirmed pairs in `pod_codes.json`.
 
 ### Pods out of order
 
@@ -194,9 +214,11 @@ each pod and offers two fixes:
 - **Move the pods to match the plan**: the swaps to make on the tower by
   hand, for example *swap pod 2 ↔ pod 7*. Read the codes again after.
 
-Only pods with a confirmed code take part. An unread pod, or one whose code
-has no confirmed plant, is never moved or corrected, and a pod that would need
-one is listed as one neither fix can settle. Scripts use
+Only pods with a known code take part: your confirmed pair, else a
+`confirmed` entry in the shared table (the list says *by a known code other
+units confirmed*). Either fix still waits for you. An unread pod, or one whose
+code is neither, is never moved or corrected, and a pod that would need one is
+listed as one neither fix can settle. Scripts use
 `GET /api/vision/pod-order` and `POST /api/vision/pod-order/fix` with the
 `key` it returned. Scripts use `GET /api/vision/pod-codes`,
 `POST /api/vision/pod-codes/read`, `PUT /api/vision/pod-codes/{code}` with
@@ -216,6 +238,8 @@ under one folder, `seedypod-<unit>-<yyyymmdd from>-<yyyymmdd to>/`:
 - `labels.jsonl`: one labelled pod per line (see below).
 - `regions.json`: every pod's box per camera, as fractions of the frame.
 - `pods.json` and `grow_cycles.json`: what was planted where, and when.
+- `pod_codes.json`: every dot code → plant pair you confirmed (`code`,
+  `plant`, `confirmedAt`), whenever it was confirmed (`counts.podCodes`).
 - `images/<capture id>.jpg`: the photos.
 - `README.md`: the layout above, in the archive itself.
 
