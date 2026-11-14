@@ -17,6 +17,7 @@ import { podRegions, type PodRegions } from '@/src/vision/regions'
 import { LabelPods } from './LabelPods'
 import { LeafCover } from './LeafCover'
 import { PodBounds } from './PodBounds'
+import { PodCard, PodHits, stateGuess, type Pod, type Reading, type Trend } from './PodCard'
 
 const pct = (v: number) => `${Math.round(v * 100)}%`
 const key = (a: { analyzer: string, version: number }) => `${a.analyzer}@${a.version}`
@@ -68,10 +69,14 @@ export function AnalysisPage() {
   const analyzers = trpc.vision.analyzers.useQuery()
   const status = trpc.vision.status.useQuery(undefined, { refetchInterval: 5000 })
   const pods = trpc.grow.pods.useQuery()
+  const trends = trpc.vision.podTrends.useQuery()
   const [exporting, setExporting] = useState(false)
   const [picked, setPicked] = useState<string | null>(null)
   const [shown, setShown] = useState<Shown>('both')
   const [view, setView] = useState<View>('photo')
+  // The pod picked on a photo: its card stays open and the chart below follows it.
+  const [pinned, setPinned] = useState<number | null>(null)
+  const [slot, setSlot] = useState(1)
   const latest = [useLatest('upper'), useLatest('lower')]
   const calibration = useCalibration()
   const st = status.data
@@ -118,6 +123,16 @@ export function AnalysisPage() {
               view={view}
               analyzer={selected && listingKey(selected)}
               empty={slot => pod(slot)?.status === 'empty'}
+              pod={pod}
+              trend={s => trends.data?.find(t => t.slot === s)}
+              analyzers={list}
+              colorOf={colorOf}
+              pinned={pinned}
+              onPick={(s) => {
+                setPinned(p => (p === s ? null : s))
+                setSlot(s)
+              }}
+              onUnpin={() => setPinned(null)}
               boxes={calibration.boxes(l.camera)}
               calibrated={calibration.calibrated(l.camera)}
               onChange={calibration.draft ? (slot, r) => calibration.move(l.camera, slot, r) : undefined}
@@ -131,7 +146,7 @@ export function AnalysisPage() {
       <LeafCover capturedAt={latest.map(l => l.frame?.ts).filter((t): t is string => !!t).sort().at(-1) ?? null} />
       <LabelPods boxes={calibration.boxes} />
       <PerPod analyzers={list} latest={cameras} colorOf={colorOf} plant={slot => pod(slot)?.plant ?? '—'} empty={slot => pod(slot)?.status === 'empty'} />
-      <ComparePod colorOf={colorOf} />
+      <ComparePod colorOf={colorOf} slot={slot} onSlot={setSlot} />
 
       {exporting && (
         <Modal open onClose={() => setExporting(false)} title="Export a dataset" icon={Download}>
@@ -142,12 +157,23 @@ export function AnalysisPage() {
   )
 }
 
-/** One camera's still, with the pod bounds and the chosen analyser's reading per pod drawn over it on request. */
-function Still({ latest, view, analyzer, empty, boxes, calibrated, onChange }: {
+/**
+ * One camera's still, with the pod bounds and the chosen analyser's reading
+ * per pod drawn over it on request, and a card of everything known about a
+ * pod when it is hovered or picked.
+ */
+function Still({ latest, view, analyzer, empty, pod, trend, analyzers, colorOf, pinned, onPick, onUnpin, boxes, calibrated, onChange }: {
   latest: Latest
   view: View
   analyzer?: string
   empty: (slot: number) => boolean
+  pod: (slot: number) => Pod | undefined
+  trend: (slot: number) => Trend | undefined
+  analyzers: Listing[]
+  colorOf: (k: string) => string
+  pinned: number | null
+  onPick: (slot: number) => void
+  onUnpin: () => void
   boxes: PodRegions
   calibrated: boolean
   onChange?: (slot: number, r: Rect) => void
@@ -155,6 +181,16 @@ function Still({ latest, view, analyzer, empty, boxes, calibrated, onChange }: {
   const { camera, frame, rows, states } = latest
   // The box takes the still's own shape once it loads, so the bounds sit where the analysers put them.
   const [ratio, setRatio] = useState(4 / 3)
+  const [hovered, setHovered] = useState<number | null>(null)
+  const shown = onChange ? null : hovered ?? pinned
+  const box = shown === null ? undefined : boxes[shown]
+  const order = analyzers.map(listingKey)
+  const labels = Object.fromEntries(analyzers.map(a => [listingKey(a), a.label]))
+  const rank = (k: string) => (order.includes(k) ? order.indexOf(k) : order.length)
+  const readings = (slot: number): Reading[] => [...rows, ...states]
+    .filter(r => r.slot === slot)
+    .sort((a, b) => rank(key(a)) - rank(key(b)))
+    .map(r => ({ key: key(r), label: labels[key(r)] ?? key(r), color: colorOf(key(r)), text: r.metric === 'pod_state' ? stateGuess(r) : pct(r.value) }))
   const reading = (slot: number) => {
     const state = states.find(r => r.slot === slot && key(r) === analyzer)
     if (state) return stateText(state).split(' · ')[0]
@@ -179,6 +215,10 @@ function Still({ latest, view, analyzer, empty, boxes, calibrated, onChange }: {
             )
           : <div className="flex size-full items-center justify-center p-4 text-center text-[13px] text-fg-3">No photos from this camera yet.</div>}
         {frame && view === 'bounds' && <PodBounds boxes={boxes} label={reading} onChange={onChange} />}
+        {frame && !onChange && <PodHits boxes={boxes} shown={shown} onHover={setHovered} onPick={onPick} />}
+        {frame && shown !== null && box && (
+          <PodCard slot={shown} box={box} pod={pod(shown)} trend={trend(shown)} readings={readings(shown)} pinned={shown === pinned} onClose={onUnpin} />
+        )}
       </div>
       <figcaption className="flex flex-wrap gap-x-2 text-xs text-fg-3">
         <span className="text-fg-2">{title(camera)}</span>
@@ -417,8 +457,7 @@ function Calibrate({ c, cameras }: { c: Calibration, cameras: Camera[] }) {
   )
 }
 
-function ComparePod({ colorOf }: { colorOf: (k: string) => string }) {
-  const [slot, setSlot] = useState(1)
+function ComparePod({ colorOf, slot, onSlot }: { colorOf: (k: string) => string, slot: number, onSlot: (slot: number) => void }) {
   const cmp = trpc.vision.compare.useQuery({ slot, metric: 'green_fraction', limit: 200 })
   const states = trpc.vision.compare.useQuery({ slot, metric: 'pod_state', limit: 1 })
   const series = (cmp.data ?? []).map(s => ({ name: key(s), color: colorOf(key(s)), points: s.points.map(p => ({ x: Date.parse(p.ts), y: p.value })) }))
@@ -426,7 +465,7 @@ function ComparePod({ colorOf }: { colorOf: (k: string) => string }) {
     <Panel>
       <div className="flex flex-wrap items-center gap-3">
         <span className="flex-1 text-[15px] font-medium">One pod over time</span>
-        <SelectValue label="Pod" value={slot} options={SLOTS} onChange={setSlot} />
+        <SelectValue label="Pod" value={slot} options={SLOTS} onChange={onSlot} />
       </div>
       <TimeChart series={series} height={180} yMin={0} yMax={1} formatY={pct} formatX={x => new Date(x).toLocaleDateString()} />
       {series.length > 0 && (

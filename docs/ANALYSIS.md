@@ -97,6 +97,12 @@ both cameras side by side (stacked on a phone), with three pickers:
 - **View**: the photo, or **Pod bounds** drawn over it with the chosen
   analyser's reading for each pod.
 
+Hover over a pod in either view (or focus it from the keyboard) for a card
+with everything known about it: the plant, its status and age, every
+analyser's reading on that photo (a learned analyser's runner-up too when it
+is close), the trend with its recent photos and the pod's note. Click or tap
+the pod to keep the card open and chart that pod under **One pod over time**.
+
 Below it, **Per pod, latest frames** lists every pod on the cameras shown in
 one table, with every analyser's number from its camera's newest still, and
 **One pod over time** draws one line per analyser.
