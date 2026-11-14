@@ -10,7 +10,7 @@
 
 /** About 300 stills at the unit's 1280×960 JPEG size. */
 export const CACHE_CAP_BYTES = 64 * 1024 * 1024
-const DB_NAME = 'seedypod-frames'
+const DB_NAME = 'thryve-frames'
 const BLOBS = 'blobs'
 const META = 'meta'
 

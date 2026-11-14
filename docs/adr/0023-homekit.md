@@ -33,7 +33,7 @@ of field fixes to get right, and those lessons carry over:
   published on the Pod's avahi build. sleepypod switched to ciao, which
   coexists with `avahi-daemon` on port 5353.
 
-seedypod differs in four ways that matter here:
+thryve differs in four ways that matter here:
 
 - The unit is a Pi Zero W: ARMv6, one core, 512 MB.
 - Every actuator command must pass the safety layer (AGENTS.md), and the light
@@ -95,9 +95,9 @@ The set is deliberately small. Dosing pumps and pH/EC have no HomeKit
 service that doesn't misrepresent them, and dosing has its own safety design
 (ADR 0014).
 
-### Identity: sleepypod ADR 0020, with a seedypod seed chain
+### Identity: sleepypod ADR 0020, with a thryve seed chain
 
-HKDF-SHA256 over a per-unit seed, with salt `seedypod-homekit-v1`, derives:
+HKDF-SHA256 over a per-unit seed, with salt `thryve-homekit-v1`, derives:
 
 - `username`: 6 bytes, locally administered, unicast.
 - The setup code: 8 digits. HAP's banned codes are rejected, with a bounded
@@ -143,8 +143,8 @@ change:
   `wasPaired`, which is written on hap-nodejs's `paired` event or on a boot
   that finds pairings, but there are none on disk.
 
-[sleepypod](https://sleepypod.github.io/core/settings/homekit/) polled every 30 s for the `wasPaired` marker. seedypod uses the
-events instead. seedypod has no identities from before ADR 0020, so
+[sleepypod](https://sleepypod.github.io/core/settings/homekit/) polled every 30 s for the `wasPaired` marker. thryve uses the
+events instead. thryve has no identities from before ADR 0020, so
 sleepypod's legacy-migration branch isn't ported.
 
 ### mDNS: ciao, as in sleepypod
@@ -204,7 +204,7 @@ identity.
   one pairs, writes reach the light and pump, pairings survive a restart, and
   a removal rotates the identity.
 - **Status update (2026-11-09):** pairing from the Home app has since worked on
-  the bring-up unit (Pi Zero W, seedypod OS). ciao's CPU use there and whether
+  the bring-up unit (Pi Zero W, thryve OS). ciao's CPU use there and whether
   `HOMEKIT_BIND` is needed haven't been measured.
 
 ## Amendment (2026-11-08): a "Tank low" sensor next to the battery
@@ -232,7 +232,7 @@ and that raises no alarm:
 
 Home Assistant already had both entities from hald's discovery (ADR 0007):
 `sensor.<unit>_water_level` (`%`, `state_class: measurement`) on
-`seedypod/<unit>/sensor/water_level_pct`, and `binary_sensor.<unit>_water_low`
+`thryve/<unit>/sensor/water_level_pct`, and `binary_sensor.<unit>_water_low`
 (`device_class: problem`) on the `water_low` alert topic. Core doesn't publish
 them again (ADR 0013).
 

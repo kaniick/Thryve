@@ -26,7 +26,7 @@ export interface MqttLike {
 export interface MqttHalClientOptions {
   unitId: string
   mqtt: MqttLike
-  /** Base URL of hald's HTTP server for stills, e.g. http://seedypod.local:3001 */
+  /** Base URL of hald's HTTP server for stills, e.g. http://thryve.local:3001 */
   httpBase: string
   /** How long to wait for the daemon to echo a new actuator state. */
   commandTimeoutMs?: number
@@ -145,8 +145,8 @@ export class MqttHalClient implements HalClient {
     // First: if hald can't be reached, the last still's count mustn't count again.
     this.damaged.set(camera, 0)
     const r = await this.fetchImpl(`${this.o.httpBase}/camera/${camera}.jpg`)
-    this.damaged.set(camera, Number(r.headers.get('x-seedypod-damaged-frames')) || 0)
-    const boots = /^(\d+)\/(\d+)$/.exec(r.headers.get('x-seedypod-hub-boots') ?? '')
+    this.damaged.set(camera, Number(r.headers.get('x-thryve-damaged-frames')) || 0)
+    const boots = /^(\d+)\/(\d+)$/.exec(r.headers.get('x-thryve-hub-boots') ?? '')
     this.boots = boots ? { missing: Number(boots[1]), total: Number(boots[2]) } : null
     // hald's 503 says why, and that's what the alert should show.
     if (!r.ok) throw new Error((await r.text().catch(() => '')).trim() || `HTTP ${r.status}`)

@@ -181,7 +181,7 @@ export class MirroredSink implements BlobSink {
   async test(): Promise<{ ok: boolean, detail: string }> {
     const remote = this.remote()
     if (!remote) return { ok: false, detail: 'the mirror is not configured' }
-    const key = `.seedypod-probe-${Date.now()}`
+    const key = `.thryve-probe-${Date.now()}`
     try {
       await remote.put(key, new TextEncoder().encode('ok'))
       const back = await remote.get(key)

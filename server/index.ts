@@ -40,7 +40,12 @@ const PORT = Number(process.env.PORT ?? 3000)
 const HOST = process.env.HOST ?? '0.0.0.0'
 const DATA_DIR = process.env.DATA_DIR ?? './data'
 
-const dbPath = process.env.DATABASE_URL ?? `${DATA_DIR}/seedypod.db`
+const dbPath = (() => {
+  if (process.env.DATABASE_URL) return process.env.DATABASE_URL
+  const next = `${DATA_DIR}/thryve.db`
+  const legacy = `${DATA_DIR}/seedypod.db`
+  return existsSync(next) || !existsSync(legacy) ? next : legacy
+})()
 // Only on a unit, so `pnpm dev` and the tests see everything.
 const logging = new RecordingPolicy({ path: policyPath(process.env, dbPath) })
 if (process.env.NODE_ENV === 'production') installRecordingPolicy(logging)
@@ -87,9 +92,9 @@ const backup = new BackupService({
   sources: nodeBackupSources({ paths: backupPaths(process.env, DATA_DIR), snapshot: dest => store.backupTo(dest), migrationsFolder: defaultMigrationsFolder() }),
 })
 // Restores go through the root helper scripts/install puts in /usr/local/sbin (ADR-0021).
-const restore = new RestoreClient({ command: restoreCommand(), workDir: process.env.SEEDYPOD_RESTORE_WORK || '/var/lib/seedypod-restore', uploadDir: DATA_DIR })
+const restore = new RestoreClient({ command: restoreCommand(), workDir: process.env.THRYVE_RESTORE_WORK || '/var/lib/thryve-restore', uploadDir: DATA_DIR })
 // Updates go through the root helper scripts/install puts in /usr/local/sbin (ADR-0026).
-const update = new UpdateClient({ command: updateCommand(), workDir: process.env.SEEDYPOD_UPDATE_WORK || '/var/lib/seedypod-update', version, events })
+const update = new UpdateClient({ command: updateCommand(), workDir: process.env.THRYVE_UPDATE_WORK || '/var/lib/thryve-update', version, events })
 // HomeKit (ADR 0023): off until turned on in Settings; hap-nodejs loads only then. Its files sit next to the database so backups carry them.
 const homekit = new HomeKitService({ store, hal, events, version, dir: join(DATA_DIR, 'homekit') })
 // Core-level Home Assistant bridge (ADR-0013): dormant until settings.mqttUrl is set; reconnects on settings change.
@@ -102,12 +107,12 @@ const core = createCore({ hal, store, events, version, sink: mirror, mirror, bac
 const { app, injectWebSocket } = createApp({ ctx: core.ctx, staticRoot: './web/dist' })
 
 const server = serve({ fetch: app.fetch, port: PORT, hostname: HOST }, (info) => {
-  console.log(`seedypod core ${core.ctx.version} listening on http://${info.address}:${info.port}`)
+  console.log(`thryve core ${core.ctx.version} listening on http://${info.address}:${info.port}`)
 })
 injectWebSocket(server)
 flushCompileCacheSoon()
 void homekit.startIfEnabled()
-// Bonjour `_seedypod._tcp` for the iOS app (ADR-0017); SEEDYPOD_MDNS=0 turns it off.
+// Bonjour `_thryve._tcp` for the iOS app (ADR-0017); THRYVE_MDNS=0 turns it off.
 const mdns = new CoreAdvertiser({ store, hal, events, version, port: PORT, host: HOST, hostname: hostname() })
 void mdns.start()
 

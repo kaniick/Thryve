@@ -4,7 +4,7 @@
 //! (scaled down where the crops allow), crops every pod, runs every enabled
 //! pod-state revision and prints JSON. It is a separate binary from `hald`
 //! and links none of it (ADR 0004, ADR 0019); core's TypeScript runner is the
-//! fallback, and both read the same `seedypod-cnn` weights files.
+//! fallback, and both read the same `thryve-cnn` weights files.
 
 pub mod cnn;
 pub mod dotcode;

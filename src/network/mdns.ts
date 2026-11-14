@@ -1,5 +1,5 @@
 /**
- * Bonjour advertisement for core (ADR-0017): `_seedypod._tcp` on the HTTP port,
+ * Bonjour advertisement for core (ADR-0017): `_thryve._tcp` on the HTTP port,
  * so the iOS app finds the unit with NWBrowser instead of a typed-in address.
  * TXT `id` is the unit, `v` core's version, `auth` whether off-host requests
  * need the API key. TXT follows the API key setting and hald's unit id live.
@@ -8,11 +8,12 @@
  * starts. A failure is logged and core carries on without it.
  */
 import type { HalClient } from '../hardware/types'
+import { envValue } from '../lib/legacyEnv'
 import type { EventBus } from '../lib/eventBus'
 import type { Store } from '../store/types'
 
 /** ciao prefixes the underscore and appends `._tcp`. */
-export const SERVICE_TYPE = 'seedypod'
+export const SERVICE_TYPE = 'thryve'
 
 export interface CoreTxt {
   id: string
@@ -46,9 +47,9 @@ export interface CiaoLike {
 
 export type Advertise = (o: AdvertiseOptions) => Promise<Advertisement>
 
-/** Off with `SEEDYPOD_MDNS=0`, under Vitest, and when core listens only on loopback. */
+/** Off with `THRYVE_MDNS=0`, under Vitest, and when core listens only on loopback. */
 export function mdnsEnabled(env: NodeJS.ProcessEnv, host: string): boolean {
-  const flag = (env.SEEDYPOD_MDNS ?? '').trim().toLowerCase()
+  const flag = (envValue(env, 'THRYVE_MDNS') ?? '').trim().toLowerCase()
   if (flag === '0' || flag === 'false' || flag === 'off') return false
   if (env.VITEST || env.NODE_ENV === 'test') return false
   return !(host === 'localhost' || host === '::1' || host.startsWith('127.'))
@@ -65,7 +66,7 @@ export function coreTxt(o: { store: Store, hal: HalClient, version: string, env:
 /** One DNS label: lowercase letters, digits and dashes, at most 63 octets. */
 export function hostLabel(id: string): string {
   const slug = id.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 58).replace(/-+$/, '')
-  return `${slug || 'seedypod'}-core`
+  return `${slug || 'thryve'}-core`
 }
 
 export function ciaoAdvertise(load: () => Promise<CiaoLike> = async () => (await import('@homebridge/ciao')).default as unknown as CiaoLike): Advertise {
@@ -122,7 +123,7 @@ export class CoreAdvertiser {
     const txt = this.current()
     try {
       const ad = await (this.o.advertise ?? ciaoAdvertise())({
-        name: this.o.store.settings.get().unitName.trim() || 'seedypod',
+        name: this.o.store.settings.get().unitName.trim() || 'Thryve',
         hostname: hostLabel(txt.id),
         port: this.o.port,
         txt,

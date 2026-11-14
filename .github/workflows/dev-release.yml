@@ -103,7 +103,7 @@ jobs:
 
       - name: Create deploy tarball
         run: |
-          tar czf /tmp/seedypod-core.tar.gz \
+          tar czf /tmp/thryve-core.tar.gz \
             --exclude='node_modules' \
             --exclude='.git' \
             --exclude='.env*' \
@@ -113,23 +113,23 @@ jobs:
             --exclude='hal/target' \
             --exclude='.claude' \
             .
-          mv /tmp/seedypod-core.tar.gz .
-          sha256sum seedypod-core.tar.gz > seedypod-core.tar.gz.sha256
+          mv /tmp/thryve-core.tar.gz .
+          sha256sum thryve-core.tar.gz > thryve-core.tar.gz.sha256
 
       - name: Check the tarball has no Git LFS pointers
         # Without lfs: true on checkout, the brand PNGs ship as pointer text and the logo breaks on the unit.
         run: |
-          mkdir -p "$RUNNER_TEMP/tarball" && tar xzf seedypod-core.tar.gz -C "$RUNNER_TEMP/tarball"
+          mkdir -p "$RUNNER_TEMP/tarball" && tar xzf thryve-core.tar.gz -C "$RUNNER_TEMP/tarball"
           if grep -rlx 'version https://git-lfs.github.com/spec/v1' "$RUNNER_TEMP/tarball"; then
-            echo "::error::Git LFS pointer files in seedypod-core.tar.gz; check out with lfs: true"
+            echo "::error::Git LFS pointer files in thryve-core.tar.gz; check out with lfs: true"
             exit 1
           fi
           [ "$(file -b --mime-type "$RUNNER_TEMP/tarball/web/dist/brand/icon-64.png")" = image/png ]
 
       - uses: actions/upload-artifact@v6
         with:
-          name: seedypod-core
-          path: seedypod-core.tar.gz
+          name: thryve-core
+          path: thryve-core.tar.gz
           retention-days: 1
 
       - name: Download hald and podvision binaries
@@ -157,16 +157,16 @@ jobs:
           **Commit:** ${{ github.sha }}
           **Title:** $(git log -1 --format=%s)
 
-          Flash \`seedypod-os.img.xz\`, or install with \`scripts/install-hal --version dev-latest\`, then \`scripts/install --branch dev\`. The image lags a push by as long as it takes to build: \`seedypod-os-manifest.txt\` says which commit it's from."
+          Flash \`thryve-os.img.xz\`, or install with \`scripts/install-hal --version dev-latest\`, then \`scripts/install --branch dev\`. The image lags a push by as long as it takes to build: \`thryve-os-manifest.txt\` says which commit it's from."
           if gh release view dev-latest >/dev/null 2>&1; then
             # Everything but the image, which os-image replaces once it's built. Deleting
             # it here would leave a gap on every push, and no image at all on a busy day.
-            gh release view dev-latest --json assets --jq '.assets[].name' | grep -v '^seedypod-os' \
+            gh release view dev-latest --json assets --jq '.assets[].name' | grep -v '^thryve-os' \
               | xargs -r -n1 gh release delete-asset dev-latest --yes
-            gh release upload dev-latest seedypod-core.tar.gz seedypod-core.tar.gz.sha256 release-assets/* --clobber
+            gh release upload dev-latest thryve-core.tar.gz thryve-core.tar.gz.sha256 release-assets/* --clobber
             gh release edit dev-latest --target "${{ github.sha }}" --title "Dev (latest)" --prerelease --notes "$notes"
           else
-            gh release create dev-latest seedypod-core.tar.gz seedypod-core.tar.gz.sha256 release-assets/* \
+            gh release create dev-latest thryve-core.tar.gz thryve-core.tar.gz.sha256 release-assets/* \
               --target "${{ github.sha }}" --title "Dev (latest)" --prerelease --notes "$notes"
           fi
 

@@ -49,7 +49,7 @@ export function initStorage(hap: Hap, dir: string): void {
 }
 
 /** HAP names: letters, digits, spaces and apostrophes, at least two long, starting and ending with a letter or digit. */
-export function hapName(name: string, fallback = 'seedypod'): string {
+export function hapName(name: string, fallback = 'Thryve'): string {
   const clean = name.replace(/[^\p{L}\p{N} ']+/gu, ' ').replace(/\s+/g, ' ').slice(0, 64).replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '')
   return clean.length >= 2 ? clean : fallback
 }
@@ -72,10 +72,10 @@ function accessoriesFor(d: AccessoryDeps): ReadonlyArray<{ id: string, name: str
 export function buildBridge(o: Pick<BridgeOptions, 'identity' | 'name' | 'version'> & { deps: AccessoryDeps }): { bridge: Bridge, stops: Array<() => void> } {
   const { Accessory, Bridge, Characteristic, Service, uuid } = o.deps.hap
   const { username } = o.identity
-  const bridge = new Bridge(o.name, uuid.generate(`seedypod:${username}`))
+  const bridge = new Bridge(o.name, uuid.generate(`thryve:${username}`))
   bridge.getService(Service.AccessoryInformation)
-    ?.setCharacteristic(Characteristic.Manufacturer, 'seedypod')
-    .setCharacteristic(Characteristic.Model, 'seedypod core')
+    ?.setCharacteristic(Characteristic.Manufacturer, 'Thryve')
+    .setCharacteristic(Characteristic.Model, 'Thryve core')
     .setCharacteristic(Characteristic.SerialNumber, username)
     .setCharacteristic(Characteristic.FirmwareRevision, firmware(o.version))
   const stops: Array<() => void> = []
@@ -83,9 +83,9 @@ export function buildBridge(o: Pick<BridgeOptions, 'identity' | 'name' | 'versio
     for (const a of accessoriesFor(o.deps)) {
       const built = a.build(o.deps)
       stops.push(built.stop)
-      const acc = new Accessory(a.name, uuid.generate(`seedypod:${username}:${a.id}`))
+      const acc = new Accessory(a.name, uuid.generate(`thryve:${username}:${a.id}`))
       acc.getService(Service.AccessoryInformation)
-        ?.setCharacteristic(Characteristic.Manufacturer, 'seedypod')
+        ?.setCharacteristic(Characteristic.Manufacturer, 'Thryve')
         .setCharacteristic(Characteristic.Model, a.name)
         .setCharacteristic(Characteristic.SerialNumber, `${username}-${a.id}`)
         .setCharacteristic(Characteristic.FirmwareRevision, firmware(o.version))

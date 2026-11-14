@@ -4,7 +4,7 @@ title: "ADR 0029: Care engine and agent boundary"
 description: "Chores, setup warnings and starter rules come from a deterministic care engine in core that works with no model; an optional LLM agent sits on top over MCP, where it reads, explains, logs tank actions and drafts rules, but never arms a rule or drives the pump or a doser in a loop. Advice is gated on reading quality and age, falls back to a stated calendar guess, and cites the knowledge bundle for every dose and target."
 status: "draft"
 generated: {"by": "claude/opus-5.5", "at": "2026-11-09T18:00:00+00:00"}
-sources: [{"resource": "https://github.com/seedypod/core/issues/172", "title": "#172 Open care agent: reading-driven chores with an optional LLM layer"}, {"resource": "/adr/0011-mcp-and-mhs.md", "title": "ADR 0011: MCP tool design and MHS alignment"}, {"resource": "/adr/0014-auto-dosing-safety.md", "title": "ADR 0014: Auto-dosing safety"}, {"resource": "/adr/0015-event-bus.md", "title": "ADR 0015: Event bus and mutation broadcast"}, {"resource": "/adr/0020-autopilot-reactive-automations.md", "title": "ADR 0020: Autopilot — reactive automations"}, {"resource": "/adr/0022-harvest-outlook.md", "title": "ADR 0022: Harvest outlook"}, {"resource": "https://github.com/seedypod/core/blob/dev/knowledge/nutrients/index.md", "title": "Knowledge: Nutrients"}]
+sources: [{"resource": "https://github.com/kaniick/Thryve/issues/172", "title": "#172 Open care agent: reading-driven chores with an optional LLM layer"}, {"resource": "/adr/0011-mcp-and-mhs.md", "title": "ADR 0011: MCP tool design and MHS alignment"}, {"resource": "/adr/0014-auto-dosing-safety.md", "title": "ADR 0014: Auto-dosing safety"}, {"resource": "/adr/0015-event-bus.md", "title": "ADR 0015: Event bus and mutation broadcast"}, {"resource": "/adr/0020-autopilot-reactive-automations.md", "title": "ADR 0020: Autopilot — reactive automations"}, {"resource": "/adr/0022-harvest-outlook.md", "title": "ADR 0022: Harvest outlook"}, {"resource": "https://github.com/kaniick/Thryve/blob/dev/knowledge/nutrients/index.md", "title": "Knowledge: Nutrients"}]
 ---
 
 # ADR 0029: Care engine and agent boundary
@@ -16,7 +16,7 @@ sources: [{"resource": "https://github.com/seedypod/core/issues/172", "title": "
 
 Gardyn's Kelby is sold as an "AI gardener", but owners describe a fixed
 timeline. It never asks for food, or it asks for a top-off several days running
-while the tank is full. seedypod already measures the tank, can read pH and EC
+while the tank is full. thryve already measures the tank, can read pH and EC
 probes (EZO-pH 0x63, EZO-EC 0x64), and watches each pod on camera (ADR 0019).
 
 Today the unit's own care is two things:
@@ -94,7 +94,7 @@ Rules:
 - A test checks that every cited note exists and has the cited heading, so a
   renamed note fails CI instead of linking nowhere.
 - A chore with no published interval (cleaning) says its interval is
-  seedypod's guess.
+  thryve's guess.
 
 ### 4. The agent sits on top, over MCP
 

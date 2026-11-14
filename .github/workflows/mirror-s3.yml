@@ -4,7 +4,7 @@ name: Mirror (real S3)
 # against a real S3-compatible bucket, such as Cloudflare R2, because the unit
 # tests only use fakes. It needs four secrets: MIRROR_TEST_ENDPOINT,
 # MIRROR_TEST_BUCKET, MIRROR_TEST_ACCESS_KEY and MIRROR_TEST_SECRET (see
-# seedypod/core#6). Until they are set, the job skips.
+# kaniick/Thryve#6). Until they are set, the job skips.
 
 on:
   schedule:

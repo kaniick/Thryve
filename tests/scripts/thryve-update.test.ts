@@ -15,7 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 // Each test runs the helper several times, and the whole suite runs at once in CI.
 vi.setConfig({ testTimeout: 30_000 })
 
-const helper = resolve(import.meta.dirname, '../../scripts/seedypod-update.cjs')
+const helper = resolve(import.meta.dirname, '../../scripts/thryve-update.cjs')
 const OLD = 'aaaaaaa'
 const NEW = 'bbbbbbb'
 const SHA = `${NEW}${'c'.repeat(33)}`
@@ -46,13 +46,13 @@ function tree(commit: string, overrides: Record<string, string> = {}): Record<st
   return {
     '.git-info': JSON.stringify({ branch: 'dev', commitHash: commit }),
     '.node-version': `${process.versions.node.split('.')[0]}\n`,
-    'package.json': '{"name":"@seedypod/core"}',
+    'package.json': '{"name":"@thryve/core"}',
     'pnpm-lock.yaml': LOCK,
     'server/dist/index.js': `core ${commit}`,
     'web/dist/index.html': `<p>${commit}</p>`,
     'scripts/install': `NODE_22=${process.versions.node}\n`,
-    'scripts/seedypod-update.cjs': `// update helper ${commit}, prefix __PREFIX__\n`,
-    'scripts/seedypod-restore.cjs': `// restore helper ${commit}, prefix __PREFIX__\n`,
+    'scripts/thryve-update.cjs': `// update helper ${commit}, prefix __PREFIX__\n`,
+    'scripts/thryve-restore.cjs': `// restore helper ${commit}, prefix __PREFIX__\n`,
     ...overrides,
   }
 }
@@ -65,21 +65,21 @@ function release(files: Record<string, string>, opts: { sumFile?: boolean | stri
   const r = spawnSync('tar', ['-czf', out, '-C', src, '.'])
   expect(r.status).toBe(0)
   const bytes = readFileSync(out)
-  assets.set('seedypod-core.tar.gz', bytes)
+  assets.set('thryve-core.tar.gz', bytes)
   const { sumFile = true, digest = true } = opts
-  if (sumFile) assets.set('seedypod-core.tar.gz.sha256', Buffer.from(`${typeof sumFile === 'string' ? sumFile : sha(bytes)}  seedypod-core.tar.gz\n`))
-  else assets.delete('seedypod-core.tar.gz.sha256')
-  if (digest) digests.set('seedypod-core.tar.gz', typeof digest === 'string' ? digest : sha(bytes))
-  else digests.delete('seedypod-core.tar.gz')
+  if (sumFile) assets.set('thryve-core.tar.gz.sha256', Buffer.from(`${typeof sumFile === 'string' ? sumFile : sha(bytes)}  thryve-core.tar.gz\n`))
+  else assets.delete('thryve-core.tar.gz.sha256')
+  if (digest) digests.set('thryve-core.tar.gz', typeof digest === 'string' ? digest : sha(bytes))
+  else digests.delete('thryve-core.tar.gz')
 }
 
 beforeEach(async () => {
-  dir = mkdtempSync(join(tmpdir(), 'seedypod-update-'))
-  prefix = join(dir, 'opt/seedypod')
+  dir = mkdtempSync(join(tmpdir(), 'thryve-update-'))
+  prefix = join(dir, 'opt/thryve')
   put(prefix, {
     ...tree(OLD),
-    'data/seedypod.db': 'SQLite format 3\0old',
-    [`node_modules/.seedypod-lock-${process.version}`]: LOCK,
+    'data/thryve.db': 'SQLite format 3\0old',
+    [`node_modules/.thryve-lock-${process.version}`]: LOCK,
     'node_modules/better-sqlite3/package.json': '{"name":"better-sqlite3","main":"index.js"}',
     'node_modules/better-sqlite3/index.js': 'module.exports = class { exec() {} }\n',
     '.env': 'KEEP=1\n',
@@ -99,11 +99,11 @@ beforeEach(async () => {
         tag_name: tag,
         name: tag === 'v1.2.0' ? 'v1.2.0' : 'Dev (latest)',
         published_at: '2026-11-08T00:00:00Z',
-        html_url: `https://github.com/seedypod/core/releases/tag/${tag}`,
+        html_url: `https://github.com/kaniick/Thryve/releases/tag/${tag}`,
         assets: [...assets.keys()].map(name => ({ name, size: assets.get(name)?.length, browser_download_url: `${base}/dl/${name}`, digest: digests.has(name) ? `sha256:${digests.get(name)}` : null })),
       })
     }
-    if (url.pathname.startsWith('/repos/seedypod/core/commits/')) return res.end(releaseCommit)
+    if (url.pathname.startsWith('/repos/kaniick/Thryve/commits/')) return res.end(releaseCommit)
     if (url.pathname.startsWith('/dl/')) {
       const body = assets.get(url.pathname.slice(4))
       if (!body) return json({}, 404)
@@ -126,10 +126,10 @@ beforeEach(async () => {
   writeFileSync(systemctl, `import { appendFileSync, existsSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
 const [verb, unit] = process.argv.slice(2)
 appendFileSync(${JSON.stringify(join(dir, 'systemctl.log'))}, verb + ' ' + unit + '\\n')
-if (unit === 'seedypod-core' && verb === 'stop') writeFileSync(${JSON.stringify(join(dir, 'core-stopped'))}, '')
-if (unit === 'seedypod-core' && verb === 'start') {
+if (unit === 'thryve-core' && verb === 'stop') writeFileSync(${JSON.stringify(join(dir, 'core-stopped'))}, '')
+if (unit === 'thryve-core' && verb === 'start') {
   rmSync(${JSON.stringify(join(dir, 'core-stopped'))}, { force: true })
-  if (readFileSync(${JSON.stringify(p('server/dist/index.js'))}, 'utf8').includes('broken')) writeFileSync(${JSON.stringify(p('data/seedypod.db'))}, 'SQLite format 3\\0migrated')
+  if (readFileSync(${JSON.stringify(p('server/dist/index.js'))}, 'utf8').includes('broken')) writeFileSync(${JSON.stringify(p('data/thryve.db'))}, 'SQLite format 3\\0migrated')
 }
 `)
   // pnpm: logs, then links a better-sqlite3 that loads, unless told to fail.
@@ -145,23 +145,23 @@ writeFileSync('node_modules/fresh', '')
 `)
   writeFileSync(join(dir, 'core.service'), '[Service]\nEnvironment=NODE_ENV=production PORT=3000\nUser=nobody\n')
   envs = {
-    SEEDYPOD_UPDATE_PREFIX: prefix,
-    SEEDYPOD_UPDATE_WORK: join(dir, 'work'),
-    SEEDYPOD_UPDATE_API: base,
-    SEEDYPOD_UPDATE_DOWNLOADS: `${base}/dl/`,
-    SEEDYPOD_UPDATE_CORE_UNIT: join(dir, 'core.service'),
-    SEEDYPOD_UPDATE_HALD_UNIT: join(dir, 'no-hald.service'),
-    SEEDYPOD_UPDATE_PODVISION: join(dir, 'bin/podvision'),
-    SEEDYPOD_UPDATE_CORE_URL: `${base}/core`,
-    SEEDYPOD_UPDATE_HEALTH_TIMEOUT: '15',
-    SEEDYPOD_UPDATE_POLL_MS: '50',
-    SEEDYPOD_UPDATE_SBIN: join(dir, 'sbin'),
-    SEEDYPOD_UPDATE_COMPILE_CACHE: join(dir, 'cache/compile-cache'),
-    SEEDYPOD_UPDATE_BUSY: join(dir, 'run/seedypod-busy'),
-    SEEDYPOD_UPDATE_SHARE: join(dir, 'share'),
-    SEEDYPOD_UPDATE_PNPM: JSON.stringify([process.execPath, pnpm]),
-    SEEDYPOD_UPDATE_DETACH: 'fork',
-    SEEDYPOD_SYSTEMCTL: JSON.stringify([process.execPath, systemctl]),
+    THRYVE_UPDATE_PREFIX: prefix,
+    THRYVE_UPDATE_WORK: join(dir, 'work'),
+    THRYVE_UPDATE_API: base,
+    THRYVE_UPDATE_DOWNLOADS: `${base}/dl/`,
+    THRYVE_UPDATE_CORE_UNIT: join(dir, 'core.service'),
+    THRYVE_UPDATE_HALD_UNIT: join(dir, 'no-hald.service'),
+    THRYVE_UPDATE_PODVISION: join(dir, 'bin/podvision'),
+    THRYVE_UPDATE_CORE_URL: `${base}/core`,
+    THRYVE_UPDATE_HEALTH_TIMEOUT: '15',
+    THRYVE_UPDATE_POLL_MS: '50',
+    THRYVE_UPDATE_SBIN: join(dir, 'sbin'),
+    THRYVE_UPDATE_COMPILE_CACHE: join(dir, 'cache/compile-cache'),
+    THRYVE_UPDATE_BUSY: join(dir, 'run/thryve-busy'),
+    THRYVE_UPDATE_SHARE: join(dir, 'share'),
+    THRYVE_UPDATE_PNPM: JSON.stringify([process.execPath, pnpm]),
+    THRYVE_UPDATE_DETACH: 'fork',
+    THRYVE_SYSTEMCTL: JSON.stringify([process.execPath, systemctl]),
   }
 })
 
@@ -226,7 +226,7 @@ describe('checking', () => {
 
   it('reports a release with no checksum at all, and refuses to start from it', async () => {
     release(tree(NEW), { sumFile: false, digest: false })
-    expect((await run('--check')).out).toMatchObject({ problem: 'the release has no checksum for seedypod-core.tar.gz' })
+    expect((await run('--check')).out).toMatchObject({ problem: 'the release has no checksum for thryve-core.tar.gz' })
     const r = await run('--start')
     expect(r).toMatchObject({ code: 4, out: { code: 'missing-asset' } })
     expect(calls()).toEqual([])
@@ -247,19 +247,19 @@ describe('updating', () => {
     expect(r.err).toContain('matches')
     expect(r).toMatchObject({ code: 0, out: { ok: true, version: `dev@${NEW}`, tag: 'dev-latest' } })
     expect(read('server/dist/index.js')).toBe(`core ${NEW}`)
-    expect(read('data/seedypod.db')).toContain('old')
+    expect(read('data/thryve.db')).toContain('old')
     expect(read('.env')).toBe('KEEP=1\n')
     expect(readFileSync(`${prefix}.previous/code/server/dist/index.js`, 'utf8')).toBe(`core ${OLD}`)
     expect(existsSync(`${prefix}.previous/db`)).toBe(false)
     expect(existsSync(`${prefix}.next`)).toBe(false)
-    expect(calls()).toEqual(['stop seedypod-core', 'start seedypod-core'])
+    expect(calls()).toEqual(['stop thryve-core', 'start thryve-core'])
     expect(status()).toMatchObject({ op: 'update', state: 'done', channel: 'dev', from: { commit: OLD }, to: { tag: 'dev-latest', commit: SHA } })
-    expect(readFileSync(join(dir, 'sbin/seedypod-update'), 'utf8')).toBe(`// update helper ${NEW}, prefix ${prefix}\n`)
-    expect(readFileSync(join(dir, 'sbin/seedypod-restore'), 'utf8')).toContain(`restore helper ${NEW}`)
+    expect(readFileSync(join(dir, 'sbin/thryve-update'), 'utf8')).toBe(`// update helper ${NEW}, prefix ${prefix}\n`)
+    expect(readFileSync(join(dir, 'sbin/thryve-restore'), 'utf8')).toContain(`restore helper ${NEW}`)
     expect(existsSync(join(dir, 'pnpm.log'))).toBe(false)
     expect(readFileSync(work('update.log'), 'utf8')).toContain('dependencies unchanged')
     expect((await run('--status')).out).toMatchObject({ installed: { commit: NEW, tag: 'dev-latest' } })
-    expect(existsSync(join(dir, 'run/seedypod-busy/update'))).toBe(false)
+    expect(existsSync(join(dir, 'run/thryve-busy/update'))).toBe(false)
   })
 
   it('aborts on a checksum mismatch before stopping anything', async () => {
@@ -267,7 +267,7 @@ describe('updating', () => {
     const r = await run('--now')
     expect(r.code).toBe(4)
     expect(r.out).toMatchObject({ ok: false, code: 'checksum' })
-    expect(r.out.error).toMatch(/^seedypod-core\.tar\.gz doesn't match the release's checksum file/)
+    expect(r.out.error).toMatch(/^thryve-core\.tar\.gz doesn't match the release's checksum file/)
     expect(read('server/dist/index.js')).toBe(`core ${OLD}`)
     expect(calls()).toEqual([])
     expect(status()).toMatchObject({ state: 'refused', code: 'checksum' })
@@ -284,18 +284,18 @@ describe('updating', () => {
 
   it('rolls back when the new version fails its health check, database included', async () => {
     release(tree(NEW, { 'server/dist/index.js': 'core broken' }))
-    envs.SEEDYPOD_UPDATE_HEALTH_TIMEOUT = '1'
+    envs.THRYVE_UPDATE_HEALTH_TIMEOUT = '1'
     const r = await run('--now')
     expect(r.code).toBe(1)
     expect(r.out).toMatchObject({ ok: false, code: 'rolled-back' })
     expect(read('server/dist/index.js')).toBe(`core ${OLD}`)
     expect(JSON.parse(read('.git-info'))).toMatchObject({ commitHash: OLD })
-    expect(read('data/seedypod.db')).toBe('SQLite format 3\0old')
-    expect(calls()).toEqual(['stop seedypod-core', 'start seedypod-core', 'stop seedypod-core', 'start seedypod-core'])
+    expect(read('data/thryve.db')).toBe('SQLite format 3\0old')
+    expect(calls()).toEqual(['stop thryve-core', 'start thryve-core', 'stop thryve-core', 'start thryve-core'])
     expect(status()).toMatchObject({ state: 'rolled-back', rolledBack: true })
     expect(String(status().error)).toMatch(/core did not answer within 1 s/)
     expect(existsSync(`${prefix}.previous`)).toBe(false)
-    expect(existsSync(join(dir, 'sbin/seedypod-update'))).toBe(false)
+    expect(existsSync(join(dir, 'sbin/thryve-update'))).toBe(false)
   })
 
   it('installs changed dependencies as core, and puts the old ones back if that fails', async () => {
@@ -303,12 +303,12 @@ describe('updating', () => {
     const ok = await run('--now')
     expect(ok.out).toMatchObject({ ok: true })
     // cwd is the real path, which on macOS is under /private.
-    expect(readFileSync(join(dir, 'pnpm.log'), 'utf8')).toMatch(/^install --prod --frozen-lockfile in .*\/opt\/seedypod\n$/)
+    expect(readFileSync(join(dir, 'pnpm.log'), 'utf8')).toMatch(/^install --prod --frozen-lockfile in .*\/opt\/thryve\n$/)
     // Corepack must not stop to ask before downloading a newer pinned pnpm.
     expect(readFileSync(join(dir, 'pnpm.prompt'), 'utf8')).toBe('0')
     expect(existsSync(p('node_modules/fresh'))).toBe(true)
-    expect(read(`node_modules/.seedypod-lock-${process.version}`)).toContain('zod@4.1.0')
-    expect(existsSync(`${prefix}.previous/node_modules/.seedypod-lock-${process.version}`)).toBe(true)
+    expect(read(`node_modules/.thryve-lock-${process.version}`)).toContain('zod@4.1.0')
+    expect(existsSync(`${prefix}.previous/node_modules/.thryve-lock-${process.version}`)).toBe(true)
 
     // The next release changes them again, and pnpm fails: everything goes back.
     releaseCommit = `${'9'.repeat(7)}${'c'.repeat(33)}`
@@ -317,7 +317,7 @@ describe('updating', () => {
     const bad = await run('--now')
     expect(bad.out).toMatchObject({ ok: false, code: 'rolled-back', error: 'pnpm install failed (exit 1)' })
     expect(read('server/dist/index.js')).toBe(`core ${NEW}`)
-    expect(read(`node_modules/.seedypod-lock-${process.version}`)).toContain('zod@4.1.0')
+    expect(read(`node_modules/.thryve-lock-${process.version}`)).toContain('zod@4.1.0')
     expect(status()).toMatchObject({ state: 'rolled-back' })
   })
 
@@ -339,7 +339,7 @@ describe('updating', () => {
 
   it('refuses a release from before updates from the web, and one missing its build', async () => {
     const old = tree(NEW)
-    delete old['scripts/seedypod-update.cjs']
+    delete old['scripts/thryve-update.cjs']
     release(old)
     expect((await run('--now')).out).toMatchObject({ code: 'needs-install', error: 'this release is older than updating from the web; install it over SSH with scripts/install' })
     const unbuilt = tree(NEW)
@@ -377,7 +377,7 @@ describe('updating', () => {
     expect((await run('--rollback')).code).toBe(0)
     expect(version()).toBe(`dev@${OLD}\n`)
     release(tree(NEW, { 'server/dist/index.js': 'core broken' }))
-    envs.SEEDYPOD_UPDATE_HEALTH_TIMEOUT = '1'
+    envs.THRYVE_UPDATE_HEALTH_TIMEOUT = '1'
     expect((await run('--now')).out).toMatchObject({ code: 'rolled-back' })
     expect(version()).toBe(`dev@${OLD}\n`)
     expect(existsSync(join(dir, 'share/version.new'))).toBe(false)
@@ -399,7 +399,7 @@ describe('updating', () => {
   it('keeps the old login scripts when the update rolls back', async () => {
     put(join(dir, 'share'), { 'login-logo': 'old logo' })
     release(tree(NEW, { 'server/dist/index.js': 'core broken', 'scripts/login-logo/login-logo': `logo ${NEW}` }))
-    envs.SEEDYPOD_UPDATE_HEALTH_TIMEOUT = '1'
+    envs.THRYVE_UPDATE_HEALTH_TIMEOUT = '1'
     expect((await run('--now')).out).toMatchObject({ code: 'rolled-back' })
     expect(readFileSync(join(dir, 'share/login-logo'), 'utf8')).toBe('old logo')
   })
@@ -447,7 +447,7 @@ describe('podvision (#191)', () => {
   }
 
   beforeEach(() => {
-    envs.SEEDYPOD_UPDATE_TARGET = 'arm-unknown-linux-gnueabihf'
+    envs.THRYVE_UPDATE_TARGET = 'arm-unknown-linux-gnueabihf'
   })
 
   it('installs the release\'s podvision, checked', async () => {
@@ -462,7 +462,7 @@ describe('podvision (#191)', () => {
   })
 
   it('updates podvision on armv8l, where hald isn\'t updated, with the 32-bit build', async () => {
-    delete envs.SEEDYPOD_UPDATE_TARGET
+    delete envs.THRYVE_UPDATE_TARGET
     put(dir, { 'armv8l.cjs': 'require(\'node:os\').machine = () => \'armv8l\'\n' })
     envs.NODE_OPTIONS = `--require ${join(dir, 'armv8l.cjs')}`
     podvision('0.2.0')
@@ -475,7 +475,7 @@ describe('podvision (#191)', () => {
     have('0.1.0')
     podvision('0.2.0')
     release(tree(NEW, { 'server/dist/index.js': 'core broken' }))
-    envs.SEEDYPOD_UPDATE_HEALTH_TIMEOUT = '1'
+    envs.THRYVE_UPDATE_HEALTH_TIMEOUT = '1'
     expect(await run('--now')).toMatchObject({ out: { code: 'rolled-back' } })
     expect(readFileSync(installed(), 'utf8')).toContain('podvision 0.1.0')
     rmSync(installed())

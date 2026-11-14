@@ -160,7 +160,7 @@ function Outcome({ status: st, started }: { status: Status, started: boolean }) 
     return <Alert tone="warn" className="mb-3">{`The update to ${to} failed, so the previous version was put back: ${st.error ?? 'unknown error'}`}</Alert>
   }
   if (st.state === 'rollback-failed') {
-    return <Alert tone="danger" className="mb-3">{`The update to ${to} failed and the previous version didn't come back: ${st.error ?? 'unknown error'}. Over SSH, run sudo seedypod-update --rollback.`}</Alert>
+    return <Alert tone="danger" className="mb-3">{`The update to ${to} failed and the previous version didn't come back: ${st.error ?? 'unknown error'}. Over SSH, run sudo thryve-update --rollback.`}</Alert>
   }
   return <InlineError className="mb-3">{`The update didn't start, and nothing changed: ${st.error ?? 'unknown error'}`}</InlineError>
 }

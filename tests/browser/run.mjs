@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 
 const PORT = 3218
-const dataDir = mkdtempSync(join(tmpdir(), 'seedypod-e2e-'))
+const dataDir = mkdtempSync(join(tmpdir(), 'thryve-e2e-'))
 // A stand-in SD card for the flash-writes meter: 1 GB written, a 32 GB card.
 const block = join(dataDir, 'block/mmcblk0')
 mkdirSync(block, { recursive: true })
@@ -22,16 +22,16 @@ writeFileSync(join(etc, 'hal.toml'), 'unit_id = "sim-0001"\n')
 writeFileSync(join(state, 'state.json'), '{"light_level":0}\n')
 const env = {
   ...process.env, PORT: String(PORT), CI: '1', DATA_DIR: dataDir, DATABASE_URL: join(dataDir, 'e2e.db'), FLASH_STAT_PATH: join(block, 'stat'),
-  SEEDYPOD_ETC_DIR: etc, SEEDYPOD_STATE_DIR: state, SEEDYPOD_MOSQUITTO_PASSWD: join(dataDir, 'no-passwd'),
+  THRYVE_ETC_DIR: etc, THRYVE_STATE_DIR: state, THRYVE_MOSQUITTO_PASSWD: join(dataDir, 'no-passwd'),
   // The real restore helper; the specs only reach its checks, so the service commands are a no-op.
-  SEEDYPOD_RESTORE_CMD: JSON.stringify([process.execPath, 'scripts/seedypod-restore.cjs']),
-  SEEDYPOD_RESTORE_DB: join(dataDir, 'e2e.db'), SEEDYPOD_RESTORE_CAPTURES: join(dataDir, 'captures'), SEEDYPOD_RESTORE_HOMEKIT: join(dataDir, 'homekit'),
+  THRYVE_RESTORE_CMD: JSON.stringify([process.execPath, 'scripts/thryve-restore.cjs']),
+  THRYVE_RESTORE_DB: join(dataDir, 'e2e.db'), THRYVE_RESTORE_CAPTURES: join(dataDir, 'captures'), THRYVE_RESTORE_HOMEKIT: join(dataDir, 'homekit'),
   // HomeKit's HAP port, off the default so a real bridge on this machine doesn't collide.
   HOMEKIT_PORT: '51831',
-  SEEDYPOD_RESTORE_WORK: join(dataDir, 'restore'), SEEDYPOD_SYSTEMCTL: JSON.stringify(['true']),
+  THRYVE_RESTORE_WORK: join(dataDir, 'restore'), THRYVE_SYSTEMCTL: JSON.stringify(['true']),
   // The real update helper, pointed at a GitHub that isn't there, so nothing leaves the machine.
-  SEEDYPOD_UPDATE_CMD: JSON.stringify([process.execPath, 'scripts/seedypod-update.cjs']),
-  SEEDYPOD_UPDATE_WORK: join(dataDir, 'update'), SEEDYPOD_UPDATE_API: 'http://127.0.0.1:9',
+  THRYVE_UPDATE_CMD: JSON.stringify([process.execPath, 'scripts/thryve-update.cjs']),
+  THRYVE_UPDATE_WORK: join(dataDir, 'update'), THRYVE_UPDATE_API: 'http://127.0.0.1:9',
 }
 const server = spawn('node', ['server/dist/index.js'], { env, stdio: 'inherit' })
 let code = 1
@@ -45,7 +45,7 @@ try {
   // A fresh database opens on Welcome; the other specs start from a unit that's set up (welcome.e2e.ts resets it).
   await fetch(`http://127.0.0.1:${PORT}/api/settings`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ setupComplete: true }) })
   code = await new Promise((resolve) => {
-    const pw = spawn('pnpm', ['exec', 'playwright', 'test', '--config', 'tests/browser/playwright.config.ts', ...process.argv.slice(2)], { env: { ...env, SEEDYPOD_E2E: '1' }, stdio: 'inherit' })
+    const pw = spawn('pnpm', ['exec', 'playwright', 'test', '--config', 'tests/browser/playwright.config.ts', ...process.argv.slice(2)], { env: { ...env, THRYVE_E2E: '1' }, stdio: 'inherit' })
     pw.on('exit', c => resolve(c ?? 1))
   })
 }

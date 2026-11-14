@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# seedypod login logo: the animation an SSH login opens with, printed from the
-# frames that generate.mjs pre-rendered. Run by /etc/profile.d/seedypod-logo.sh,
+# thryve login logo: the animation an SSH login opens with, printed from the
+# frames that generate.mjs pre-rendered. Run by /etc/profile.d/thryve-logo.sh,
 # which holds the guards that need the login shell. Bash and stty only; each
 # frame is one printf, so a Pi Zero W stays out of the way.
 #   truecolor, fits   animation, then the logo
 #   256 colours       the logo, no animation
 #   anything else     one line of text
 # Then the unit's live facts from login-stats, beside the logo or under the line.
-# Off with ~/.hushlogin or SEEDYPOD_NO_LOGO=1. Errors stay silent: this must never
+# Off with ~/.hushlogin or THRYVE_NO_LOGO=1. Errors stay silent: this must never
 # get in the way of a login.
 exec 2>/dev/null
 
 [ -t 0 ] && [ -t 1 ] || exit 0
-[ "${SEEDYPOD_NO_LOGO:-}" = 1 ] && exit 0
+[ "${THRYVE_NO_LOGO:-}" = 1 ] && exit 0
 [ -e "${HOME:-}/.hushlogin" ] && exit 0
 # su - and sudo -i are logins too, but not new ones: the session's owner has
 # already seen it. su keeps a terminal this user doesn't own; sudo may open its own.
@@ -25,13 +25,13 @@ url="http://${HOSTNAME%%.*}.local"
 [ -e "$dir/port80.nft" ] || url="$url:3000"
 
 # The live facts beside the logo. login-stats gathers them while the logo
-# animates; whatever it hasn't said a second (SEEDYPOD_STATS_MS) after starting
+# animates; whatever it hasn't said a second (THRYVE_STATS_MS) after starting
 # is left out.
 stats=()
 stats_pid=""
 now() { now=${EPOCHREALTIME//[.,]/}; }
 if [ -x "$dir/login-stats" ] && now && [ -n "$now" ]; then
-  wait_ms=${SEEDYPOD_STATS_MS:-1000}
+  wait_ms=${THRYVE_STATS_MS:-1000}
   [[ $wait_ms =~ ^[0-9]{1,6}$ ]] || wait_ms=1000
   stats_by=$((now + wait_ms * 1000))
   # Not on the terminal: a straggler mustn't hold it open after the logo exits.
@@ -122,7 +122,7 @@ fact_lines() {
 
 plain() {
   gather
-  printf 'seedypod%s  %s\n' "${version:+ $version}" "$url"
+  printf 'thryve%s  %s\n' "${version:+ $version}" "$url"
   [ "${term_cols:-0}" -gt 0 ] || term_cols=80
   fact_lines "$term_cols" 0
   [ "${#facts[@]}" -eq 0 ] || printf '%s\n' "${facts[@]}"

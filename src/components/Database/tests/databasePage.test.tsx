@@ -33,7 +33,7 @@ const table = (name: string, o: Partial<TableReport> = {}): TableReport => ({
   name, rows: 100, bytes: 40960, timeColumn: 'ts', basis: 'inserted', lastWriteAt: new Date(Date.now() - 120_000).toISOString(), hourly: hourly(10), writes24h: 10, ...o,
 })
 const report = (o: Partial<DatabaseReport> = {}): DatabaseReport => ({
-  at: new Date(Date.now() - 180_000).toISOString(), scanMs: 1400, path: 'data/seedypod.db', fileBytes: 5e6, walBytes: 1.2e6, journalMode: 'wal', pageSize: 4096, freePages: 3,
+  at: new Date(Date.now() - 180_000).toISOString(), scanMs: 1400, path: 'data/thryve.db', fileBytes: 5e6, walBytes: 1.2e6, journalMode: 'wal', pageSize: 4096, freePages: 3,
   migrations: { applied: 11, known: 11, latestTag: '0010_x', appliedTag: '0010_x' },
   tables: [table('schedules', { basis: 'changed', timeColumn: 'updatedAt', writes24h: 1, hourly: hourly(1) }), table('telemetry', { writes24h: 90, hourly: hourly(90), rows: 4200 })],
   integrity: null,
@@ -53,7 +53,7 @@ afterEach(cleanup)
 describe('Database view', () => {
   it('sums up the file: size, WAL, journal mode, free pages and migrations', () => {
     render(<DatabasePage />)
-    expect(screen.getByTestId('scanned').textContent).toBe('data/seedypod.db · scanned 3 min ago in 1.4 s')
+    expect(screen.getByTestId('scanned').textContent).toBe('data/thryve.db · scanned 3 min ago in 1.4 s')
     for (const text of ['5.0 MB', '1.2 MB', 'WAL', '12 kB', '11 / 11', '0010_x', 'Not checked']) expect(screen.getAllByText(text).length).toBeGreaterThan(0)
   })
 

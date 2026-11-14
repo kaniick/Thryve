@@ -74,7 +74,7 @@ export class HaBridge {
   private readonly sentStill = new Map<Camera, string>()
 
   constructor(private readonly o: BridgeOptions) {
-    this.p = `${o.prefix ?? 'seedypod'}/${o.unitId}/core`
+    this.p = `${o.prefix ?? 'thryve'}/${o.unitId}/core`
     this.now = o.now ?? (() => new Date())
     this.linkState = { connected: !!o.mqtt.connected, since: this.now().toISOString() }
     o.mqtt.on('connect', () => this.onConnect())
@@ -119,7 +119,7 @@ export class HaBridge {
   }
 
   private device() {
-    return { identifiers: [this.o.unitId], name: `Gardyn ${this.o.unitId}`, manufacturer: 'seedypod', model: this.o.hal.snapshot().system?.model ?? 'gardyn' }
+    return { identifiers: [this.o.unitId], name: `Gardyn ${this.o.unitId}`, manufacturer: 'thryve', model: this.o.hal.snapshot().system?.model ?? 'gardyn' }
   }
 
   onConnect(): void {
@@ -276,8 +276,8 @@ export async function connectBridge(o: Omit<BridgeOptions, 'mqtt'>): Promise<HaB
     rejectUnauthorized: !s.mqttTlsInsecure,
     reconnectPeriod: 5000,
     keepalive: 30,
-    will: { topic: `${o.prefix ?? 'seedypod'}/${o.unitId}/core/availability`, payload: Buffer.from('offline'), retain: true, qos: 0 },
-    clientId: `seedypod-core-bridge-${o.unitId}`,
+    will: { topic: `${o.prefix ?? 'thryve'}/${o.unitId}/core/availability`, payload: Buffer.from('offline'), retain: true, qos: 0 },
+    clientId: `thryve-core-bridge-${o.unitId}`,
   })
   const bridge = new HaBridge({ ...o, mqtt })
   bridge.start()

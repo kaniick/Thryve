@@ -21,7 +21,7 @@ import mqtt from 'mqtt'
 const root = resolve(import.meta.dirname, '../..')
 const hald = process.env.HALD_BIN ?? join(root, 'hal/target/debug/hald')
 const unit = 'sim-bringup'
-const work = mkdtempSync(join(tmpdir(), 'seedypod-bringup-'))
+const work = mkdtempSync(join(tmpdir(), 'thryve-bringup-'))
 const children = []
 const results = []
 
@@ -122,8 +122,8 @@ pin = 5
 // What a backup carries besides the database: the LAN broker's password file and its config.
 const mosquittoDir = join(work, 'mosquitto')
 mkdirSync(mosquittoDir)
-writeFileSync(join(mosquittoDir, 'seedypod.passwd'), 'homeassistant:$7$101$bringup\n')
-writeFileSync(join(mosquittoDir, 'seedypod.conf'), 'per_listener_settings true\nlistener 1883 127.0.0.1\nallow_anonymous true\n')
+writeFileSync(join(mosquittoDir, 'thryve.passwd'), 'homeassistant:$7$101$bringup\n')
+writeFileSync(join(mosquittoDir, 'thryve.conf'), 'per_listener_settings true\nlistener 1883 127.0.0.1\nallow_anonymous true\n')
 
 // A path-style S3 bucket in memory (no auth check): the mirror and nightly backups talk to it over HTTP.
 const bucket = new Map()
@@ -173,12 +173,12 @@ const coreEnv = {
   HAL_MQTT_URL: brokerUrl, HAL_UNIT_ID: unit, HAL_HTTP_URL: `http://127.0.0.1:${halHttpPort}`,
   // Backups and the real restore helper, pointed at this scratch unit; the helper's service
   // commands come back to this harness through tests/sim/fake-systemctl.mjs.
-  SEEDYPOD_ETC_DIR: work, SEEDYPOD_STATE_DIR: join(work, 'hal-state'),
-  SEEDYPOD_MOSQUITTO_PASSWD: join(mosquittoDir, 'seedypod.passwd'), SEEDYPOD_MOSQUITTO_CONF: join(mosquittoDir, 'seedypod.conf'),
-  SEEDYPOD_RESTORE_CMD: JSON.stringify([process.execPath, join(root, 'scripts/seedypod-restore.cjs')]),
-  SEEDYPOD_RESTORE_DB: join(work, 'core/seedypod.db'), SEEDYPOD_RESTORE_CAPTURES: join(work, 'core/captures'), SEEDYPOD_RESTORE_HOMEKIT: join(work, 'core/homekit'),
-  SEEDYPOD_RESTORE_WORK: join(work, 'restore'), SEEDYPOD_RESTORE_DETACH: 'fork',
-  SEEDYPOD_SYSTEMCTL: JSON.stringify([process.execPath, join(root, 'tests/sim/fake-systemctl.mjs')]),
+  THRYVE_ETC_DIR: work, THRYVE_STATE_DIR: join(work, 'hal-state'),
+  THRYVE_MOSQUITTO_PASSWD: join(mosquittoDir, 'thryve.passwd'), THRYVE_MOSQUITTO_CONF: join(mosquittoDir, 'thryve.conf'),
+  THRYVE_RESTORE_CMD: JSON.stringify([process.execPath, join(root, 'scripts/thryve-restore.cjs')]),
+  THRYVE_RESTORE_DB: join(work, 'core/thryve.db'), THRYVE_RESTORE_CAPTURES: join(work, 'core/captures'), THRYVE_RESTORE_HOMEKIT: join(work, 'core/homekit'),
+  THRYVE_RESTORE_WORK: join(work, 'restore'), THRYVE_RESTORE_DETACH: 'fork',
+  THRYVE_SYSTEMCTL: JSON.stringify([process.execPath, join(root, 'tests/sim/fake-systemctl.mjs')]),
   SIM_CONTROL_URL: `http://127.0.0.1:${controlPort}/`,
 }
 let daemon = null
@@ -193,7 +193,7 @@ async function stop(p) {
   await Promise.race([gone, sleep(10_000).then(() => p.kill('SIGKILL'))])
   await gone
 }
-const services = { 'seedypod-core': { start: startCore, stop: () => stop(coreProc) }, 'hald': { start: startHald, stop: () => stop(daemon) } }
+const services = { 'thryve-core': { start: startCore, stop: () => stop(coreProc) }, 'hald': { start: startHald, stop: () => stop(daemon) } }
 const systemctlCalls = []
 const control = createHttpServer(async (req, res) => {
   let body = ''
@@ -271,7 +271,7 @@ try {
   const watcher = await mqtt.connectAsync(brokerUrl)
   const seen = new Map()
   watcher.on('message', (t, p) => seen.set(t, String(p)))
-  await watcher.subscribeAsync(['homeassistant/#', `seedypod/${unit}/#`])
+  await watcher.subscribeAsync(['homeassistant/#', `thryve/${unit}/#`])
 
   startHald()
   startCore()
@@ -296,7 +296,7 @@ try {
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'bringup', version: '1' } } }),
     })
     const body = await res.json()
-    assert(res.ok && body.result?.serverInfo?.name === 'seedypod', `initialize: ${res.status} ${JSON.stringify(body)}`)
+    assert(res.ok && body.result?.serverInfo?.name === 'thryve', `initialize: ${res.status} ${JSON.stringify(body)}`)
     return `server ${body.result.serverInfo.name}, protocol ${body.result.protocolVersion}`
   })
 
@@ -321,7 +321,7 @@ try {
   await check('light: command round-trips through the daemon', async () => {
     const r = await post('/light', { on: true, level: 60 })
     assert(r.status === 200 && r.body.level === 60, `${r.status} ${JSON.stringify(r.body)}`)
-    const st = JSON.parse(seen.get(`seedypod/${unit}/actuator/light/state`) ?? '{}')
+    const st = JSON.parse(seen.get(`thryve/${unit}/actuator/light/state`) ?? '{}')
     assert(st.level === 60, `hald state ${JSON.stringify(st)}`)
     return 'level 60 echoed'
   })
@@ -392,7 +392,7 @@ try {
     assert(off.status === 404, `ingest without a token → ${off.status}`)
     const r = await fetch(`${api}/settings`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ analysisIngestToken: 'bringup-token' }) })
     assert(r.status === 200, `settings → ${r.status}`)
-    const run = spawnSync(process.execPath, [join(root, 'scripts/analysis-worker.mjs'), '--id', 'exg-strict', '--limit', '5'], { encoding: 'utf8', env: { ...process.env, SEEDYPOD_URL: `http://127.0.0.1:${corePort}`, SEEDYPOD_INGEST_TOKEN: 'bringup-token' } })
+    const run = spawnSync(process.execPath, [join(root, 'scripts/analysis-worker.mjs'), '--id', 'exg-strict', '--limit', '5'], { encoding: 'utf8', env: { ...process.env, THRYVE_URL: `http://127.0.0.1:${corePort}`, THRYVE_INGEST_TOKEN: 'bringup-token' } })
     assert(run.status === 0, `worker exited ${run.status}: ${run.stderr || run.stdout}`)
     const remote = (await get('/vision/analyzers')).find(a => a.id === 'exg-strict')
     assert(remote?.source === 'remote' && remote.rows > 0, `analyzers ${JSON.stringify(remote)}`)
@@ -410,7 +410,7 @@ try {
   })
 
   await check('dosing lockout raises dose_fault; acknowledge clears it', async () => {
-    const dose = () => watcher.publishAsync(`seedypod/${unit}/actuator/dose_1/set`, JSON.stringify({ on: true, durationS: 1 }), { qos: 1 })
+    const dose = () => watcher.publishAsync(`thryve/${unit}/actuator/dose_1/set`, JSON.stringify({ on: true, durationS: 1 }), { qos: 1 })
     for (let i = 0; i < 3; i++) {
       await dose()
       await sleep(1500)
@@ -421,7 +421,7 @@ try {
     assert(!pumpFault, 'pump_fault raised for a doser')
     const ack = await post(`/alerts/${alert.id}/acknowledge`, {})
     assert(ack.status === 200, `ack ${ack.status}`)
-    await until('doser latch cleared in hald', () => JSON.parse(seen.get(`seedypod/${unit}/actuator/dose_1/state`) ?? '{}').fault === null)
+    await until('doser latch cleared in hald', () => JSON.parse(seen.get(`thryve/${unit}/actuator/dose_1/state`) ?? '{}').fault === null)
     return `"${alert.detail}" → acknowledged`
   })
 
@@ -453,7 +453,7 @@ try {
     assert(resumed.status === 200 && resumed.body.source !== 'manual', `resume → ${resumed.status} ${JSON.stringify(resumed.body)}`)
     const created = await post('/automations', rule)
     assert(created.status === 200, `create → ${created.status} ${JSON.stringify(created.body)}`)
-    await until('hald to report light 35', () => JSON.parse(seen.get(`seedypod/${unit}/actuator/light/state`) ?? '{}').level === 35)
+    await until('hald to report light 35', () => JSON.parse(seen.get(`thryve/${unit}/actuator/light/state`) ?? '{}').level === 35)
     const owner = await get('/light/owner')
     assert(owner.source === 'autopilot', `owner ${JSON.stringify(owner)}`)
     const [run] = await get(`/automations/runs?automationId=${created.body.id}&limit=1`)
@@ -480,24 +480,24 @@ try {
     const run = await post('/backup/run', {})
     assert(run.status === 200 && run.body.ok, `backup → ${run.status} ${JSON.stringify(run.body)}`)
     const listed = await get('/backup/bucket')
-    assert(listed.length === 1 && listed[0].key.startsWith('backups/seedypod-backup-sim-bringup-'), `bucket ${JSON.stringify(listed)}`)
+    assert(listed.length === 1 && listed[0].key.startsWith('backups/thryve-backup-sim-bringup-'), `bucket ${JSON.stringify(listed)}`)
     assert(bucket.has(`bringup/${listed[0].key}`), 'not under the mirror prefix')
     const d = await fetch(`${api}/backup/download`)
     assert(d.status === 200, `download → ${d.status}`)
     download = Buffer.from(await d.arrayBuffer())
     const names = untar(download).map(e => e.name)
-    for (const want of ['seedypod.db', 'etc/seedypod/hal.toml', 'etc/mosquitto/seedypod.passwd', 'var/lib/seedypod/sensors.json', 'manifest.json'])
+    for (const want of ['thryve.db', 'etc/thryve/hal.toml', 'etc/mosquitto/thryve.passwd', 'var/lib/thryve/sensors.json', 'manifest.json'])
       assert(names.includes(want), `bundle has no ${want}: ${names}`)
     return `${listed[0].name} (${run.body.bytes} B) in the bucket; download has ${names.length} files`
   })
 
   await check('restore: wipe the card, Welcome offers Restore, the bucket backup brings the unit back', async () => {
     // A new card: no database, no hald state, no broker password, a stock hal.toml.
-    await services['seedypod-core'].stop()
+    await services['thryve-core'].stop()
     await services.hald.stop()
     for (const d of ['core', 'hal-state', 'restore']) rmSync(join(work, d), { recursive: true, force: true })
-    rmSync(join(mosquittoDir, 'seedypod.passwd'), { force: true })
-    writeFileSync(join(mosquittoDir, 'seedypod.conf'), 'per_listener_settings true\nlistener 1883 127.0.0.1\nallow_anonymous true\n')
+    rmSync(join(mosquittoDir, 'thryve.passwd'), { force: true })
+    writeFileSync(join(mosquittoDir, 'thryve.conf'), 'per_listener_settings true\nlistener 1883 127.0.0.1\nallow_anonymous true\n')
     const halToml = readFileSync(config, 'utf8')
     writeFileSync(config, `# fresh card\n${halToml}`)
     startHald()
@@ -514,7 +514,7 @@ try {
     const r = await post('/backup/restore-from-bucket', { key: browse.body[0].key, config: s3Config })
     assert(r.status === 200 && r.body.restarting, `restore → ${r.status} ${JSON.stringify(r.body)}`)
     await afterRestart('restore', since)
-    assert(systemctlCalls.join(',') === 'stop seedypod-core,stop hald,try-restart mosquitto,start hald,start seedypod-core', `services ${systemctlCalls}`)
+    assert(systemctlCalls.join(',') === 'stop thryve-core,stop hald,try-restart mosquitto,start hald,start thryve-core', `services ${systemctlCalls}`)
 
     const s = await get('/settings')
     assert(s.unitName === 'Bring-up tower' && s.setupComplete === true && s.mirrorBucket === 'pods', `settings ${JSON.stringify({ unitName: s.unitName, setupComplete: s.setupComplete })}`)
@@ -523,8 +523,8 @@ try {
     assert((await get('/automations')).some(a => a.name === 'bring-up: light follows pH'), 'Autopilot rule missing')
     await until('the app-added EC probe back in hald', async () => (await get('/devices')).sensors.some(d => d.kind === 'ezo_ec' && d.source === 'user'), 20_000)
     assert(!readFileSync(config, 'utf8').startsWith('# fresh card'), 'hal.toml not restored')
-    assert(readFileSync(join(mosquittoDir, 'seedypod.passwd'), 'utf8').startsWith('homeassistant:'), 'broker password not restored')
-    assert(/^listener 1884$/m.test(readFileSync(join(mosquittoDir, 'seedypod.conf'), 'utf8')), 'LAN listener not written')
+    assert(readFileSync(join(mosquittoDir, 'thryve.passwd'), 'utf8').startsWith('homeassistant:'), 'broker password not restored')
+    assert(/^listener 1884$/m.test(readFileSync(join(mosquittoDir, 'thryve.conf'), 'utf8')), 'LAN listener not written')
     return 'settings, schedule, grow cycle, Autopilot rule, EC probe, hal.toml and broker password are back'
   })
 
@@ -537,7 +537,7 @@ try {
     const r = await fetch(`${api}/backup/restore`, { method: 'POST', headers: { 'content-type': 'application/gzip' }, body: tar(tampered) })
     const body = await r.json()
     assert(r.status === 409 && body.code === 'newer-schema', `→ ${r.status} ${JSON.stringify(body)}`)
-    assert(/made by seedypod core main@future1 .*Install that version of core or newer first/.test(body.error), body.error)
+    assert(/made by thryve core main@future1 .*Install that version of core or newer first/.test(body.error), body.error)
     assert((await get('/settings')).unitName === 'Bring-up tower', 'unit changed')
     return body.error
   })
@@ -550,7 +550,7 @@ try {
     const back = await get('/settings')
     assert(back.unitName === 'Gardyn' && back.setupComplete === false, `after undo ${back.unitName}`)
     assert(readFileSync(config, 'utf8').startsWith('# fresh card'), 'hal.toml not put back')
-    assert(!existsSync(join(mosquittoDir, 'seedypod.passwd')), 'password file not put back')
+    assert(!existsSync(join(mosquittoDir, 'thryve.passwd')), 'password file not put back')
     since = new Date().toISOString()
     assert((await post('/backup/undo', {})).status === 200, 'redo')
     await afterRestart('undo', since)
@@ -563,7 +563,7 @@ try {
   await check('SIGTERM writes held telemetry to the card', async () => {
     const since = new Date(Date.now() - 3_600_000).toISOString()
     const onCard = () => {
-      const db = new Database(coreEnv.SEEDYPOD_RESTORE_DB, { readonly: true })
+      const db = new Database(coreEnv.THRYVE_RESTORE_DB, { readonly: true })
       const { n } = db.prepare(`SELECT count(*) AS n FROM telemetry WHERE sensor = 'air_temp' AND ts >= ?`).get(since)
       db.close()
       return n

@@ -3,7 +3,7 @@
 # scripts/image/bake inside it under emulation, checks it, shrinks and compresses it.
 set -euo pipefail
 
-src=/seedypod
+src=/thryve
 work=/tmp/image
 root=/mnt/image
 img="$work/os.img"
@@ -54,24 +54,24 @@ losetup -d "$root_dev"
 
 # ---- bake -----------------------------------------------------------------------
 mount_image
-mkdir -p "$root/tmp/seedypod"
-cp -rf "$src/scripts/image" "$root/tmp/seedypod/"
-cp -rf "$src/assets" "$root/tmp/seedypod/assets"
-tar xzf "$src/assets/seedypod-core.tar.gz" -C "$root/tmp/seedypod" ./scripts/install ./scripts/install-hal
-mv -f "$root/tmp/seedypod/scripts/install" "$root/tmp/seedypod/scripts/install-hal" "$root/tmp/seedypod/image/"
+mkdir -p "$root/tmp/thryve"
+cp -rf "$src/scripts/image" "$root/tmp/thryve/"
+cp -rf "$src/assets" "$root/tmp/thryve/assets"
+tar xzf "$src/assets/thryve-core.tar.gz" -C "$root/tmp/thryve" ./scripts/install ./scripts/install-hal
+mv -f "$root/tmp/thryve/scripts/install" "$root/tmp/thryve/scripts/install-hal" "$root/tmp/thryve/image/"
 # Services stay down while it's a chroot, and DNS comes from this container.
 printf '#!/bin/sh\nexit 101\n' > "$root/usr/sbin/policy-rc.d"
 chmod 0755 "$root/usr/sbin/policy-rc.d"
-mv -f "$root/etc/resolv.conf" "$root/etc/resolv.conf.seedypod-bak"
+mv -f "$root/etc/resolv.conf" "$root/etc/resolv.conf.thryve-bak"
 cp -f /etc/resolv.conf "$root/etc/resolv.conf"
 
-in_image bash /tmp/seedypod/image/bake "$BRANCH" "$COMMIT"
+in_image bash /tmp/thryve/image/bake "$BRANCH" "$COMMIT"
 in_image dpkg-query -W -f '${Package} ${Version}\n' > "$work/packages.txt"
-cp -f "$root/usr/local/share/seedypod/image" "$work/image-info"
-tar xzf "$src/assets/seedypod-core.tar.gz" -C "$work" ./web/dist/brand/icon-64.png
+cp -f "$root/usr/local/share/thryve/image" "$work/image-info"
+tar xzf "$src/assets/thryve-core.tar.gz" -C "$work" ./web/dist/brand/icon-64.png
 
 rm -f "$root/usr/sbin/policy-rc.d" "$root/etc/resolv.conf"
-mv -f "$root/etc/resolv.conf.seedypod-bak" "$root/etc/resolv.conf"
+mv -f "$root/etc/resolv.conf.thryve-bak" "$root/etc/resolv.conf"
 unmount_image
 
 # ---- shrink ---------------------------------------------------------------------
@@ -89,21 +89,21 @@ truncate -s "$((($(part 1 start) + sectors) * 512))" "$img"
 
 # ---- check what will ship -------------------------------------------------------
 mount_image ro
-mkdir -p "$root/tmp/seedypod"
-cp -f "$src/scripts/image/verify" "$root/tmp/seedypod/verify"
-in_image bash /tmp/seedypod/verify
+mkdir -p "$root/tmp/thryve"
+cp -f "$src/scripts/image/verify" "$root/tmp/thryve/verify"
+in_image bash /tmp/thryve/verify
 unmount_image
 
 # ---- publish --------------------------------------------------------------------
 extract_size="$(stat -c %s "$img")"
 extract_sha256="$(sha256sum "$img" | cut -d' ' -f1)"
-xz -T0 -6 -c "$img" > "$src/out/seedypod-os.img.xz"
+xz -T0 -6 -c "$img" > "$src/out/thryve-os.img.xz"
 cd "$src/out"
-sha256sum seedypod-os.img.xz > seedypod-os.img.xz.sha256
-cp -f "$work/web/dist/brand/icon-64.png" seedypod-os-icon.png
-{ cat "$work/image-info"; echo; cat "$work/packages.txt"; } > seedypod-os-manifest.txt
-jq -n --arg url "$URL_BASE/seedypod-os.img.xz" --arg icon "$URL_BASE/seedypod-os-icon.png" \
+sha256sum thryve-os.img.xz > thryve-os.img.xz.sha256
+cp -f "$work/web/dist/brand/icon-64.png" thryve-os-icon.png
+{ cat "$work/image-info"; echo; cat "$work/packages.txt"; } > thryve-os-manifest.txt
+jq -n --arg url "$URL_BASE/thryve-os.img.xz" --arg icon "$URL_BASE/thryve-os-icon.png" \
   --arg date "$(date -u +%F)" --arg branch "$BRANCH" --arg commit "${COMMIT:0:7}" \
   --argjson extract_size "$extract_size" --arg extract_sha256 "$extract_sha256" \
-  --argjson download_size "$(stat -c %s seedypod-os.img.xz)" --arg download_sha256 "$(cut -d' ' -f1 seedypod-os.img.xz.sha256)" \
-  -f "$src/scripts/image/imager.jq" > seedypod-os-imager.json
+  --argjson download_size "$(stat -c %s thryve-os.img.xz)" --arg download_sha256 "$(cut -d' ' -f1 thryve-os.img.xz.sha256)" \
+  -f "$src/scripts/image/imager.jq" > thryve-os-imager.json

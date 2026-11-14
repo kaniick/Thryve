@@ -20,9 +20,9 @@ afterEach(() => {
 })
 
 describe('backupPaths', () => {
-  it('defaults to what the installers set up, and moves with SEEDYPOD_*', () => {
-    expect(backupPaths({}, './data')).toEqual({ etcDir: '/etc/seedypod', stateDir: '/var/lib/seedypod', mosquittoPasswd: '/etc/mosquitto/seedypod.passwd', capturesDir: 'data/captures', homekitDir: 'data/homekit' })
-    expect(backupPaths({ SEEDYPOD_ETC_DIR: '/x/etc', SEEDYPOD_STATE_DIR: '/x/state', SEEDYPOD_MOSQUITTO_PASSWD: '/x/pw' }, '/d')).toMatchObject({ etcDir: '/x/etc', stateDir: '/x/state', mosquittoPasswd: '/x/pw', capturesDir: '/d/captures' })
+  it('defaults to what the installers set up, and moves with THRYVE_*', () => {
+    expect(backupPaths({}, './data')).toEqual({ etcDir: '/etc/thryve', stateDir: '/var/lib/thryve', mosquittoPasswd: '/etc/mosquitto/thryve.passwd', capturesDir: 'data/captures', homekitDir: 'data/homekit' })
+    expect(backupPaths({ THRYVE_ETC_DIR: '/x/etc', THRYVE_STATE_DIR: '/x/state', THRYVE_MOSQUITTO_PASSWD: '/x/pw' }, '/d')).toMatchObject({ etcDir: '/x/etc', stateDir: '/x/state', mosquittoPasswd: '/x/pw', capturesDir: '/d/captures' })
   })
 })
 
@@ -37,7 +37,7 @@ describe('nodeBackupSources', () => {
     const src = nodeBackupSources({ paths: { etcDir: join(dir, 'etc'), stateDir: join(dir, 'state'), mosquittoPasswd: join(dir, 'pw'), capturesDir: join(dir, 'captures') }, snapshot: d => store.backupTo(d), migrationsFolder: defaultMigrationsFolder() })
     const db = await src.database()
     expect(new TextDecoder().decode(db.subarray(0, 16))).toBe('SQLite format 3\0')
-    expect(src.systemFiles().map(f => f.name)).toEqual(['etc/seedypod/hal.toml', 'etc/mosquitto/seedypod.passwd', 'var/lib/seedypod/sensors.json', 'var/lib/seedypod/state.json'])
+    expect(src.systemFiles().map(f => f.name)).toEqual(['etc/thryve/hal.toml', 'etc/mosquitto/thryve.passwd', 'var/lib/thryve/sensors.json', 'var/lib/thryve/state.json'])
     expect(new TextDecoder().decode(await src.read(join(dir, 'state/sensors.json')))).toBe('[]')
     expect(src.schema()).toEqual(readSchema(defaultMigrationsFolder()))
     store.close()
@@ -68,7 +68,7 @@ describe('nodeBackupSources', () => {
     mkdirSync(join(dir, 'state'))
     chmodSync(join(dir, 'state'), 0o000)
     const src = nodeBackupSources({ paths: { etcDir: dir, stateDir: join(dir, 'state'), mosquittoPasswd: join(dir, 'pw'), capturesDir: dir }, snapshot: async () => undefined, migrationsFolder: defaultMigrationsFolder() })
-    const state = src.systemFiles().find(f => f.name === 'var/lib/seedypod/state.json')
+    const state = src.systemFiles().find(f => f.name === 'var/lib/thryve/state.json')
     // Root reads anything; everyone else gets a non-optional entry whose read fails with EACCES.
     if (process.getuid?.() !== 0) expect(state).toMatchObject({ optional: false })
   })

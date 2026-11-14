@@ -15,9 +15,9 @@ sources: [{"resource": "/adr/0004-two-tier-hal-core.md", "title": "ADR 0004: Two
 ## Context
 
 Adding a probe such as an Atlas EZO pH circuit meant hand-editing
-`/etc/seedypod/hal.toml` and restarting `hald`. That edit has a trap: any
+`/etc/thryve/hal.toml` and restarting `hald`. That edit has a trap: any
 `[[sensor]]` table replaces the whole stock list, including the water ranger
-the dry-run interlock depends on. `hald` cannot write `/etc/seedypod` under
+the dry-run interlock depends on. `hald` cannot write `/etc/thryve` under
 `ProtectSystem=strict`, it read its config once, a sensor that failed to probe
 silently vanished, and the UI hard-coded which quantities it showed. Future
 probes (dissolved oxygen, ORP, other vendors) should not need UI work.
@@ -48,7 +48,7 @@ probes (dissolved oxygen, ORP, other vendors) should not need UI work.
 
   Removing a built-in sensor is always refused. The inventory reports sensors
   that failed to probe at boot as `absent`, with the reason.
-- **Human-only.** Agents get `list_devices` and `seedypod://devices`
+- **Human-only.** Agents get `list_devices` and `thryve://devices`
   (read-only). Adding, removing and calibrating probes need a person at the
   unit, so they're available only in the app and the REST API.
 
@@ -56,7 +56,7 @@ probes (dissolved oxygen, ORP, other vendors) should not need UI work.
 
 - A new probe type needs one `SensorKind` implementation, a `SensorId` if it
   measures a new quantity, and a regenerated fixture
-  (`SEEDYPOD_WRITE_FIXTURES=1 cargo test`). The add dialog and the calibration
+  (`THRYVE_WRITE_FIXTURES=1 cargo test`). The add dialog and the calibration
   wizard pick it up automatically.
 - `hal.toml` stays the place for built-in parts. Explicit `[[sensor]]` tables
   still replace the stock list; that behaviour is documented, not changed.

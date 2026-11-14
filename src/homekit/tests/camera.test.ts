@@ -50,7 +50,7 @@ describe('camera → snapshot-only CameraController', () => {
     const built = buildCamera('upper', deps)
     expect(built.services).toEqual([])
     const controller = built.controllers?.[0] as hap.CameraController
-    const acc = new hap.Accessory('Upper camera', hap.uuid.generate('seedypod:test:snapshot'))
+    const acc = new hap.Accessory('Upper camera', hap.uuid.generate('thryve:test:snapshot'))
     acc.configureController(controller)
     stops.push(() => void acc.destroy())
     const image = await controller.handleSnapshotRequest(480, 640)
@@ -61,7 +61,7 @@ describe('camera → snapshot-only CameraController', () => {
 
   it('on the accessory: what HomeKit cameras declare, two RTP streams and a microphone, but no recording', () => {
     const { deps } = setup()
-    const acc = new hap.Accessory('Upper camera', hap.uuid.generate('seedypod:test:camera_upper'))
+    const acc = new hap.Accessory('Upper camera', hap.uuid.generate('thryve:test:camera_upper'))
     for (const c of buildCamera('upper', deps).controllers ?? []) acc.configureController(c)
     const uuids = acc.services.map(s => s.UUID)
     expect(uuids.filter(u => u === hap.Service.CameraRTPStreamManagement.UUID)).toHaveLength(2)

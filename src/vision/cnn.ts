@@ -13,7 +13,9 @@
  * dense weight is [out][in], as PyTorch's Linear stores it.
  */
 
-export const MODEL_FORMAT = 'seedypod-cnn'
+export const MODEL_FORMAT = 'thryve-cnn'
+/** Weights files shipped by seedypod still use this format name. */
+export const LEGACY_MODEL_FORMAT = 'seedypod-cnn'
 export const MODEL_FORMAT_VERSION = 1
 
 /** A 3×3 convolution with stride 1 and zero padding 1, then ReLU. */
@@ -41,7 +43,7 @@ export interface TensorFile { shape: number[], dtype: 'float32', /** Little-endi
 
 /** The weights file as stored: a JSON header with the tensors inline. */
 export interface ModelFile {
-  format: typeof MODEL_FORMAT
+  format: typeof MODEL_FORMAT | typeof LEGACY_MODEL_FORMAT
   formatVersion: number
   /** The analyser it is for, e.g. `pod-state`. */
   analyzer: string
@@ -97,7 +99,7 @@ function tensor(file: ModelFile, name: string, shape: number[]): Float32Array {
 /** Validate a weights file and decode its tensors. Throws ModelError with what is wrong. */
 export function parseModel(raw: unknown): CnnModel {
   const file = raw as ModelFile
-  if (!file || typeof file !== 'object' || file.format !== MODEL_FORMAT) throw new ModelError(`not a ${MODEL_FORMAT} weights file`)
+  if (!file || typeof file !== 'object' || (file.format !== MODEL_FORMAT && file.format !== LEGACY_MODEL_FORMAT)) throw new ModelError(`not a ${MODEL_FORMAT} weights file`)
   if (file.formatVersion !== MODEL_FORMAT_VERSION) throw new ModelError(`format version ${file.formatVersion} is not supported (expected ${MODEL_FORMAT_VERSION})`)
   if (!Number.isInteger(file.version) || file.version < 1) throw new ModelError('version must be a positive integer')
   if (!Array.isArray(file.classes) || file.classes.length < 2) throw new ModelError('classes must list at least two names')

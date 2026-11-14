@@ -5,7 +5,7 @@
 # many times slower than a Zero W (allow 30 minutes or more), and its timings mean
 # nothing. The emulated machine sometimes wedges early in boot: if the log stops for ten
 # minutes, run it again. It's a tool for a change to the build, not a CI step.
-# Usage: scripts/image/boot-test <seedypod-os.img.xz> [<dir>]
+# Usage: scripts/image/boot-test <thryve-os.img.xz> [<dir>]
 #   <dir> holds a user-data and network-config to put on bootfs, as Imager would.
 #   needs Docker that can run --privileged.
 set -euo pipefail
@@ -43,7 +43,7 @@ until [ "$(curl -s -m 30 -o /dev/null -w '%{http_code}' http://127.0.0.1:3000/)"
   sleep 15
 done
 [ "$tries" -gt 240 ] || echo "BOOT-TEST: core answered, $(cut -d' ' -f1 /proc/uptime) s after boot"
-systemctl is-active seedypod-first-boot hald seedypod-core mosquitto seedypod-port80
+systemctl is-active thryve-first-boot hald thryve-core mosquitto thryve-port80
 tr '\0' '\n' < "/proc/$(pgrep -f server/dist/index.js)/environ" | grep HAL_UNIT_ID
 df -h /
 lsblk
@@ -55,18 +55,18 @@ cat /etc/machine-id
 cat /etc/systemd/journald.conf.d/*
 id
 tail -5 /etc/passwd
-id alice bob seedypod seedypod-hal seedypod-core pi
-getent shadow alice bob seedypod pi | cut -c1-16
+id alice bob thryve thryve-hal thryve-core pi
+getent shadow alice bob thryve pi | cut -c1-16
 ls -la /home /home/*/.ssh
 systemctl is-enabled ssh
 ls /etc/NetworkManager/system-connections /run/NetworkManager/system-connections
 cat /etc/sudoers.d/90-cloud-init-users
-sudo -u seedypod-core nmcli -t device
-sudo -u seedypod-core sudo -n -l | tail -2
+sudo -u thryve-core nmcli -t device
+sudo -u thryve-core sudo -n -l | tail -2
 ps -o user=,args= -C hald,node,mosquitto
-nft list table ip seedypod
-grep -E 'HAL_|^User=' /etc/systemd/system/seedypod-core.service
-journalctl -u seedypod-first-boot -u seedypod-cloud-init-off --no-pager | tail -15
+nft list table ip thryve
+grep -E 'HAL_|^User=' /etc/systemd/system/thryve-core.service
+journalctl -u thryve-first-boot -u thryve-cloud-init-off --no-pager | tail -15
 systemctl --failed --no-pager
 cat /run/boot-test.log > /dev/ttyAMA0
 poweroff

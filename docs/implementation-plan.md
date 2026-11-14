@@ -10,7 +10,7 @@ sources: [{"resource": "https://github.com/sleepypod/core", "title": "sleepypod/
 # Gardyn Liberation — Implementation Plan (Phase 0 → Done)
 
 **Status:** v3 — Phases 0, 3, 4, 5 and the software half of 7/8 built (2026-10-31); Phase 1 (hardware recon) and the Rust driver validation in Phase 2 need a real unit (status update 2026-11-09: bring-up on a Gardyn 3.0 began 2026-11-06, see [Handoff §7–8](HANDOFF.md#7-real-unit-bring-up-2026-11-06); pump and water-level validation remain) · **Date:** 2026-10-29 · **Author:** @ng (drafted with Claude)
-**Name:** seedypod (ADR-0001; drafted as leafypod). Repo: `seedypod/core`.
+**Name:** thryve (ADR-0001; drafted as leafypod). Repo: `kaniick/Thryve`.
 
 Sibling project to [sleepypod](https://sleepypod.github.io/): a sealed consumer appliance (Gardyn hydroponic tower) whose embedded Linux controller (a Raspberry Pi) is re-flashed to run a local, cloud-free control stack. This plan mirrors sleepypod's conventions exactly (branching, CI, Codecov, Stryker, semantic-release, Renovate, Vercel demo, Nextra docs on Pages, ADRs, OKF knowledge bundle) so tooling and muscle memory carry over.
 
@@ -166,7 +166,7 @@ Goal: an empty-but-complete repo where `dev → main` already releases, docs dep
 
 | # | Task | ∥ | Notes |
 |---|---|---|---|
-| 2.1 | ADR-0007 finalize **HAL contract** (freeze before 2.4 so core can start): MQTT topic tree, payload schemas (JSON, versioned `v1`), HTTP endpoints, HA discovery entity set, mDNS service `_seedypod-hal._tcp` with TXT `id`,`model`,`v` | | the one artifact that unblocks Phase 3 in parallel |
+| 2.1 | ADR-0007 finalize **HAL contract** (freeze before 2.4 so core can start): MQTT topic tree, payload schemas (JSON, versioned `v1`), HTTP endpoints, HA discovery entity set, mDNS service `_thryve-hal._tcp` with TXT `id`,`model`,`v` | | the one artifact that unblocks Phase 3 in parallel |
 | 2.2 | `hal-core`: `Sensor`/`Actuator` traits, config-driven registry (`hal.toml`: `[[sensor]] kind="ina219" addr=0x40`), unit types, `Reading{ts,value,unit,quality}`, reprobe-on-failure | ⛔ 2.1 | pH/EC/RTD later are just more registry entries |
 | 2.3 | `hal-core::safety`: pump max-run timer, dry-run interlock (distance median vs threshold), over-temp cutoff (GPIO25 + PCT2075 hysteresis 34/36 °C), light sanity; **fault ⇒ latched off until `acknowledge`**; every actuator command passes through here | ⛔ 2.2 | §0.2 items 1, 3, 6; unit-test exhaustively; ADR-0009 *Pump safety guard* (sleepypod ADR-0022 shape) |
 | 2.4 | `hal-sim` backend: deterministic fake hardware (tank drains when pump runs, temp drifts, cameras serve fixtures). Used by `hald --sim`, by core's demo mode, and by CI | ∥ 2.3 | |
@@ -297,7 +297,7 @@ Two people could run Phase 2 and Phase 3 fully in parallel after 2.1; one person
 
 ## 5. HAL contract v1 (draft for ADR-0007)
 
-Prefix `seedypod/<unit-id>/`. Retained where marked. Payloads JSON; numbers SI; `ts` ISO-8601.
+Prefix `thryve/<unit-id>/`. Retained where marked. Payloads JSON; numbers SI; `ts` ISO-8601.
 
 | Topic | Dir | Retained | Payload |
 |---|---|---|---|
@@ -336,7 +336,7 @@ KR3.3 One other person liberates their unit from the docs alone (Phase 8 "done")
 
 ## 7. Open questions (answer before the phase that needs them)
 
-1. **Name.** Settled as `seedypod` (ADR-0001 amendment); still needs a domain + App Store check if an iOS app follows. (Phase 0, ADR-0001)
+1. **Name.** Settled as `thryve` (ADR-0001 amendment); still needs a domain + App Store check if an iOS app follows. (Phase 0, ADR-0001)
 2. **Which Gardyn do we have?** 1.0/2.0 (AM2320) vs 3.0/Studio (DHT20). Decides driver priority. (Phase 1.5)
 3. **Zero W or Zero 2 W inside?** Zero W ⇒ must cross-compile `armv6` and skip any on-device core. (Phase 1.1)
 4. **Single repo vs `hal` split out?** Plan assumes single repo (mirrors `modules/` precedent); revisit if Rust CI time dominates. (Phase 2.11)

@@ -72,7 +72,7 @@ describe('Dashboard', () => {
   it('opens on Welcome until the unit is set up', () => {
     data.set('settings.get', { setupComplete: false })
     render(<Dashboard />)
-    expect(screen.getByText('Welcome to seedypod')).toBeTruthy()
+    expect(screen.getByText('Welcome to thryve')).toBeTruthy()
     expect(screen.queryByText('Grow light')).toBeNull()
   })
 

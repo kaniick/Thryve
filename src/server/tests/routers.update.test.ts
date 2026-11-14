@@ -40,7 +40,7 @@ const CHECK = {
   ok: true,
   channel: 'stable',
   installed: { version: 'main@aaaaaaa', commit: 'aaaaaaa', branch: 'main', tag: 'v1.1.0' },
-  available: { tag: 'v1.2.0', commit: 'b'.repeat(40), name: 'v1.2.0', publishedAt: null, url: 'https://github.com/seedypod/core/releases/tag/v1.2.0' },
+  available: { tag: 'v1.2.0', commit: 'b'.repeat(40), name: 'v1.2.0', publishedAt: null, url: 'https://github.com/kaniick/Thryve/releases/tag/v1.2.0' },
   updateAvailable: true,
   problem: null,
 }
@@ -74,8 +74,8 @@ describe('update router', () => {
   it('maps the helper\'s refusals: busy is a conflict, a bad release a precondition', async () => {
     const busy = caller({ '--start': { ok: false, code: 'busy', error: 'an update is already running' } })
     await expect(busy.c.update.start()).rejects.toMatchObject({ code: 'CONFLICT', message: 'an update is already running' })
-    const bad = caller({ '--start': { ok: false, code: 'checksum', error: 'seedypod-core.tar.gz doesn\'t match' }, '--check': { ok: false, code: 'no-release', error: 'there is no stable release yet' } })
-    await expect(bad.c.update.start()).rejects.toMatchObject({ code: 'PRECONDITION_FAILED', message: 'seedypod-core.tar.gz doesn\'t match' })
+    const bad = caller({ '--start': { ok: false, code: 'checksum', error: 'thryve-core.tar.gz doesn\'t match' }, '--check': { ok: false, code: 'no-release', error: 'there is no stable release yet' } })
+    await expect(bad.c.update.start()).rejects.toMatchObject({ code: 'PRECONDITION_FAILED', message: 'thryve-core.tar.gz doesn\'t match' })
     await expect(bad.c.update.check()).rejects.toMatchObject({ code: 'PRECONDITION_FAILED', message: 'there is no stable release yet' })
   })
 

@@ -29,7 +29,7 @@ responsive while a Pi decodes the photo:
 | `pod-state@1` | A small learned model that names each pod empty, sprouted, growing, ready or unhealthy, with a confidence. See [the learned pod-state analyser](#the-learned-pod-state-analyser). |
 
 Both count only what can be a plant, in two steps (version 2, from
-[#132](https://github.com/seedypod/core/issues/132)):
+[#132](https://github.com/kaniick/Thryve/issues/132)):
 
 - **Leaf colour.** Excess green alone also fires on the white tower under a warm
   or green-tinted light, a grey-green wall and dark olive shadow; version 1 read
@@ -198,9 +198,9 @@ one is listed as one neither fix can settle. Scripts use
 **Analysis → Export a dataset** downloads a tar for the last 7, 30 or 90 days,
 with or without the photos. Scripts can use
 `GET /api/datasets/export?from=…&to=…&images=0|1` directly. Everything sits
-under one folder, `seedypod-<unit>-<yyyymmdd from>-<yyyymmdd to>/`:
+under one folder, `thryve-<unit>-<yyyymmdd from>-<yyyymmdd to>/`:
 
-- `manifest.json`: format (`seedypod-dataset` version 2, since `labels.jsonl`
+- `manifest.json`: format (`thryve-dataset` version 2, since `labels.jsonl`
   gained `seeded` and the plant fields), window, unit, core version,
   analysers, and row counts (`counts.labels` among them).
 - `captures.jsonl`, `analyses.jsonl` and `telemetry.jsonl`: one record per line.
@@ -291,7 +291,7 @@ on the vision worker when that isn't there.
 
 ### Native runner
 
-`podvision` (`hal/crates/podvision`, [#191](https://github.com/seedypod/core/issues/191))
+`podvision` (`hal/crates/podvision`, [#191](https://github.com/kaniick/Thryve/issues/191))
 does what the TypeScript runner does, natively: it decodes the still, crops
 each pod, runs every enabled pod-state revision and prints the results. Core
 runs it once per capture as a child process at `nice` 19, so the API keeps
@@ -334,7 +334,7 @@ regions it decodes at full size.
 
 Each Gardyn yCube has five dots in a line below its opening: four rings, each
 open or marked with a bar, a slanted bar or a half fill, then a solid dot that
-ends the code ([#224](https://github.com/seedypod/core/issues/224)). Gardyn
+ends the code ([#224](https://github.com/kaniick/Thryve/issues/224)). Gardyn
 doesn't publish what the codes mean, so core learns which code is which plant
 from the owner's confirmations. At 1280×960 the dots are a few pixels across;
 on a full-size pod-ID still (2592×1944, [hal.md](hardware/hal.md#pod-id-stills))
@@ -372,7 +372,7 @@ split on.
 ### Weights file
 
 The model ships with core as `models/pod-state.json`, so every release and the
-web updater carry it. The format is `seedypod-cnn` version 1: one JSON file
+web updater carry it. The format is `thryve-cnn` version 1: one JSON file
 with a header (the analyser id, a `version` results are stored under, a
 `revision` name, the class names, the input size and per-channel
 normalisation, the layer list) and each tensor as little-endian float32 in
@@ -395,7 +395,7 @@ REST API or MCP, so an agent can drive it:
 2. **Train** with [seedypod/training](https://github.com/seedypod/training):
 
    ```sh
-   uv run --locked python scripts/train.py --pod seedypod.local --version 2 --revision my-model-2026-12
+   uv run --locked python scripts/train.py --pod thryve.local --version 2 --revision my-model-2026-12
    ```
 
    It writes `pod-state.json` and a `report.json` with held-out scores for the
@@ -405,8 +405,8 @@ REST API or MCP, so an agent can drive it:
    Off-device storage and analysis**) and the file's SHA-256:
 
    ```sh
-   curl -X POST "http://seedypod.local/api/models?sha256=$(shasum -a 256 pod-state.json | cut -d' ' -f1)&enable=1" \
-     -H "Authorization: Bearer $SEEDYPOD_INGEST_TOKEN" --data-binary @pod-state.json
+   curl -X POST "http://thryve.local/api/models?sha256=$(shasum -a 256 pod-state.json | cut -d' ' -f1)&enable=1" \
+     -H "Authorization: Bearer $THRYVE_INGEST_TOKEN" --data-binary @pod-state.json
    ```
 
    MCP `upload_model` takes the file as base64, or a URL on the local network
@@ -478,7 +478,7 @@ to one bucket can't create buckets), under a fresh prefix. Either way it
 deletes everything it wrote. In CI, **Mirror (real S3)**
 (`.github/workflows/mirror-s3.yml`) runs it weekly and whenever the mirror
 changes, once the `MIRROR_TEST_*` secrets hold a real bucket (see
-seedypod/core#6).
+kaniick/Thryve#6).
 
 ## Plug in an off-device analyser
 
@@ -491,12 +491,12 @@ analysers, and can be made primary.
 2. Run a worker. `scripts/analysis-worker.mjs` is a reference you can copy:
 
    ```sh
-   SEEDYPOD_URL=http://seedypod.local \
-   SEEDYPOD_INGEST_TOKEN=<token> \
+   THRYVE_URL=http://thryve.local \
+   THRYVE_INGEST_TOKEN=<token> \
    node scripts/analysis-worker.mjs --id my-model --version 1 --limit 48
    ```
 
-   It reads `GET /api/captures` and the JPEGs (add `SEEDYPOD_API_KEY` if the
+   It reads `GET /api/captures` and the JPEGs (add `THRYVE_API_KEY` if the
    unit has an API key), scores each pod, and posts:
 
    ```http

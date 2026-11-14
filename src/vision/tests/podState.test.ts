@@ -55,7 +55,7 @@ describe('pod-state forward pass', () => {
 
 describe('weights file validation', () => {
   const broken: Array<[string, (f: ModelFile) => unknown]> = [
-    ['not a seedypod-cnn', f => ({ ...f, format: 'onnx' })],
+    ['not a thryve-cnn', f => ({ ...f, format: 'onnx' })],
     ['format version', f => ({ ...f, formatVersion: 2 })],
     ['version must', f => ({ ...f, version: 0 })],
     ['at least two', f => ({ ...f, classes: ['one'] })],
@@ -81,7 +81,13 @@ describe('weights file validation', () => {
   })
 
   it('rejects anything that is not an object', () => {
-    expect(() => parseModel(null)).toThrow('not a seedypod-cnn')
+    expect(() => parseModel(null)).toThrow('not a thryve-cnn')
+  })
+
+  it('still parses a seedypod-cnn weights file', () => {
+    const f = clone()
+    f.format = 'seedypod-cnn'
+    expect(parseModel(f).file.format).toBe('seedypod-cnn')
   })
 })
 

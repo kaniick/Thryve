@@ -18,7 +18,7 @@ use podvision::image::{Rect, Scale};
 #[command(
     name = "podvision",
     version,
-    about = "Score a still's pods with seedypod-cnn weights files; prints JSON"
+    about = "Score a still's pods with thryve-cnn weights files; prints JSON"
 )]
 struct Args {
     /// The still: a JPEG, or a binary PPM (P6). `-` reads it from stdin.

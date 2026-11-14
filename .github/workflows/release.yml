@@ -4,6 +4,10 @@ on:
   push:
     branches:
       - main
+    # Manual stable tags (this fork's default branch is dev; tagging v* publishes
+    # thryve-core.tar.gz and the armv6/aarch64 hald + podvision binaries).
+    tags:
+      - 'v*'
 
 permissions:
   contents: read
@@ -101,7 +105,7 @@ jobs:
 
       - name: Create deploy tarball
         run: |
-          tar czf /tmp/seedypod-core.tar.gz \
+          tar czf /tmp/thryve-core.tar.gz \
             --exclude='node_modules' \
             --exclude='.git' \
             --exclude='.env*' \
@@ -111,23 +115,23 @@ jobs:
             --exclude='hal/target' \
             --exclude='.claude' \
             .
-          mv /tmp/seedypod-core.tar.gz .
-          sha256sum seedypod-core.tar.gz > seedypod-core.tar.gz.sha256
+          mv /tmp/thryve-core.tar.gz .
+          sha256sum thryve-core.tar.gz > thryve-core.tar.gz.sha256
 
       - name: Check the tarball has no Git LFS pointers
         # Without lfs: true on checkout, the brand PNGs ship as pointer text and the logo breaks on the unit.
         run: |
-          mkdir -p "$RUNNER_TEMP/tarball" && tar xzf seedypod-core.tar.gz -C "$RUNNER_TEMP/tarball"
+          mkdir -p "$RUNNER_TEMP/tarball" && tar xzf thryve-core.tar.gz -C "$RUNNER_TEMP/tarball"
           if grep -rlx 'version https://git-lfs.github.com/spec/v1' "$RUNNER_TEMP/tarball"; then
-            echo "::error::Git LFS pointer files in seedypod-core.tar.gz; check out with lfs: true"
+            echo "::error::Git LFS pointer files in thryve-core.tar.gz; check out with lfs: true"
             exit 1
           fi
           [ "$(file -b --mime-type "$RUNNER_TEMP/tarball/web/dist/brand/icon-64.png")" = image/png ]
 
       - uses: actions/upload-artifact@v6
         with:
-          name: seedypod-core
-          path: seedypod-core.tar.gz
+          name: thryve-core
+          path: thryve-core.tar.gz
           retention-days: 1
 
       - name: Download hald and podvision binaries
@@ -148,13 +152,33 @@ jobs:
         run: git fetch --tags --force --prune --prune-tags origin
 
       - name: Semantic Release
+        if: github.ref == 'refs/heads/main'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: pnpm exec semantic-release
 
-      - name: Find the tag it made, if it made one
+      - name: Publish a pushed v* tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          assets=(thryve-core.tar.gz thryve-core.tar.gz.sha256 release-assets/*)
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "${assets[@]}" --clobber
+            gh release edit "$tag" --target "${GITHUB_SHA}"
+          else
+            gh release create "$tag" "${assets[@]}" --title "$tag" --generate-notes --target "${GITHUB_SHA}"
+          fi
+
+      - name: Find the published tag
         id: published
-        run: echo "tag=$(git tag --points-at HEAD --list 'v*' | sort -V | tail -1)" >> "$GITHUB_OUTPUT"
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=$(git tag --points-at HEAD --list 'v*' | sort -V | tail -1)" >> "$GITHUB_OUTPUT"
+          fi
 
   os-image:
     needs: [release]
@@ -164,4 +188,5 @@ jobs:
     uses: ./.github/workflows/os-image.yml
     with:
       tag: ${{ needs.release.outputs.tag }}
-      branch: main
+      # Tag-built releases live on this fork's default branch (dev).
+      branch: ${{ startsWith(github.ref, 'refs/tags/') && 'dev' || 'main' }}

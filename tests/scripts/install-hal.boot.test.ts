@@ -57,13 +57,13 @@ const log = () => (existsSync(join(state, 'log')) ? readFileSync(join(state, 'lo
 function run(fn: string) {
   const r = spawnSync('bash', ['-c', `source "${script}"; SUDO=; ${fn}`], {
     encoding: 'utf8',
-    env: { PATH: `${bin}:/usr/bin:/bin`, SEEDYPOD_LIB_ONLY: '1', SEEDYPOD_ROOT: root, STATE: state },
+    env: { PATH: `${bin}:/usr/bin:/bin`, THRYVE_LIB_ONLY: '1', THRYVE_ROOT: root, STATE: state },
   })
   return { code: r.status, out: r.stdout, err: r.stderr }
 }
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'seedypod-boot-'))
+  dir = mkdtempSync(join(tmpdir(), 'thryve-boot-'))
   root = join(dir, 'root')
   state = join(dir, 'state')
   bin = join(dir, 'bin')
@@ -153,7 +153,7 @@ describe('cloud-init off after first boot', () => {
 })
 
 describe('swap without a file on the card', () => {
-  const conf = 'etc/rpi/swap.conf.d/50-seedypod.conf'
+  const conf = 'etc/rpi/swap.conf.d/50-thryve.conf'
   const rpiSwap = () => put('usr/lib/systemd/system-generators/rpi-swap-generator')
 
   it('sets zram alone', () => {
@@ -252,7 +252,7 @@ describe('apply_boot_settings', () => {
   it('leaves swap alone under --no-wear', () => {
     put('usr/lib/systemd/system-generators/rpi-swap-generator')
     run('WEAR=0; apply_boot_settings')
-    expect(has('etc/rpi/swap.conf.d/50-seedypod.conf')).toBe(false)
+    expect(has('etc/rpi/swap.conf.d/50-thryve.conf')).toBe(false)
   })
 })
 

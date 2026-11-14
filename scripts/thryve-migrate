@@ -1,0 +1,446 @@
+#!/usr/bin/env bash
+# One-time migration from a seedypod install to Thryve. See docs/MIGRATION.md.
+#
+# Usage: thryve-migrate [--tag dev-latest|vX.Y.Z] [--migrate-only] [--keep-hostname]
+#        curl -fsSL https://raw.githubusercontent.com/kaniick/Thryve/dev/scripts/thryve-migrate | sudo bash -s -- --tag dev-latest
+#
+# Tests source this file with THRYVE_LIB_ONLY=1 and THRYVE_ROOT=<scratch>.
+set -euo pipefail
+
+# Honour seedypod's SEEDYPOD_* names when the matching THRYVE_* is unset.
+if [ -z "${THRYVE_SKIP_LEGACY_ENV:-}" ]; then
+  while IFS='=' read -r key val; do
+    [ -n "$key" ] || continue
+    suffix=${key#SEEDYPOD_}
+    dest=THRYVE_${suffix}
+    if [ -z "${!dest:-}" ]; then
+      export "$dest=$val"
+    fi
+  done <<EOF
+$(env | grep '^SEEDYPOD_' || true)
+EOF
+fi
+
+ROOT="${THRYVE_ROOT:-}"
+REPO="${THRYVE_REPO:-kaniick/Thryve}"
+TAG="${THRYVE_TAG:-}"
+MIGRATE_ONLY=0
+KEEP_HOSTNAME=0
+BACKUP_DIR="${THRYVE_BACKUP_DIR:-}"
+
+usage() {
+  sed -n '2,6p' "$0" 2>/dev/null || true
+  echo "Usage: thryve-migrate [--tag dev-latest|vX.Y.Z] [--migrate-only] [--keep-hostname]" >&2
+}
+
+# ---- path helpers (prefix with ROOT when set) --------------------------------
+rpath() { printf '%s%s' "$ROOT" "$1"; }
+
+OLD_OPT="$(rpath /opt/seedypod)"
+NEW_OPT="$(rpath /opt/thryve)"
+OLD_ETC="$(rpath /etc/seedypod)"
+NEW_ETC="$(rpath /etc/thryve)"
+OLD_STATE="$(rpath /var/lib/seedypod)"
+NEW_STATE="$(rpath /var/lib/thryve)"
+OLD_UNITS="$(rpath /etc/systemd/system)"
+UDEV_DIR="$(rpath /etc/udev/rules.d)"
+MOSQ_PASS_OLD="$(rpath /etc/mosquitto/seedypod.passwd)"
+MOSQ_PASS_NEW="$(rpath /etc/mosquitto/thryve.passwd)"
+MOSQ_CONF_OLD="$(rpath /etc/mosquitto/conf.d/seedypod.conf)"
+MOSQ_CONF_NEW="$(rpath /etc/mosquitto/conf.d/thryve.conf)"
+SUDOERS_OLD="$(rpath /etc/sudoers.d/seedypod-update)"
+SUDOERS_NEW="$(rpath /etc/sudoers.d/thryve-update)"
+SUDOERS_REST_OLD="$(rpath /etc/sudoers.d/seedypod-restore)"
+SUDOERS_REST_NEW="$(rpath /etc/sudoers.d/thryve-restore)"
+
+OLD_UNITS_LIST=(
+  seedypod-core.service
+  seedypod-port80.service
+  seedypod-usb-recover.service
+  seedypod-first-boot.service
+  seedypod-cloud-init-off.service
+  seedypod-camera-rules.service
+)
+# hald.service keeps its name; only paths inside it change.
+
+move_pair() {
+  # move_pair SRC DEST — no-op if SRC is missing; error if SRC and DEST both exist as non-empty conflicts later.
+  local src="$1" dest="$2"
+  if [ ! -e "$src" ] && [ ! -L "$src" ]; then
+    return 0
+  fi
+  if [ -e "$dest" ] || [ -L "$dest" ]; then
+    # Already migrated, or a partial run. Leave dest; we'll still copy missing data if src is a dir.
+    if [ -d "$src" ] && [ -d "$dest" ]; then
+      # Do not overwrite dest files; only move leftover names that aren't at dest.
+      local f
+      for f in "$src"/* "$src"/.[!.]*; do
+        [ -e "$f" ] || [ -L "$f" ] || continue
+        local base
+        base="$(basename "$f")"
+        if [ ! -e "$dest/$base" ]; then
+          mv "$f" "$dest/$base"
+        fi
+      done
+    fi
+    return 0
+  fi
+  mkdir -p "$(dirname "$dest")"
+  mv "$src" "$dest"
+}
+
+rewrite_tree() {
+  # Replace seedypod path/unit strings inside regular files under a directory or in a single file.
+  local target="$1"
+  [ -e "$target" ] || return 0
+  if [ -d "$target" ]; then
+    local f
+    find "$target" -type f -print0 2>/dev/null | while IFS= read -r -d '' f; do
+      rewrite_file "$f"
+    done
+  else
+    rewrite_file "$target"
+  fi
+}
+
+rewrite_file() {
+  local f="$1"
+  [ -f "$f" ] || return 0
+  # skip obvious binaries
+  case "$f" in
+    *.db|*.db-wal|*.db-shm|*.png|*.jpg|*.jpeg|*.webp|*.woff*|*.gz|*.xz|*.bin) return 0 ;;
+  esac
+  if grep -q 'seedypod\|SEEDYPOD\|Seedypod' "$f" 2>/dev/null; then
+    # Don't rewrite SQLite. grep -I skips binary.
+    grep -Iq . "$f" 2>/dev/null || return 0
+    local tmp
+    tmp="$(mktemp)"
+    sed -e 's|/opt/seedypod|/opt/thryve|g' \
+        -e 's|/etc/seedypod|/etc/thryve|g' \
+        -e 's|/var/lib/seedypod|/var/lib/thryve|g' \
+        -e 's|/var/cache/seedypod|/var/cache/thryve|g' \
+        -e 's|/run/seedypod-busy|/run/thryve-busy|g' \
+        -e 's|/usr/local/share/seedypod|/usr/local/share/thryve|g' \
+        -e 's|/usr/local/sbin/seedypod-|/usr/local/sbin/thryve-|g' \
+        -e 's|/etc/mosquitto/seedypod\.|/etc/mosquitto/thryve.|g' \
+        -e 's|/etc/mosquitto/conf.d/seedypod\.|/etc/mosquitto/conf.d/thryve.|g' \
+        -e 's|/etc/udev/rules.d/[0-9]*-seedypod-|/etc/udev/rules.d/70-thryve-|g' \
+        -e 's|/dev/seedypod/|/dev/thryve/|g' \
+        -e 's|seedypod/camera-|thryve/camera-|g' \
+        -e 's|seedypod-core\.service|thryve-core.service|g' \
+        -e 's|seedypod-port80\.service|thryve-port80.service|g' \
+        -e 's|seedypod-usb-recover\.service|thryve-usb-recover.service|g' \
+        -e 's|seedypod-first-boot\.service|thryve-first-boot.service|g' \
+        -e 's|seedypod-cloud-init-off\.service|thryve-cloud-init-off.service|g' \
+        -e 's|seedypod-camera-rules\.service|thryve-camera-rules.service|g' \
+        -e 's|User=seedypod-core|User=thryve-core|g' \
+        -e 's|User=seedypod-hal|User=thryve-hal|g' \
+        -e 's|Group=seedypod-hal|Group=thryve-hal|g' \
+        -e 's|User=seedypod$|User=thryve|g' \
+        -e 's|SEEDYPOD_|THRYVE_|g' \
+        "$f" > "$tmp"
+    cat "$tmp" > "$f"
+    rm -f "$tmp"
+  fi
+}
+
+rename_unit() {
+  local old="$1" new="$2"
+  local src="$OLD_UNITS/$old" dest="$OLD_UNITS/$new"
+  [ -f "$src" ] || return 0
+  rewrite_file "$src"
+  if [ "$src" != "$dest" ]; then
+    mv -f "$src" "$dest"
+    rm -f "$src.bak" "$src.gz" 2>/dev/null || true
+  fi
+  # drop any drop-in dir rename
+  if [ -d "$OLD_UNITS/${old}.d" ]; then
+    rewrite_tree "$OLD_UNITS/${old}.d"
+    mv -f "$OLD_UNITS/${old}.d" "$OLD_UNITS/${new}.d"
+  fi
+}
+
+rename_user_if_present() {
+  local old="$1" new="$2" home="$3"
+  if command -v id >/dev/null 2>&1 && id -u "$old" >/dev/null 2>&1; then
+    if id -u "$new" >/dev/null 2>&1; then
+      return 0
+    fi
+    if command -v usermod >/dev/null 2>&1 && [ -z "$ROOT" ]; then
+      usermod -l "$new" "$old" 2>/dev/null || true
+      groupmod -n "$new" "$old" 2>/dev/null || true
+      usermod -d "$home" -m "$new" 2>/dev/null || usermod -d "$home" "$new" 2>/dev/null || true
+    fi
+  fi
+}
+
+rename_db() {
+  local data="$1"
+  [ -d "$data" ] || return 0
+  local suffix
+  for suffix in '' '-wal' '-shm'; do
+    if [ -e "$data/seedypod.db$suffix" ] && [ ! -e "$data/thryve.db$suffix" ]; then
+      mv "$data/seedypod.db$suffix" "$data/thryve.db$suffix"
+    fi
+  done
+}
+
+systemctl_cmd() {
+  if [ -n "${THRYVE_SYSTEMCTL:-}" ]; then
+    # shellcheck disable=SC2086
+    eval $THRYVE_SYSTEMCTL "$@"
+    return
+  fi
+  if command -v systemctl >/dev/null 2>&1 && [ -z "$ROOT" ]; then
+    systemctl "$@"
+  fi
+}
+
+migrate_paths() {
+  mkdir -p "$(rpath /var/lib)" "$(rpath /etc)" "$(rpath /opt)"
+
+  move_pair "$OLD_OPT" "$NEW_OPT"
+  move_pair "$OLD_ETC" "$NEW_ETC"
+  move_pair "$OLD_STATE" "$NEW_STATE"
+  move_pair "$(rpath /var/lib/seedypod-update)" "$(rpath /var/lib/thryve-update)"
+  move_pair "$(rpath /var/lib/seedypod-restore)" "$(rpath /var/lib/thryve-restore)"
+  move_pair "$(rpath /var/lib/seedypod-image)" "$(rpath /var/lib/thryve-image)"
+  move_pair "$(rpath /var/cache/seedypod)" "$(rpath /var/cache/thryve)"
+  move_pair "$(rpath /run/seedypod-busy)" "$(rpath /run/thryve-busy)"
+  move_pair "$(rpath /usr/local/share/seedypod)" "$(rpath /usr/local/share/thryve)"
+  move_pair "$MOSQ_PASS_OLD" "$MOSQ_PASS_NEW"
+  move_pair "$MOSQ_CONF_OLD" "$MOSQ_CONF_NEW"
+  move_pair "$SUDOERS_OLD" "$SUDOERS_NEW"
+  move_pair "$SUDOERS_REST_OLD" "$SUDOERS_REST_NEW"
+
+  rename_db "$NEW_OPT/data"
+  # leftover db if prefix wasn't moved but data was under old name
+  rename_db "$OLD_OPT/data"
+
+  # udev rules
+  local rule dest
+  for rule in "$UDEV_DIR"/*seedypod*; do
+    [ -e "$rule" ] || continue
+    dest="${rule//seedypod/thryve}"
+    rewrite_file "$rule"
+    [ "$rule" = "$dest" ] || mv -f "$rule" "$dest"
+  done
+
+  rewrite_tree "$NEW_ETC"
+  rewrite_file "$MOSQ_PASS_NEW"
+  rewrite_file "$MOSQ_CONF_NEW"
+  rewrite_file "$SUDOERS_NEW"
+  rewrite_file "$SUDOERS_REST_NEW"
+  rewrite_file "$(rpath /etc/systemd/system/hald.service)"
+  rewrite_tree "$(rpath /etc/systemd/system/hald.service.d)"
+  rewrite_tree "$(rpath /usr/local/share/thryve)"
+
+  local u new
+  for u in "${OLD_UNITS_LIST[@]}"; do
+    new="${u//seedypod/thryve}"
+    rename_unit "$u" "$new"
+  done
+
+  # helpers on PATH
+  if [ -e "$(rpath /usr/local/sbin/seedypod-update)" ] && [ ! -e "$(rpath /usr/local/sbin/thryve-update)" ]; then
+    mv "$(rpath /usr/local/sbin/seedypod-update)" "$(rpath /usr/local/sbin/thryve-update)"
+  fi
+  if [ -e "$(rpath /usr/local/sbin/seedypod-restore)" ] && [ ! -e "$(rpath /usr/local/sbin/thryve-restore)" ]; then
+    mv "$(rpath /usr/local/sbin/seedypod-restore)" "$(rpath /usr/local/sbin/thryve-restore)"
+  fi
+  if [ -e "$(rpath /usr/local/sbin/seedypod-first-boot)" ] && [ ! -e "$(rpath /usr/local/sbin/thryve-first-boot)" ]; then
+    mv "$(rpath /usr/local/sbin/seedypod-first-boot)" "$(rpath /usr/local/sbin/thryve-first-boot)"
+    rewrite_file "$(rpath /usr/local/sbin/thryve-first-boot)"
+  fi
+
+  rename_user_if_present seedypod-core thryve-core /opt/thryve
+  rename_user_if_present seedypod-hal thryve-hal /var/lib/thryve
+  # only rename a dedicated service login called exactly seedypod
+  rename_user_if_present seedypod thryve /var/lib/thryve
+
+  if [ "$KEEP_HOSTNAME" = 0 ]; then
+    local hn_file
+    hn_file="$(rpath /etc/hostname)"
+    if [ -f "$hn_file" ] && [ "$(tr -d ' \n' < "$hn_file")" = seedypod ]; then
+      printf 'thryve\n' > "$hn_file"
+    fi
+    if [ -z "$ROOT" ] && command -v hostnamectl >/dev/null 2>&1; then
+      if [ "$(hostname 2>/dev/null || true)" = seedypod ]; then
+        hostnamectl set-hostname thryve 2>/dev/null || true
+      fi
+    fi
+  fi
+}
+
+write_rollback() {
+  local dest="$1"
+  mkdir -p "$dest"
+  cat > "$dest/rollback.sh" << 'RB'
+#!/bin/bash
+# Restore the seedypod layout from this snapshot. Run as root.
+set -euo pipefail
+HERE="$(cd "$(dirname "$0")" && pwd)"
+if [ "$(id -u)" -ne 0 ]; then echo "run as root" >&2; exit 1; fi
+systemctl stop thryve-core.service thryve-port80.service hald.service 2>/dev/null || true
+if [ -d "$HERE/opt-seedypod" ]; then rm -rf /opt/seedypod; mkdir -p /opt; cp -a "$HERE/opt-seedypod" /opt/seedypod; fi
+if [ -d "$HERE/etc-seedypod" ]; then rm -rf /etc/seedypod; cp -a "$HERE/etc-seedypod" /etc/seedypod; fi
+if [ -d "$HERE/var-lib-seedypod" ]; then rm -rf /var/lib/seedypod; mkdir -p /var/lib; cp -a "$HERE/var-lib-seedypod" /var/lib/seedypod; fi
+if [ -d "$HERE/systemd" ]; then
+  cp -a "$HERE/systemd/." /etc/systemd/system/
+fi
+systemctl daemon-reload || true
+systemctl disable --now thryve-core.service thryve-port80.service 2>/dev/null || true
+systemctl enable seedypod-core.service hald.service 2>/dev/null || true
+systemctl start hald.service seedypod-core.service 2>/dev/null || true
+echo "Rolled back to the seedypod snapshot in $HERE"
+RB
+  chmod +x "$dest/rollback.sh"
+}
+
+snapshot() {
+  local dest="$1"
+  mkdir -p "$dest/systemd"
+  write_rollback "$dest"
+  [ -e "$OLD_OPT" ] && cp -a "$OLD_OPT" "$dest/opt-seedypod" || true
+  [ -e "$NEW_OPT" ] && [ ! -e "$dest/opt-seedypod" ] && cp -a "$NEW_OPT" "$dest/opt-seedypod" || true
+  [ -e "$OLD_ETC" ] && cp -a "$OLD_ETC" "$dest/etc-seedypod" || true
+  [ -e "$NEW_ETC" ] && [ ! -e "$dest/etc-seedypod" ] && cp -a "$NEW_ETC" "$dest/etc-seedypod" || true
+  [ -e "$OLD_STATE" ] && cp -a "$OLD_STATE" "$dest/var-lib-seedypod" || true
+  [ -e "$NEW_STATE" ] && [ ! -e "$dest/var-lib-seedypod" ] && cp -a "$NEW_STATE" "$dest/var-lib-seedypod" || true
+  local u
+  for u in "${OLD_UNITS_LIST[@]}" hald.service; do
+    [ -f "$OLD_UNITS/$u" ] && cp -a "$OLD_UNITS/$u" "$dest/systemd/" || true
+    [ -d "$OLD_UNITS/$u.d" ] && cp -a "$OLD_UNITS/$u.d" "$dest/systemd/" || true
+  done
+}
+
+install_release() {
+  local tag="$1"
+  local tmp url tarball
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' RETURN
+  tarball="$tmp/thryve-core.tar.gz"
+  if [ "$tag" = latest ]; then
+    url="https://github.com/$REPO/releases/latest/download/thryve-core.tar.gz"
+  else
+    url="https://github.com/$REPO/releases/download/$tag/thryve-core.tar.gz"
+  fi
+  echo "→ downloading $url"
+  curl -fL "$url" -o "$tarball"
+  curl -fL "$url.sha256" -o "$tarball.sha256" || true
+  if [ -f "$tarball.sha256" ]; then
+    (cd "$tmp" && sha256sum -c thryve-core.tar.gz.sha256)
+  fi
+  mkdir -p "$NEW_OPT"
+  tar xzf "$tarball" -C "$NEW_OPT"
+  # HAL binaries: pick the asset for this machine when we are on a real unit.
+  if [ -z "$ROOT" ]; then
+    local machine target asset
+    machine="$(uname -m)"
+    case "$machine" in
+      armv6l|armv7l) target=arm-unknown-linux-gnueabihf ;;
+      aarch64|arm64) target=aarch64-unknown-linux-gnu ;;
+      *) target="" ;;
+    esac
+    if [ -n "$target" ]; then
+      if [ "$tag" = latest ]; then
+        asset="https://github.com/$REPO/releases/latest/download/hald-$target"
+      else
+        asset="https://github.com/$REPO/releases/download/$tag/hald-$target"
+      fi
+      echo "→ downloading $asset"
+      curl -fL "$asset" -o "$tmp/hald"
+      chmod +x "$tmp/hald"
+      cp "$tmp/hald" "$(rpath /usr/local/bin/hald)"
+      if [ "$tag" = latest ]; then
+        curl -fL "https://github.com/$REPO/releases/latest/download/podvision-$target" -o "$tmp/podvision" || true
+      else
+        curl -fL "https://github.com/$REPO/releases/download/$tag/podvision-$target" -o "$tmp/podvision" || true
+      fi
+      if [ -f "$tmp/podvision" ]; then
+        chmod +x "$tmp/podvision"
+        cp "$tmp/podvision" "$(rpath /usr/local/bin/podvision)"
+      fi
+    fi
+    if [ -x "$NEW_OPT/scripts/install-hal" ]; then
+      THRYVE_REPO="$REPO" THRYVE_HAL_VERSION="$tag" bash "$NEW_OPT/scripts/install-hal" || true
+    fi
+    if [ -x "$NEW_OPT/scripts/install" ]; then
+      THRYVE_REPO="$REPO" THRYVE_TARBALL_URL="file://$tarball" bash "$NEW_OPT/scripts/install" || bash "$NEW_OPT/scripts/install"
+    fi
+  fi
+}
+
+has_seedypod_install() {
+  [ -e "$OLD_OPT" ] || [ -e "$OLD_ETC" ] || [ -e "$OLD_STATE" ] || [ -f "$OLD_UNITS/seedypod-core.service" ] || [ -e "$NEW_OPT" ]
+}
+
+migrate_on_unit() {
+  if ! has_seedypod_install && [ ! -e "$NEW_OPT" ]; then
+    echo "No seedypod or Thryve install found under ${ROOT:-/}." >&2
+    return 1
+  fi
+  if [ -z "$BACKUP_DIR" ]; then
+    BACKUP_DIR="$(rpath /var/lib)/thryve-migrate-backup-$(date +%Y%m%d%H%M%S)"
+  fi
+  echo "→ snapshot at $BACKUP_DIR"
+  snapshot "$BACKUP_DIR"
+  echo "→ stopping old units"
+  systemctl_cmd stop seedypod-core.service seedypod-port80.service seedypod-usb-recover.service hald.service 2>/dev/null || true
+  echo "→ moving seedypod paths to Thryve"
+  migrate_paths
+  systemctl_cmd daemon-reload 2>/dev/null || true
+  for u in "${OLD_UNITS_LIST[@]}"; do
+    systemctl_cmd disable "$u" 2>/dev/null || true
+  done
+  systemctl_cmd enable thryve-core.service 2>/dev/null || true
+  systemctl_cmd enable hald.service 2>/dev/null || true
+  echo "Migration of paths and units is done. Rollback snapshot: $BACKUP_DIR"
+  echo "  sudo $BACKUP_DIR/rollback.sh"
+}
+
+# Sourced by tests.
+if [ "${THRYVE_LIB_ONLY:-}" = 1 ]; then
+  return 0 2>/dev/null || exit 0
+fi
+
+# ---- main --------------------------------------------------------------------
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --tag) TAG="${2:-}"; shift 2 ;;
+    --tag=*) TAG="${1#--tag=}"; shift ;;
+    --migrate-only) MIGRATE_ONLY=1; shift ;;
+    --keep-hostname) KEEP_HOSTNAME=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "unknown option: $1" >&2; usage; exit 2 ;;
+  esac
+done
+
+if [ -z "$ROOT" ] && [ "$(id -u)" -ne 0 ]; then
+  echo "thryve-migrate must run as root (try: sudo bash $0 --tag dev-latest)" >&2
+  exit 1
+fi
+
+migrate_on_unit
+
+if [ "$MIGRATE_ONLY" = 1 ]; then
+  echo "→ --migrate-only: not downloading a release"
+  if [ -z "$ROOT" ]; then
+    systemctl_cmd start hald.service 2>/dev/null || true
+    systemctl_cmd start thryve-core.service 2>/dev/null || true
+  fi
+  exit 0
+fi
+
+if [ -z "$TAG" ]; then
+  echo "No --tag given. Paths are migrated. To install a Thryve release, re-run with --tag dev-latest (or v2.0.0 once it exists)." >&2
+  exit 0
+fi
+
+install_release "$TAG"
+if [ -z "$ROOT" ]; then
+  systemctl_cmd start hald.service 2>/dev/null || true
+  systemctl_cmd start thryve-core.service 2>/dev/null || true
+fi
+echo "✓ Thryve is installed from $REPO @$TAG"
+echo "  Open http://thryve.local/ (or the unit's IP). Re-pair HomeKit from Settings."

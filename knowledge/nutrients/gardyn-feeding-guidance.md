@@ -60,4 +60,4 @@ The blog's pH adjustment: pH Down (phosphoric or citric acid) or pH Up (potassiu
 ## Gaps
 
 - Gardyn publishes no EC or ppm for its own plant food at any dose, so a measured EC can't yet be mapped back to "teaspoons of Gardyn food".
-- The help centre and blog disagree on whether to test at all. Once a pH or EC probe is fitted ([Adding a probe](https://github.com/seedypod/core/blob/dev/docs/SENSORS.md)), the unit's own readings settle it for that tank.
+- The help centre and blog disagree on whether to test at all. Once a pH or EC probe is fitted ([Adding a probe](https://github.com/kaniick/Thryve/blob/dev/docs/SENSORS.md)), the unit's own readings settle it for that tank.

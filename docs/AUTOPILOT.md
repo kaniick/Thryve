@@ -66,9 +66,9 @@ examples (dimming when hot, a pH dose) that open in the builder.
 
 | Starter | Fires when | Note |
 |---|---|---|
-| pH outside 5.5–6.5 | The hour's average pH leaves 5.5–6.5 | [pH and EC](https://github.com/seedypod/core/blob/dev/knowledge/nutrients/gardyn-feeding-guidance.md#ph-and-ec) |
-| EC below the crop target | The hour's average EC drops below the low end for what you grow: 0.8 seedlings, 1.0 herbs, 1.2 leafy greens, 2.0 fruiting (mS/cm) | [pH and EC](https://github.com/seedypod/core/blob/dev/knowledge/nutrients/gardyn-feeding-guidance.md#ph-and-ec) |
-| Tank below half | The tank has been under 50 % for 30 minutes | [Gardyn feeding guidance](https://github.com/seedypod/core/blob/dev/knowledge/nutrients/gardyn-feeding-guidance.md#gardyn-feeding-guidance) |
+| pH outside 5.5–6.5 | The hour's average pH leaves 5.5–6.5 | [pH and EC](https://github.com/kaniick/Thryve/blob/dev/knowledge/nutrients/gardyn-feeding-guidance.md#ph-and-ec) |
+| EC below the crop target | The hour's average EC drops below the low end for what you grow: 0.8 seedlings, 1.0 herbs, 1.2 leafy greens, 2.0 fruiting (mS/cm) | [pH and EC](https://github.com/kaniick/Thryve/blob/dev/knowledge/nutrients/gardyn-feeding-guidance.md#ph-and-ec) |
+| Tank below half | The tank has been under 50 % for 30 minutes | [Gardyn feeding guidance](https://github.com/kaniick/Thryve/blob/dev/knowledge/nutrients/gardyn-feeding-guidance.md#gardyn-feeding-guidance) |
 
 Each one only notifies you. Click one to open it in the builder, where you can
 change it before saving. It saves in dry run like any new rule, so check its

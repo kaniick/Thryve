@@ -124,11 +124,11 @@ describe('changing the policy', () => {
 
 describe('policyPath', () => {
   it('sits beside the database', () => {
-    expect(policyPath({}, '/opt/seedypod/data/seedypod.db')).toBe('/opt/seedypod/data/recording-policy.json')
+    expect(policyPath({}, '/opt/thryve/data/thryve.db')).toBe('/opt/thryve/data/recording-policy.json')
   })
 
   it('follows the environment', () => {
-    expect(policyPath({ SEEDYPOD_RECORDING_POLICY_FILE: '/run/p.json' }, 'x.db')).toBe('/run/p.json')
+    expect(policyPath({ THRYVE_RECORDING_POLICY_FILE: '/run/p.json' }, 'x.db')).toBe('/run/p.json')
   })
 })
 

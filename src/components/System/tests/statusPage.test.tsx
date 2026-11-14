@@ -164,7 +164,7 @@ describe('health strip', () => {
     expect(within(strip).getByText('off')).toBeTruthy()
     expect(within(strip).queryByText('Uptime')).toBeNull()
     unmount()
-    data.set('network.status', { available: true, mode: 'setup', ssid: 'seedypod-setup' })
+    data.set('network.status', { available: true, mode: 'setup', ssid: 'thryve-setup' })
     data.set('system.bridge', { state: 'disconnected', broker: 'ha.local', since: null, error: 'ECONNREFUSED' })
     page()
     strip = within(main()).getByRole('region', { name: 'Health' })
@@ -176,7 +176,7 @@ describe('health strip', () => {
     data.delete('settings.get')
     page()
     const strip = within(main()).getByRole('region', { name: 'Health' })
-    expect(within(strip).getByText('seedypod is healthy')).toBeTruthy()
+    expect(within(strip).getByText('thryve is healthy')).toBeTruthy()
     expect(within(strip).getAllByText('—').length).toBeGreaterThanOrEqual(5)
   })
 

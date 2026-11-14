@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 vi.setConfig({ testTimeout: 20_000 })
 
 const script = resolve(import.meta.dirname, '../../scripts/install')
-const helper = resolve(import.meta.dirname, '../../scripts/seedypod-update.cjs')
+const helper = resolve(import.meta.dirname, '../../scripts/thryve-update.cjs')
 
 let dir: string
 let root: string
@@ -22,10 +22,10 @@ let bin: string
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'install-update-'))
   root = join(dir, 'root')
-  prefix = join(dir, 'opt/seedypod')
+  prefix = join(dir, 'opt/thryve')
   bin = join(dir, 'bin')
   for (const d of [root, join(prefix, 'scripts'), bin]) mkdirSync(d, { recursive: true })
-  writeFileSync(join(prefix, 'scripts/seedypod-update.cjs'), readFileSync(helper))
+  writeFileSync(join(prefix, 'scripts/thryve-update.cjs'), readFileSync(helper))
   const stubs: Record<string, string> = {
     // Ownership needs root; everything else runs as it would.
     sudo: 'case "$1" in chown) exit 0 ;; install) shift; while [ "${1#-}" != "$1" ]; do case "$1" in -m|-o|-g) shift 2 ;; *) shift ;; esac; done; exec cp "$@" ;; esac\nexec "$@"',
@@ -39,9 +39,9 @@ beforeEach(() => {
 afterEach(() => rmSync(dir, { recursive: true, force: true }))
 
 function install() {
-  const r = spawnSync('bash', ['-c', `source "${script}"; CORE_USER=seedypod-core; install_update_helper`], {
+  const r = spawnSync('bash', ['-c', `source "${script}"; CORE_USER=thryve-core; install_update_helper`], {
     encoding: 'utf8',
-    env: { PATH: `${bin}:${process.env.PATH}`, SEEDYPOD_ROOT: root, SEEDYPOD_PREFIX: prefix, SEEDYPOD_LIB_ONLY: '1', STATE: dir },
+    env: { PATH: `${bin}:${process.env.PATH}`, THRYVE_ROOT: root, THRYVE_PREFIX: prefix, THRYVE_LIB_ONLY: '1', STATE: dir },
   })
   return { code: r.status, out: r.stdout, err: r.stderr }
 }
@@ -49,7 +49,7 @@ function install() {
 describe('the update helper', () => {
   it('lands root-owned in /usr/local/sbin with this prefix written in', () => {
     expect(install()).toMatchObject({ code: 0 })
-    const installed = readFileSync(join(root, 'usr/local/sbin/seedypod-update'), 'utf8')
+    const installed = readFileSync(join(root, 'usr/local/sbin/thryve-update'), 'utf8')
     expect(installed).toContain(`const INSTALLED_PREFIX = '${prefix}'`)
     expect(installed).not.toContain('__PREFIX__')
     // Its own copy of the next release still gets the prefix written in.
@@ -58,22 +58,22 @@ describe('the update helper', () => {
 
   it('lets core run it with each fixed command and nothing else', () => {
     expect(install()).toMatchObject({ code: 0 })
-    const rules = readFileSync(join(root, 'etc/sudoers.d/seedypod-update'), 'utf8').trim().split('\n')
+    const rules = readFileSync(join(root, 'etc/sudoers.d/thryve-update'), 'utf8').trim().split('\n')
     expect(rules).toEqual([
-      'seedypod-core ALL=(root) NOPASSWD: /usr/local/sbin/seedypod-update --status',
-      'seedypod-core ALL=(root) NOPASSWD: /usr/local/sbin/seedypod-update --check',
-      'seedypod-core ALL=(root) NOPASSWD: /usr/local/sbin/seedypod-update --start',
-      'seedypod-core ALL=(root) NOPASSWD: /usr/local/sbin/seedypod-update --channel stable',
-      'seedypod-core ALL=(root) NOPASSWD: /usr/local/sbin/seedypod-update --channel dev',
+      'thryve-core ALL=(root) NOPASSWD: /usr/local/sbin/thryve-update --status',
+      'thryve-core ALL=(root) NOPASSWD: /usr/local/sbin/thryve-update --check',
+      'thryve-core ALL=(root) NOPASSWD: /usr/local/sbin/thryve-update --start',
+      'thryve-core ALL=(root) NOPASSWD: /usr/local/sbin/thryve-update --channel stable',
+      'thryve-core ALL=(root) NOPASSWD: /usr/local/sbin/thryve-update --channel dev',
     ])
     // A rule with no arguments, or a wildcard, would let core pass anything.
-    for (const r of rules) expect(r).toMatch(/seedypod-update --[a-z]+( (stable|dev))?$/)
+    for (const r of rules) expect(r).toMatch(/thryve-update --[a-z]+( (stable|dev))?$/)
     expect(readFileSync(join(dir, 'log'), 'utf8')).toMatch(/^visudo -cf /)
   })
 
   it('writes no rule visudo rejects', () => {
     writeFileSync(join(dir, 'bad-sudoers'), '')
     expect(install().code).not.toBe(0)
-    expect(existsSync(join(root, 'etc/sudoers.d/seedypod-update'))).toBe(false)
+    expect(existsSync(join(root, 'etc/sudoers.d/thryve-update'))).toBe(false)
   })
 })

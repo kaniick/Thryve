@@ -9,7 +9,7 @@ sources: [{"resource": "https://github.com/sleepypod/core", "title": "sleepypod/
 
 # Privacy
 
-seedypod makes no outbound connections unless you configure one. Camera stills
+thryve makes no outbound connections unless you configure one. Camera stills
 and timelapses stay on the unit (or on the core host you chose) and are served
 only on your LAN. There is no account, no telemetry, and no crash reporting.
 The Vercel demo runs a simulator in your browser and talks to no backend.
@@ -21,7 +21,7 @@ under **Settings → Off-device storage and analysis** (ADR 0019):
 
 - **Mirror.** With an S3-compatible endpoint, bucket and keys saved, every new
   still (and any analysis mask you chose to keep) is copied to that bucket.
-  The bucket is yours: seedypod talks to no other service, and the keys stay
+  The bucket is yours: thryve talks to no other service, and the keys stay
   on the unit (they are never returned by the API). Clear the endpoint to stop
   copying; objects already in the bucket stay until you delete them there.
   With the mirror on, a **backup** of the unit goes to `backups/` in the same
@@ -36,7 +36,7 @@ under **Settings → Off-device storage and analysis** (ADR 0019):
 **HomeKit** (Settings → Apple Home, off by default) is local too. iPhones on
 your network pair with the unit and control it directly over HAP; nothing
 goes through Apple's servers unless you add a home hub, which is Apple's
-service, not seedypod's. The setup code is shown to anyone on your LAN, like
+service, not thryve's. The setup code is shown to anyone on your LAN, like
 the rest of the API (ADR 0012). A backup holds HomeKit's pairing keys.
 
 A dataset export (`GET /api/datasets/export`) and a backup download

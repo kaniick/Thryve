@@ -30,7 +30,7 @@ appear as one unit, and four things stand in the way today:
   and GPIO24 and advertise a pump it doesn't have.
 - Core binds to one unit. `createHal` takes one `HAL_UNIT_ID`.
   [hald reference](../hardware/hal.md) says core discovers units over mDNS, but
-  core has no `_seedypod-hal._tcp` browser.
+  core has no `_thryve-hal._tcp` browser.
 - `MqttHalClient` keeps the last value of every sensor when a daemon goes
   offline. `sensor/<id>` isn't retained, so nothing replaces it. That's
   tolerable when the daemon and core share a Pi. It isn't for a box on Wi-Fi.
@@ -59,7 +59,7 @@ First use: one Atlas EZO-pH circuit.
 ```toml
 role = "accessory"
 parent = "gardyn-abc123"
-mqtt_url = "mqtt://seedypod.local:1884"
+mqtt_url = "mqtt://thryve.local:1884"
 mqtt_username = "accessory"
 mqtt_password = "…"
 
@@ -77,7 +77,7 @@ AGENTS.md.
 
 ### Core
 
-- Core subscribes to `seedypod/+/system`. A retained `system` whose `parent`
+- Core subscribes to `thryve/+/system`. A retained `system` whose `parent`
   equals `HAL_UNIT_ID` creates an `MqttHalClient` for that unit on the existing
   connection. Accessories bind at runtime with no change to core's config, so
   this doesn't need the mDNS browser. Correct the line in the hald reference

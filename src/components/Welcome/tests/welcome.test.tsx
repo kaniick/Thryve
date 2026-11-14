@@ -50,8 +50,8 @@ describe('Welcome', () => {
 
   it('lists a bucket from settings typed in here and restores the pick without asking', () => {
     data.set('browseResult', [
-      { key: 'backups/seedypod-backup-kitchen-20261031-030000.tar.gz', name: 'x', unit: 'kitchen', createdAt: '2026-10-31T03:00:00Z', size: 2_400_000 },
-      { key: 'backups/seedypod-backup-kitchen-20261030-030000.tar.gz', name: 'y', unit: 'kitchen', createdAt: '2026-10-30T03:00:00Z', size: 2_300_000 },
+      { key: 'backups/thryve-backup-kitchen-20261031-030000.tar.gz', name: 'x', unit: 'kitchen', createdAt: '2026-10-31T03:00:00Z', size: 2_400_000 },
+      { key: 'backups/thryve-backup-kitchen-20261030-030000.tar.gz', name: 'y', unit: 'kitchen', createdAt: '2026-10-30T03:00:00Z', size: 2_300_000 },
     ])
     render(<Welcome />)
     fireEvent.click(screen.getByRole('button', { name: 'Restore from a backup' }))
@@ -67,19 +67,19 @@ describe('Welcome', () => {
     expect(calls.browse).toHaveBeenCalledWith({ config })
     expect(screen.getAllByText('kitchen · 2.4 MB')).toHaveLength(1)
     fireEvent.click(screen.getAllByRole('button', { name: 'Restore' })[0] as HTMLElement)
-    expect(calls.fromBucket).toHaveBeenCalledWith({ key: 'backups/seedypod-backup-kitchen-20261031-030000.tar.gz', config })
+    expect(calls.fromBucket).toHaveBeenCalledWith({ key: 'backups/thryve-backup-kitchen-20261031-030000.tar.gz', config })
     handlers.get('fromBucket')?.onSuccess?.()
   })
 
   it('uploads a file and shows a refusal from the helper', async () => {
-    const fetch = vi.fn(async () => new Response(JSON.stringify({ error: 'This backup was made by seedypod core main@fff (database schema 9); this unit\'s core has schema 7.', code: 'newer-schema' }), { status: 409 }))
+    const fetch = vi.fn(async () => new Response(JSON.stringify({ error: 'This backup was made by thryve core main@fff (database schema 9); this unit\'s core has schema 7.', code: 'newer-schema' }), { status: 409 }))
     vi.stubGlobal('fetch', fetch)
     render(<Welcome />)
     fireEvent.click(screen.getByRole('button', { name: 'Restore from a backup' }))
-    const file = new File([new Uint8Array([0x1F, 0x8B])], 'seedypod-backup-kitchen-20261031-030000.tar.gz', { type: 'application/gzip' })
+    const file = new File([new Uint8Array([0x1F, 0x8B])], 'thryve-backup-kitchen-20261031-030000.tar.gz', { type: 'application/gzip' })
     fireEvent.change(screen.getByLabelText('Backup file'), { target: { files: [file] } })
     fireEvent.click(screen.getByRole('button', { name: 'Restore this file' }))
-    await waitFor(() => expect(screen.getByText(/^This backup was made by seedypod core main@fff/)).toBeTruthy())
+    await waitFor(() => expect(screen.getByText(/^This backup was made by thryve core main@fff/)).toBeTruthy())
     expect(fetch).toHaveBeenCalledWith('/api/backup/restore', expect.objectContaining({ method: 'POST', body: file }))
   })
 

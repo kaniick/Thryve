@@ -21,8 +21,8 @@ const inspector = (o: Partial<ConstructorParameters<typeof NodeDatabaseInspector
   new NodeDatabaseInspector({ path, migrationsFolder: defaultMigrationsFolder(), worker: null, now: () => new Date(clock), ...o })
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'seedypod-inspector-'))
-  path = join(dir, 'seedypod.db')
+  dir = mkdtempSync(join(tmpdir(), 'thryve-inspector-'))
+  path = join(dir, 'thryve.db')
   store = new SqliteStore({ url: path })
   clock = Date.parse('2026-11-06T12:00:00Z')
 })

@@ -1,7 +1,7 @@
 /**
  * Core's side of an update (ADR-0026): the one place core runs the root
- * update helper (`scripts/seedypod-update.cjs`, installed as
- * /usr/local/sbin/seedypod-update), always through sudo with the fixed
+ * update helper (`scripts/thryve-update.cjs`, installed as
+ * /usr/local/sbin/thryve-update), always through sudo with the fixed
  * arguments its sudoers rule lists. Core itself never reaches the internet;
  * the helper does, when someone asks. While an update runs, the helper's
  * status file and log become `update` events on the bus, so Settings follows
@@ -12,10 +12,11 @@ import { existsSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import type { EventBus } from '../lib/eventBus'
 import { isRunning, UPDATE_STATES, type UpdateChannel, type UpdateState } from './types'
+import { envValue } from '../lib/legacyEnv'
 
 export { isRunning, UPDATE_STATES, type UpdateChannel, type UpdateState } from './types'
 
-export const INSTALLED_UPDATER = '/usr/local/sbin/seedypod-update'
+export const INSTALLED_UPDATER = '/usr/local/sbin/thryve-update'
 
 export interface UpdateStatus {
   op?: string
@@ -61,9 +62,10 @@ export class UpdateRefused extends Error {
   }
 }
 
-/** `SEEDYPOD_UPDATE_CMD` (a JSON array) overrides; otherwise sudo and the installed helper, when it's there. */
+/** `THRYVE_UPDATE_CMD` (a JSON array) overrides; otherwise sudo and the installed helper, when it's there. */
 export function updateCommand(env: NodeJS.ProcessEnv = process.env): string[] | null {
-  if (env.SEEDYPOD_UPDATE_CMD) return JSON.parse(env.SEEDYPOD_UPDATE_CMD) as string[]
+  const cmd = envValue(env, 'THRYVE_UPDATE_CMD')
+  if (cmd) return JSON.parse(cmd) as string[]
   return existsSync(INSTALLED_UPDATER) ? ['sudo', '-n', INSTALLED_UPDATER] : null
 }
 

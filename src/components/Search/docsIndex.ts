@@ -4,7 +4,7 @@
  * imports: Node runs this file directly with type stripping.
  */
 
-export const DOCS_BASE = 'https://seedypod.github.io'
+export const DOCS_BASE = 'https://github.com/kaniick/Thryve/tree/dev/docs'
 export const DOCS_INDEX_URL = `${DOCS_BASE}/search-index.json`
 
 export interface DocsHeading {
@@ -40,7 +40,7 @@ const isText = (v: unknown, max = 2000): v is string => typeof v === 'string' &&
 function isDocsPath(v: unknown): v is string {
   if (!isText(v, 500) || !v.startsWith('/')) return false
   try {
-    return new URL(v, DOCS_BASE).origin === DOCS_BASE
+    return new URL(v, DOCS_BASE).origin === new URL(DOCS_BASE).origin
   }
   catch {
     return false

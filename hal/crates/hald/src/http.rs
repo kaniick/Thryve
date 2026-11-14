@@ -146,12 +146,12 @@ pub fn camera_name(file: &str) -> Option<&str> {
 fn link_headers(damaged: u32, boots: Option<(usize, usize)>) -> HeaderMap {
     let mut headers = HeaderMap::new();
     headers.insert(
-        HeaderName::from_static("x-seedypod-damaged-frames"),
+        HeaderName::from_static("x-thryve-damaged-frames"),
         HeaderValue::from(damaged),
     );
     if let Some((missing, total)) = boots {
         if let Ok(value) = HeaderValue::from_str(&format!("{missing}/{total}")) {
-            headers.insert(HeaderName::from_static("x-seedypod-hub-boots"), value);
+            headers.insert(HeaderName::from_static("x-thryve-hub-boots"), value);
         }
     }
     headers
@@ -524,11 +524,11 @@ mod tests {
     #[test]
     fn link_headers_carry_the_damage_and_the_boots_when_known() {
         let h = link_headers(2, Some((8, 10)));
-        assert_eq!(h["x-seedypod-damaged-frames"], "2");
-        assert_eq!(h["x-seedypod-hub-boots"], "8/10");
+        assert_eq!(h["x-thryve-damaged-frames"], "2");
+        assert_eq!(h["x-thryve-hub-boots"], "8/10");
         let h = link_headers(0, None);
-        assert_eq!(h["x-seedypod-damaged-frames"], "0");
-        assert!(!h.contains_key("x-seedypod-hub-boots"));
+        assert_eq!(h["x-thryve-damaged-frames"], "0");
+        assert!(!h.contains_key("x-thryve-hub-boots"));
     }
 
     #[tokio::test]
@@ -536,13 +536,13 @@ mod tests {
         let (state, _rx) = state_with("glitchy", Box::new(Glitchy(2)));
         let res = camera(State(state), Path("glitchy.jpg".to_owned())).await;
         assert_eq!(res.status(), StatusCode::OK);
-        assert_eq!(res.headers()["x-seedypod-damaged-frames"], "2");
+        assert_eq!(res.headers()["x-thryve-damaged-frames"], "2");
 
         // A refused capture says so too.
         let (state, _rx) = state_with("lower", Box::new(Broken));
         let res = camera(State(state), Path("lower.jpg".to_owned())).await;
         assert_eq!(res.status(), StatusCode::SERVICE_UNAVAILABLE);
-        assert_eq!(res.headers()["x-seedypod-damaged-frames"], "0");
+        assert_eq!(res.headers()["x-thryve-damaged-frames"], "0");
     }
 
     #[tokio::test]

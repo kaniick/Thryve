@@ -1,17 +1,17 @@
 /**
- * The backup bundle (ADR-0021): `seedypod-backup-<unit>-<date>.tar.gz` holding
+ * The backup bundle (ADR-0021): `thryve-backup-<unit>-<date>.tar.gz` holding
  * the database, `hal.toml`, the Mosquitto LAN password file, `hald`'s state
  * files, HomeKit's identity and pairings and, optionally, the photos. `manifest.json` is the last entry, so
  * the checksums are taken as the files stream by and no photo is read twice.
- * `scripts/seedypod-restore.cjs` is the reader; keep the two in step.
+ * `scripts/thryve-restore.cjs` is the reader; keep the two in step.
  */
 import { createHash } from 'node:crypto'
 import { tarStream, type TarEntry } from '../datasets/tar'
 
-export const BACKUP_FORMAT = { name: 'seedypod-backup', version: 1 } as const
+export const BACKUP_FORMAT = { name: 'thryve-backup', version: 1 } as const
 
 export interface BundleFile {
-  /** Path inside the archive, e.g. `etc/seedypod/hal.toml`. */
+  /** Path inside the archive, e.g. `etc/thryve/hal.toml`. */
   name: string
   bytes: Uint8Array
 }
@@ -32,10 +32,10 @@ export interface BackupManifest {
 
 /** Archive names the restore helper accepts. Anything else in a bundle makes it refuse the whole bundle. */
 export const BUNDLE_NAMES = [
-  /^seedypod\.db$/,
-  /^etc\/seedypod\/hal\.toml$/,
-  /^etc\/mosquitto\/seedypod\.passwd$/,
-  /^var\/lib\/seedypod\/[a-z0-9_-]+\.json$/,
+  /^thryve\.db$/,
+  /^etc\/thryve\/hal\.toml$/,
+  /^etc\/mosquitto\/thryve\.passwd$/,
+  /^var\/lib\/thryve\/[a-z0-9_-]+\.json$/,
   /^homekit\/[A-Za-z0-9][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]+)?\.json$/,
   /^captures\/(?:[\w-][\w.@-]*\/)*[\w-][\w.@-]*$/,
 ]
@@ -43,14 +43,14 @@ export const BUNDLE_NAMES = [
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 32) || 'unit'
 const stamp = (d: Date) => d.toISOString().slice(0, 19).replace(/[-:]/g, '').replace('T', '-')
 
-/** `seedypod-backup-kitchen-20261031-030000.tar.gz` (UTC), so names sort by time within a unit. */
+/** `thryve-backup-kitchen-20261031-030000.tar.gz` (UTC), so names sort by time within a unit. */
 export function backupName(unit: string, at: Date): string {
-  return `seedypod-backup-${slug(unit)}-${stamp(at)}.tar.gz`
+  return `thryve-backup-${slug(unit)}-${stamp(at)}.tar.gz`
 }
 
 /** Unit slug and creation time back out of a bundle's file name; null for anything else. */
 export function parseBackupName(name: string): { unit: string, createdAt: string } | null {
-  const m = name.match(/^seedypod-backup-([a-z0-9-]+)-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})\.tar\.gz$/)
+  const m = name.match(/^thryve-backup-([a-z0-9-]+)-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})\.tar\.gz$/)
   if (!m) return null
   const [, unit, y, mo, d, h, mi, s] = m
   return { unit: unit as string, createdAt: `${y}-${mo}-${d}T${h}:${mi}:${s}Z` }

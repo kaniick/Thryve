@@ -48,9 +48,9 @@ beforeAll(async () => {
       remove: async key => void bucket.delete(key),
     }),
     sources: {
-      paths: { etcDir: '/etc/seedypod', stateDir: '/var/lib/seedypod', mosquittoPasswd: '/nope', capturesDir: './data/captures' },
+      paths: { etcDir: '/etc/thryve', stateDir: '/var/lib/thryve', mosquittoPasswd: '/nope', capturesDir: './data/captures' },
       database: async () => new TextEncoder().encode('db'),
-      systemFiles: () => [{ name: 'etc/seedypod/hal.toml', path: '/etc/seedypod/hal.toml', optional: false }],
+      systemFiles: () => [{ name: 'etc/thryve/hal.toml', path: '/etc/thryve/hal.toml', optional: false }],
       read: async () => new TextEncoder().encode('unit_id = "bench"'),
       schema: () => ({ migrations: 1, tag: '0000' }),
     },
@@ -77,9 +77,9 @@ describe('backup over HTTP', () => {
     const r = await fetch(`${base}/api/backup/download`)
     expect(r.status).toBe(200)
     expect(r.headers.get('content-type')).toBe('application/gzip')
-    expect(r.headers.get('content-disposition')).toMatch(/^attachment; filename="seedypod-backup-bench-\d{8}-\d{6}\.tar\.gz"$/)
+    expect(r.headers.get('content-disposition')).toMatch(/^attachment; filename="thryve-backup-bench-\d{8}-\d{6}\.tar\.gz"$/)
     const files = untar(new Uint8Array(await r.arrayBuffer()))
-    expect([...files.keys()]).toEqual(['seedypod.db', 'etc/seedypod/hal.toml', 'manifest.json'])
+    expect([...files.keys()]).toEqual(['thryve.db', 'etc/thryve/hal.toml', 'manifest.json'])
     const status = await (await fetch(`${base}/api/backup`)).json() as { available: boolean, lastSuccess: { destination: string } | null, nightly: { enabled: boolean } }
     expect(status).toMatchObject({ available: true, lastSuccess: { destination: 'download' }, nightly: { enabled: false } })
   })
@@ -100,18 +100,18 @@ describe('backup over HTTP', () => {
   })
 
   it('maps the helper\'s refusals: a newer schema is 409, a bad bundle 400', async () => {
-    answer({ ok: false, code: 'newer-schema', error: 'This backup was made by seedypod core main@fff…' }, 3)
+    answer({ ok: false, code: 'newer-schema', error: 'This backup was made by thryve core main@fff…' }, 3)
     const newer = await fetch(`${base}/api/backup/restore`, { method: 'POST', body: 'x' })
     expect(newer.status).toBe(409)
-    expect(await newer.json()).toEqual({ error: 'This backup was made by seedypod core main@fff…', code: 'newer-schema' })
+    expect(await newer.json()).toEqual({ error: 'This backup was made by thryve core main@fff…', code: 'newer-schema' })
     answer({ ok: false, code: 'invalid', error: 'unexpected file in the bundle: etc/passwd' }, 4)
     expect((await fetch(`${base}/api/backup/restore`, { method: 'POST', body: 'x' })).status).toBe(400)
   })
 
   it('browses a bucket that isn\'t saved, restores a key from it, and undoes', async () => {
-    bucket.set('backups/seedypod-backup-bench-20261031-030000.tar.gz', new Uint8Array([7, 7, 7]))
+    bucket.set('backups/thryve-backup-bench-20261031-030000.tar.gz', new Uint8Array([7, 7, 7]))
     const list = await (await fetch(`${base}/api/backup/browse`, json({ config }))).json() as { key: string, unit: string }[]
-    expect(list).toMatchObject([{ key: 'backups/seedypod-backup-bench-20261031-030000.tar.gz', unit: 'bench' }])
+    expect(list).toMatchObject([{ key: 'backups/thryve-backup-bench-20261031-030000.tar.gz', unit: 'bench' }])
     answer({ ok: true, detached: true })
     const r = await fetch(`${base}/api/backup/restore-from-bucket`, json({ key: list[0]?.key, config }))
     expect(r.status).toBe(200)

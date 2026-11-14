@@ -75,7 +75,7 @@ describe('WifiPage', () => {
   })
 
   it('guides the owner while the hotspot is up and after a failed join', () => {
-    data.set('status', { ...client, mode: 'setup', ssid: 'seedypod-setup-ab12', ip: '10.42.0.1', setup: { ssid: 'seedypod-setup-ab12', url: 'http://10.42.0.1:3000/wifi', until: '2026-10-31T12:15:00Z' }, lastError: 'couldn\'t join Home: Secrets were required' })
+    data.set('status', { ...client, mode: 'setup', ssid: 'thryve-setup-ab12', ip: '10.42.0.1', setup: { ssid: 'thryve-setup-ab12', url: 'http://10.42.0.1:3000/wifi', until: '2026-10-31T12:15:00Z' }, lastError: 'couldn\'t join Home: Secrets were required' })
     data.set('connectResult', { ok: false, detail: 'a WPA password is 8–63 characters' })
     render(<WifiPage />)
     expect(screen.getByText('Setup hotspot is on')).toBeTruthy()

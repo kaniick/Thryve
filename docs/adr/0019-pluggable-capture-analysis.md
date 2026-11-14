@@ -12,12 +12,12 @@ sources: [{"resource": "/adr/0004-two-tier-hal-core.md", "title": "ADR 0004: Two
 **Status:** Accepted, amended 2026-11-09 (learned models run in plain TypeScript, not ONNX) and 2026-11-09 (a native runner, `podvision`, runs them first)
 **Date:** 2026-10-31
 
-> **Status note, 2026-11-09 ([#191](https://github.com/seedypod/core/issues/191)).** The native
+> **Status note, 2026-11-09 ([#191](https://github.com/kaniick/Thryve/issues/191)).** The native
 > backend the amendment below left room for exists. On the unit, `pod-state@1` took about 33 s
 > per capture in TypeScript, and the vision worker shared the Pi Zero W's one core with core's
 > API, which slowed from 30 ms to as much as 1 s. `podvision` (`hal/crates/podvision`) is a small
 > Rust binary that core runs once per capture as a `nice` 19 child, under a timeout. It decodes the
-> still, crops the pods and runs every enabled pod-state revision from the same `seedypod-cnn`
+> still, crops the pods and runs every enabled pod-state revision from the same `thryve-cnn`
 > weights files, then prints JSON. It is a separate release binary like `hald`, but it links none
 > of `hald`, and analysis stays core's: core decides what runs and stores the results under the
 > same analyser ids and versions. The TypeScript runner stays as the fallback, used when the
@@ -26,7 +26,7 @@ sources: [{"resource": "/adr/0004-two-tier-hal-core.md", "title": "ADR 0004: Two
 > stills they differ by what their JPEG decoders do, and podvision's decoder is the one that
 > matches training's (PIL). [Capture analysis](../ANALYSIS.md#native-runner) gives the numbers.
 
-> **Amendment, 2026-11-09 ([#185](https://github.com/seedypod/core/issues/185)).** Decision 1
+> **Amendment, 2026-11-09 ([#185](https://github.com/kaniick/Thryve/issues/185)).** Decision 1
 > said a learned model would be "one more analyser that loads an ONNX file". That does not work
 > on the unit this targets, a Pi Zero W (ARMv6, no NEON, 426 MB RAM). Measured on it:
 >
@@ -39,7 +39,7 @@ sources: [{"resource": "/adr/0004-two-tier-hal-core.md", "title": "ADR 0004: Two
 > Captures are hourly, so about 23 s on the vision worker per capture is fine. So learned models
 > ship as plain-TypeScript analysers with a weights file, the way sleepypod runs its sleep-stage
 > model: fit off the device ([seedypod/training](https://github.com/seedypod/training)), ship a
-> small, inspectable file (`models/pod-state.json`, format `seedypod-cnn` v1: a JSON header with
+> small, inspectable file (`models/pod-state.json`, format `thryve-cnn` v1: a JSON header with
 > the architecture, classes, input size and normalisation, and the tensors as base64 float32),
 > and run it in plain code. The forward pass (`src/vision/cnn.ts`) is one narrow, pure boundary,
 > a parsed weights file and a `Float32Array` in, logits out, kept apart from cropping,
@@ -100,7 +100,7 @@ number per pod in `pod_growth`. It works as a first signal, but:
 3. **Export is a dataset, not a backup.** `GET /datasets/export` streams a
    bundle of photos, results, pod and grow-cycle metadata and the sensor
    telemetry for the same windows, as JSONL (Parquet later if it earns it).
-   This is seedypod's counterpart of sleepypod's sleep-stage dataset script:
+   This is thryve's counterpart of sleepypod's sleep-stage dataset script:
    the thing you pull to a laptop to measure, recalibrate or train.
 
 4. **Off-device storage is a second `BlobSink`.** `BlobSink` already

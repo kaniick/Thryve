@@ -2,7 +2,7 @@
  * Autopilot engine (ADR-0020): evaluates WHEN/IF/THEN rules on a 60 s tick.
  * Trigger handling, three-valued conditions, windows, cooldowns, the runaway
  * guard and the kill switch follow sleepypod's `src/automation/engine.ts`;
- * the actions are seedypod's and go through the light arbiter or hald, whose
+ * the actions are thryve's and go through the light arbiter or hald, whose
  * guards still bound them. Every evaluation where a trigger was active writes
  * one audit row.
  *

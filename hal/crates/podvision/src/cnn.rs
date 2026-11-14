@@ -1,4 +1,4 @@
-//! The forward pass of a `seedypod-cnn` v1 weights file, the same network
+//! The forward pass of a `thryve-cnn` v1 weights file, the same network
 //! `src/vision/cnn.ts` runs: conv3x3 (+ ReLU), maxpool2, gap and dense, on
 //! height × width × channels (HWC) activations.
 //!
@@ -13,7 +13,9 @@ use anyhow::{anyhow, bail, Context, Result};
 use base64::Engine as _;
 use serde::Deserialize;
 
-pub const MODEL_FORMAT: &str = "seedypod-cnn";
+pub const MODEL_FORMAT: &str = "thryve-cnn";
+/// Weights files shipped by seedypod still use this format name.
+pub const LEGACY_MODEL_FORMAT: &str = "seedypod-cnn";
 pub const MODEL_FORMAT_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -140,8 +142,8 @@ fn tensor(file: &ModelFile, name: &str, shape: &[usize]) -> Result<Vec<f32>> {
 impl Model {
     /// Validate a weights file and decode its tensors, with the checks `parseModel` makes.
     pub fn parse(text: &str) -> Result<Model> {
-        let file: ModelFile = serde_json::from_str(text).context("not a seedypod-cnn weights file")?;
-        if file.format != MODEL_FORMAT {
+        let file: ModelFile = serde_json::from_str(text).context("not a thryve-cnn weights file")?;
+        if file.format != MODEL_FORMAT && file.format != LEGACY_MODEL_FORMAT {
             bail!("not a {MODEL_FORMAT} weights file");
         }
         if file.format_version != MODEL_FORMAT_VERSION {
@@ -537,7 +539,13 @@ mod tests {
     #[test]
     fn refuses_broken_files_naming_the_problem() {
         assert!(Model::parse("{").is_err());
-        assert!(broken(|v| v["format"] = "onnx".into()).contains("not a seedypod-cnn"));
+        assert!(broken(|v| v["format"] = "onnx".into()).contains("not a thryve-cnn"));
+        let mut legacy: serde_json::Value = serde_json::from_str(&model_json()).unwrap();
+        legacy["format"] = "seedypod-cnn".into();
+        assert!(
+            Model::parse(&legacy.to_string()).is_ok(),
+            "seedypod-cnn still loads"
+        );
         assert!(broken(|v| v["formatVersion"] = 2.into()).contains("format version 2"));
         assert!(broken(|v| v["version"] = 0.into()).contains("version must"));
         assert!(broken(|v| v["classes"] = serde_json::json!(["a"])).contains("at least two"));
@@ -550,7 +558,7 @@ mod tests {
         assert!(
             broken(|v| v["layers"][5] = serde_json::json!({ "type": "maxpool2" })).contains("needs a gap")
         );
-        assert!(broken(|v| v["layers"][0]["type"] = "conv5x5".into()).contains("not a seedypod-cnn"));
+        assert!(broken(|v| v["layers"][0]["type"] = "conv5x5".into()).contains("not a thryve-cnn"));
         assert!(broken(|v| {
             let l = v["layers"].as_array_mut().unwrap();
             l.push(serde_json::json!({ "type": "gap" }));

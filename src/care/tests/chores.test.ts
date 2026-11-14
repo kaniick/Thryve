@@ -180,7 +180,7 @@ describe('refresh, clean and roots', () => {
   it('suggests a deep clean every third refresh, saying the interval is a guess', () => {
     const store = garden()
     log(store, 'clean', 85)
-    expect(one(store, snap({}), 'clean')).toMatchObject({ state: 'due', lastDoneAt: ago(85), reason: 'Calendar guess, as Gardyn publishes no cleaning interval: 85 d since the last clean. seedypod suggests a deep clean every third refresh (84 d).' })
+    expect(one(store, snap({}), 'clean')).toMatchObject({ state: 'due', lastDoneAt: ago(85), reason: 'Calendar guess, as Gardyn publishes no cleaning interval: 85 d since the last clean. thryve suggests a deep clean every third refresh (84 d).' })
   })
 
   it('checks roots on the grow-reminder interval, with no citation since no number is dosed', () => {

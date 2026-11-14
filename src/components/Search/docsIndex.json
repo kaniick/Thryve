@@ -1,13 +1,13 @@
 {
   "version": 1,
   "generatedAt": "2026-11-02T07:07:28.116Z",
-  "base": "https://seedypod.github.io",
+  "base": "https://github.com/kaniick/Thryve/tree/dev/docs",
   "pages": [
     {
       "path": "/about/",
-      "title": "About seedypod",
+      "title": "About thryve",
       "section": null,
-      "description": "Why seedypod exists, where it stands, and how it relates to sleepypod and garden-of-eden.",
+      "description": "Why thryve exists, where it stands, and how it relates to sleepypod and garden-of-eden.",
       "headings": [
         {
           "title": "Project status",
@@ -28,7 +28,7 @@
       "path": "/core/",
       "title": "User guide",
       "section": "User guide",
-      "description": "Install seedypod on your Gardyn and use the web UI, schedules, grow cycle and Home Assistant.",
+      "description": "Install thryve on your Gardyn and use the web UI, schedules, grow cycle and Home Assistant.",
       "headings": [
         {
           "title": "What you can do",
@@ -204,7 +204,7 @@
     },
     {
       "path": "/core/installation/",
-      "title": "Install seedypod on a Gardyn",
+      "title": "Install thryve on a Gardyn",
       "section": "User guide",
       "description": "Back up the stock card, flash Raspberry Pi OS, install hald and core, connect Home Assistant.",
       "headings": [
@@ -267,7 +267,7 @@
       "path": "/core/maintenance/",
       "title": "Maintenance and self-repair",
       "section": "User guide",
-      "description": "Routine care, what each alert means and how to clear it, health checks, backups, updates, and replacing parts on a seedypod unit.",
+      "description": "Routine care, what each alert means and how to clear it, health checks, backups, updates, and replacing parts on a thryve unit.",
       "headings": [
         {
           "title": "Routine care",
@@ -392,7 +392,7 @@
       "path": "/core/web-ui/",
       "title": "Web UI tour",
       "section": "User guide",
-      "description": "Every screen of the seedypod web UI, from the home screen to the wall-display kiosk.",
+      "description": "Every screen of the thryve web UI, from the home screen to the wall-display kiosk.",
       "headings": [
         {
           "title": "Welcome",
@@ -478,7 +478,7 @@
       "path": "/developers/adr/",
       "title": "Architecture decision records",
       "section": "Developers",
-      "description": "Why seedypod is built the way it is, one decision at a time.",
+      "description": "Why thryve is built the way it is, one decision at a time.",
       "headings": [],
       "keywords": ""
     },
@@ -486,7 +486,7 @@
       "path": "/developers/adr/0001-new-repository/",
       "title": "ADR 0001: New repository and naming",
       "section": "Developers",
-      "description": "Why a new repo instead of a fork, the seedypod name, and the single-repo layout.",
+      "description": "Why a new repo instead of a fork, the thryve name, and the single-repo layout.",
       "headings": [
         {
           "title": "Context",
@@ -501,8 +501,8 @@
           "anchor": "consequences"
         },
         {
-          "title": "Amendment (2026-10-31): leafypod → seedypod",
-          "anchor": "amendment-2026-10-31-leafypod--seedypod"
+          "title": "Amendment (2026-10-31): leafypod → thryve",
+          "anchor": "amendment-2026-10-31-leafypod--thryve"
         }
       ],
       "keywords": ""
@@ -821,7 +821,7 @@
       "path": "/developers/adr/0017-ios-client/",
       "title": "ADR 0017: iOS client — reuse sleepypod's transport, not its app",
       "section": "Developers",
-      "description": "Evaluation of forking sleepypod/ios's networking layer against seedypod's tRPC router, and what core must add first.",
+      "description": "Evaluation of forking sleepypod/ios's networking layer against thryve's tRPC router, and what core must add first.",
       "headings": [
         {
           "title": "Context",
@@ -911,8 +911,8 @@
           "anchor": "signals-a-typed-catalog"
         },
         {
-          "title": "Actions: seedypod’s verbs, through the normal paths",
-          "anchor": "actions-seedypods-verbs-through-the-normal-paths"
+          "title": "Actions: thryve’s verbs, through the normal paths",
+          "anchor": "actions-thryves-verbs-through-the-normal-paths"
         },
         {
           "title": "The light arbiter: manual > Autopilot > schedule",
@@ -1046,8 +1046,8 @@
           "anchor": "accessories-go-through-cores-trpc-caller"
         },
         {
-          "title": "Identity: sleepypod ADR 0020, with a seedypod seed chain",
-          "anchor": "identity-sleepypod-adr-0020-with-a-seedypod-seed-chain"
+          "title": "Identity: sleepypod ADR 0020, with a thryve seed chain",
+          "anchor": "identity-sleepypod-adr-0020-with-a-thryve-seed-chain"
         },
         {
           "title": "mDNS: ciao, as in sleepypod",
@@ -1068,7 +1068,7 @@
       "path": "/developers/api/",
       "title": "REST API reference",
       "section": "Developers",
-      "description": "seedypod core's OpenAPI REST facade, generated from the tRPC routers.",
+      "description": "thryve core's OpenAPI REST facade, generated from the tRPC routers.",
       "headings": [
         {
           "title": "Base URL and transport",
@@ -1405,7 +1405,7 @@
       "path": "/getting-started/",
       "title": "Get started",
       "section": null,
-      "description": "Try seedypod in your browser, run it on your laptop, or install it on the Pi inside your Gardyn.",
+      "description": "Try thryve in your browser, run it on your laptop, or install it on the Pi inside your Gardyn.",
       "headings": [
         {
           "title": "1. Try the live demo",
@@ -1430,7 +1430,7 @@
       "path": "/ios/",
       "title": "iPhone app",
       "section": null,
-      "description": "seedypod for iPhone: your Gardyn tower in 3D, with pods, light, water and alerts, straight from your own network.",
+      "description": "thryve for iPhone: your Gardyn tower in 3D, with pods, light, water and alerts, straight from your own network.",
       "headings": [
         {
           "title": "What it does",

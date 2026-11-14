@@ -34,8 +34,8 @@ export interface Wifi {
 
 export type Run = (args: string[]) => Promise<string>
 
-const SETUP_CON = 'seedypod-setup'
-const WIFI_CON = 'seedypod-wifi'
+const SETUP_CON = 'thryve-setup'
+const WIFI_CON = 'thryve-wifi'
 /** NetworkManager's address for the host side of a shared connection. */
 const SETUP_URL = 'http://10.42.0.1:3000/wifi'
 /**
@@ -115,7 +115,7 @@ export class NmcliWifi implements Wifi {
   }
 
   get setupSsid(): string {
-    return `seedypod-setup-${this.o.unitId.replace(/[^a-z0-9]/gi, '').slice(-4).toLowerCase() || 'unit'}`
+    return `thryve-setup-${this.o.unitId.replace(/[^a-z0-9]/gi, '').slice(-4).toLowerCase() || 'unit'}`
   }
 
   private now(): Date {
@@ -236,7 +236,7 @@ export class NmcliWifi implements Wifi {
         })()
       }, this.o.switchDelayMs ?? 2000)
     })
-    return { ok: true, detail: `saved ${ssid}; switching in a moment. Rejoin your network and open http://seedypod.local:3000` }
+    return { ok: true, detail: `saved ${ssid}; switching in a moment. Rejoin your network and open http://thryve.local:3000` }
   }
 }
 
@@ -255,7 +255,7 @@ export class SimWifi implements Wifi {
 
   async status(): Promise<WifiStatus> {
     if (!this.available) return { available: false, mode: 'offline', ssid: null, ip: null, setup: null, lastError: null }
-    const setup = this.mode === 'setup' ? { ssid: 'seedypod-setup-demo', url: SETUP_URL, until: this.until ?? new Date().toISOString() } : null
+    const setup = this.mode === 'setup' ? { ssid: 'thryve-setup-demo', url: SETUP_URL, until: this.until ?? new Date().toISOString() } : null
     return { available: true, mode: this.mode, ssid: this.mode === 'setup' ? setup?.ssid ?? null : this.ssid, ip: this.mode === 'client' ? '192.168.1.40' : '10.42.0.1', setup, lastError: null }
   }
 
@@ -280,6 +280,6 @@ export class SimWifi implements Wifi {
     if (bad) return { ok: false, detail: bad }
     this.ssid = ssid
     this.mode = 'client'
-    return { ok: true, detail: `saved ${ssid}; switching in a moment. Rejoin your network and open http://seedypod.local:3000` }
+    return { ok: true, detail: `saved ${ssid}; switching in a moment. Rejoin your network and open http://thryve.local:3000` }
   }
 }

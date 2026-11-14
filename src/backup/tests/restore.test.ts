@@ -43,7 +43,7 @@ describe('RestoreClient', () => {
   })
 
   it('passes on a refusal with its code and message', async () => {
-    const c = fakeHelper({ ok: false, code: 'newer-schema', error: 'This backup was made by seedypod core main@fff (database schema 9)…' }, 3)
+    const c = fakeHelper({ ok: false, code: 'newer-schema', error: 'This backup was made by thryve core main@fff (database schema 9)…' }, 3)
     const err = await c.restore(new Uint8Array()).catch(e => e as RestoreRefused)
     expect(err).toBeInstanceOf(RestoreRefused)
     expect(err).toMatchObject({ code: 'newer-schema', message: expect.stringMatching(/^This backup was made by/) })
@@ -76,7 +76,7 @@ describe('RestoreClient', () => {
     rmSync(work, { recursive: true, force: true })
     mkdirSync(work)
     writeFileSync(join(work, 'status.json'), JSON.stringify({ op: 'restore', state: 'done', at: '2026-10-31T03:05:00.000Z' }))
-    writeFileSync(join(work, 'undo.json'), JSON.stringify({ restoredAt: '2026-10-31T03:05:00.000Z', bundle: { createdAt: '2026-10-30T03:00:00.000Z' }, items: [{ rel: 'data/seedypod.db' }], undoneAt: null }))
+    writeFileSync(join(work, 'undo.json'), JSON.stringify({ restoredAt: '2026-10-31T03:05:00.000Z', bundle: { createdAt: '2026-10-30T03:00:00.000Z' }, items: [{ rel: 'data/thryve.db' }], undoneAt: null }))
     expect(c.info()).toEqual({
       available: true,
       status: { op: 'restore', state: 'done', at: '2026-10-31T03:05:00.000Z' },
@@ -86,12 +86,12 @@ describe('RestoreClient', () => {
 })
 
 describe('restoreCommand', () => {
-  it('takes SEEDYPOD_RESTORE_CMD as a JSON array', () => {
-    expect(restoreCommand({ SEEDYPOD_RESTORE_CMD: '["node","scripts/seedypod-restore.cjs"]' })).toEqual(['node', 'scripts/seedypod-restore.cjs'])
+  it('takes THRYVE_RESTORE_CMD as a JSON array', () => {
+    expect(restoreCommand({ THRYVE_RESTORE_CMD: '["node","scripts/thryve-restore.cjs"]' })).toEqual(['node', 'scripts/thryve-restore.cjs'])
   })
   it('falls back to sudo and the installed helper only when it exists', () => {
     const cmd = restoreCommand({})
-    expect(cmd === null || (cmd[0] === 'sudo' && cmd[2] === '/usr/local/sbin/seedypod-restore')).toBe(true)
-    expect(existsSync('/usr/local/sbin/seedypod-restore') ? cmd : null).toEqual(cmd)
+    expect(cmd === null || (cmd[0] === 'sudo' && cmd[2] === '/usr/local/sbin/thryve-restore')).toBe(true)
+    expect(existsSync('/usr/local/sbin/thryve-restore') ? cmd : null).toEqual(cmd)
   })
 })

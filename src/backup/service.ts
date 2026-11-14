@@ -27,7 +27,7 @@ export interface Bucket {
 }
 
 export interface BucketBackup {
-  /** Relative to the mirror prefix, e.g. `backups/seedypod-backup-kitchen-20261031-030000.tar.gz`. */
+  /** Relative to the mirror prefix, e.g. `backups/thryve-backup-kitchen-20261031-030000.tar.gz`. */
   key: string
   name: string
   unit: string | null
@@ -101,7 +101,7 @@ export class BackupService {
     const system = this.o.hal.snapshot().system
     const { sources } = this.o
     const skipped: BackupManifest['skipped'] = []
-    const files: BundleFile[] = [{ name: 'seedypod.db', bytes: await sources.database() }]
+    const files: BundleFile[] = [{ name: 'thryve.db', bytes: await sources.database() }]
     for (const f of sources.systemFiles()) {
       try {
         files.push({ name: f.name, bytes: await sources.read(f.path) })
@@ -114,7 +114,7 @@ export class BackupService {
     }
     const photos = opts.photos ? this.photoFiles(skipped) : []
     const meta: Omit<BackupManifest, 'files'> = {
-      format: { name: 'seedypod-backup', version: 1 },
+      format: { name: 'thryve-backup', version: 1 },
       createdAt: at.toISOString(),
       unit: { id: system?.unitId ?? null, name: settings.unitName },
       core: { version: this.o.version },

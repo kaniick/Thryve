@@ -64,7 +64,7 @@ export const storageRouter = router({
     .output(Flash)
     .query(({ ctx }) => ctx.flash.status()),
   database: publicProcedure
-    .meta({ openapi: { method: 'GET', path: '/storage/database', tags: ['storage'], summary: 'Metadata about seedypod.db, never row contents: file and WAL size, journal mode, migrations, and rows, bytes, last write and rows per hour over 24 h for each table. Cached for at least 5 minutes' } })
+    .meta({ openapi: { method: 'GET', path: '/storage/database', tags: ['storage'], summary: 'Metadata about thryve.db, never row contents: file and WAL size, journal mode, migrations, and rows, bytes, last write and rows per hour over 24 h for each table. Cached for at least 5 minutes' } })
     .output(Database)
     .query(({ ctx }) => inspector(ctx).inspect()),
   checkDatabase: publicProcedure

@@ -30,7 +30,7 @@ afterEach(() => rmSync(dir, { recursive: true, force: true }))
 function bash(command: string) {
   return spawnSync('bash', ['-c', `set -euo pipefail; source "${script}"; cd "${prefix}"; ${command}`], {
     encoding: 'utf8',
-    env: { ...process.env, PATH: `${join(dir, 'bin')}:${process.env.PATH}`, SEEDYPOD_LIB_ONLY: '1' },
+    env: { ...process.env, PATH: `${join(dir, 'bin')}:${process.env.PATH}`, THRYVE_LIB_ONLY: '1' },
   })
 }
 const prune = (tarball: string) => bash(`prune_dist "${tarball}"`)

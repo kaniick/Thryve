@@ -48,7 +48,7 @@ describe('nodeDiskUsage', () => {
   })
 
   it('is null when the directory cannot be stat-ed', () => {
-    expect(nodeDiskUsage('/no/such/dir/for/seedypod')()).toBeNull()
+    expect(nodeDiskUsage('/no/such/dir/for/thryve')()).toBeNull()
   })
 
   it('stats a real directory', () => {

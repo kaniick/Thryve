@@ -2,7 +2,7 @@
  * Dataset export (ADR-0019 phase 2): the photos, every analyser's results,
  * pod and grow-cycle metadata and the sensor telemetry for one time window,
  * as a tar of JSON/JSONL files. It is the thing you pull to a laptop to
- * measure, recalibrate or train — seedypod's counterpart of sleepypod's
+ * measure, recalibrate or train — thryve's counterpart of sleepypod's
  * sleep-stage dataset script. The grower's pod labels (#184) ride along with
  * each pod's crop, so a trainer sees exactly what the analysers see.
  */
@@ -31,7 +31,7 @@ export interface DatasetSummary extends ExportWindow {
 }
 
 /** Version 2: `labels.jsonl` gained the `seeded` label and `plant`, `plantedAt` and `daysSinceSowing`. */
-export const DATASET_FORMAT = { name: 'seedypod-dataset', version: 2 }
+export const DATASET_FORMAT = { name: 'thryve-dataset', version: 2 }
 
 const DAY = 86_400_000
 const enc = new TextEncoder()
@@ -111,11 +111,11 @@ async function labelRows(ctx: Context, w: ExportWindow, labels: PodLabel[], regi
   })
 }
 
-/** Archive-safe folder name, e.g. `seedypod-kitchen-20261001-20261031`. */
+/** Archive-safe folder name, e.g. `thryve-kitchen-20261001-20261031`. */
 export function datasetName(unit: string, w: ExportWindow): string {
   const day = (ts: string) => ts.slice(0, 10).replace(/-/g, '')
   const slug = unit.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 24) || 'unit'
-  return `seedypod-${slug}-${day(w.from)}-${day(w.to)}`
+  return `thryve-${slug}-${day(w.from)}-${day(w.to)}`
 }
 
 /** The archive's files, produced lazily so stills are read one at a time. */
@@ -161,9 +161,9 @@ export async function* datasetEntries(ctx: Context, w: ExportWindow): AsyncGener
   }
 }
 
-const README = `# seedypod dataset
+const README = `# thryve dataset
 
-Exported from a seedypod unit (ADR-0019). Every file covers the window in
+Exported from a thryve unit (ADR-0019). Every file covers the window in
 \`manifest.json\`.
 
 | File | Contents |

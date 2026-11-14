@@ -25,14 +25,14 @@ const TERMINAL = { PATH: process.env.PATH, TERM: 'xterm-256color', LANG: 'en_GB.
 function piped(script: string, body: string, env: Record<string, string | undefined> = {}) {
   const r = spawnSync('bash', ['-c', `source "$0"; ${body}`, script], {
     encoding: 'utf8',
-    env: { ...TERMINAL, SEEDYPOD_LIB_ONLY: '1', ...env },
+    env: { ...TERMINAL, THRYVE_LIB_ONLY: '1', ...env },
   })
   return { code: r.status, out: r.stdout, err: r.stderr }
 }
 
 /** The same on a terminal `cols` wide; stdout and stderr arrive together, with \r\n. */
 function tty(script: string, body: string, env: Record<string, string | undefined> = {}, cols = 80, before = '') {
-  const spec = { argv: ['bash', '-c', `${before}source "$0"; ${body}`, script], env: { ...TERMINAL, SEEDYPOD_LIB_ONLY: '1', ...env }, cols, rows: 40 }
+  const spec = { argv: ['bash', '-c', `${before}source "$0"; ${body}`, script], env: { ...TERMINAL, THRYVE_LIB_ONLY: '1', ...env }, cols, rows: 40 }
   const r = spawnSync('python3', [join(repo, 'tests/scripts/pty-run.py'), JSON.stringify(spec)], { encoding: 'utf8' })
   const { output, status } = JSON.parse(r.stdout) as { output: string, status: number }
   return { code: status, out: Buffer.from(output, 'base64').toString('utf8').replaceAll('\r\n', '\n') }
@@ -48,8 +48,8 @@ describe.each(SCRIPTS)('%s output', (script) => {
     expect(piped(script, LINES)).toEqual({ code: 0, out: PLAIN_OUT, err: PLAIN_ERR })
   })
 
-  it('is plain text with SEEDYPOD_COLOR=never, even on a terminal', () => {
-    const r = tty(script, LINES, { SEEDYPOD_COLOR: 'never' })
+  it('is plain text with THRYVE_COLOR=never, even on a terminal', () => {
+    const r = tty(script, LINES, { THRYVE_COLOR: 'never' })
     expect(r.out).not.toContain(ESC)
     expect(r.out).toContain('→ installing Node\n')
   })
@@ -72,8 +72,8 @@ describe.each(SCRIPTS)('%s output', (script) => {
     expect(out).toContain(`${ESC}32m✓${ESC}0m ${ESC}1mrunning${ESC}0m\n`)
   })
 
-  it('is coloured with SEEDYPOD_COLOR=always, even piped, and keeps errors on stderr', () => {
-    const r = piped(script, LINES, { SEEDYPOD_COLOR: 'always' })
+  it('is coloured with THRYVE_COLOR=always, even piped, and keeps errors on stderr', () => {
+    const r = piped(script, LINES, { THRYVE_COLOR: 'always' })
     expect(r.out).toContain(`${ESC}36m→${ESC}0m installing Node`)
     expect(r.out).not.toContain('no build')
     expect(r.err).toContain(`${ESC}31m✗ no build${ESC}0m`)
@@ -102,7 +102,7 @@ describe.each(SCRIPTS)('%s banner', (script) => {
     expect(out).toContain('▀')
     expect(out).toContain(`${ESC}38;5;`)
     expect(lines[1 + 9]).toContain(`\r${ESC}46C${ESC}2mcore installer · branch dev${ESC}0m`)
-    expect(out.replaceAll(SGR, '')).toContain('seedypod')
+    expect(out.replaceAll(SGR, '')).toContain('thryve')
     // Every row ends with the colour reset, so nothing bleeds into what follows.
     for (const line of lines.slice(1, 21)) expect(line === '' || line.endsWith(`${ESC}0m`) || !line.includes(ESC)).toBe(true)
   })
@@ -115,12 +115,12 @@ describe.each(SCRIPTS)('%s banner', (script) => {
 
   it('falls back to one line in a window narrower than the logo', () => {
     const { out } = tty(script, BANNER, {}, 50)
-    expect(out).toBe(`${ESC}1mseedypod core installer · branch dev${ESC}0m\n\n`)
+    expect(out).toBe(`${ESC}1mthryve core installer · branch dev${ESC}0m\n\n`)
   })
 
   it('falls back to one plain line without colour or UTF-8', () => {
-    expect(tty(script, BANNER, { NO_COLOR: '1' }).out).toBe('seedypod core installer · branch dev\n\n')
-    expect(tty(script, BANNER, { LANG: 'C' }).out).toBe(`${ESC}1mseedypod core installer · branch dev${ESC}0m\n\n`)
+    expect(tty(script, BANNER, { NO_COLOR: '1' }).out).toBe('thryve core installer · branch dev\n\n')
+    expect(tty(script, BANNER, { LANG: 'C' }).out).toBe(`${ESC}1mthryve core installer · branch dev${ESC}0m\n\n`)
   })
 })
 

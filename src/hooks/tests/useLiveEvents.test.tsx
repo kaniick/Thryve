@@ -69,7 +69,7 @@ describe('touchedBy', () => {
   })
 
   it('keeps an update\'s steps and its mutations to the update router', () => {
-    expect(touchedBy({ kind: 'update', state: 'downloading', lines: ['downloading seedypod-core.tar.gz'] })).toEqual(['update'])
+    expect(touchedBy({ kind: 'update', state: 'downloading', lines: ['downloading thryve-core.tar.gz'] })).toEqual(['update'])
     expect(touchedBy(mutation('update'))).toEqual(['update'])
   })
 

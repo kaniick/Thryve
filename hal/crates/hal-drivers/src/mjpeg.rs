@@ -269,8 +269,8 @@ fn parse_sof(seg: &[u8]) -> Result<Frame, String> {
         return Err("malformed frame header".into());
     }
     let (height, width) = (
-        u32::from(seg[1]) << 8 | u32::from(seg[2]),
-        u32::from(seg[3]) << 8 | u32::from(seg[4]),
+        (u32::from(seg[1]) << 8) | u32::from(seg[2]),
+        (u32::from(seg[3]) << 8) | u32::from(seg[4]),
     );
     let count = usize::from(seg[5]);
     if width == 0 || count == 0 || count > 4 || seg.len() < 6 + 3 * count {
@@ -308,7 +308,7 @@ fn parse_dqt(mut seg: &[u8], dc_steps: &mut [Option<i32>; 4]) -> Result<(), Stri
             return Err("malformed quantisation table".into());
         }
         dc_steps[id] = Some(if wide {
-            i32::from(seg[1]) << 8 | i32::from(seg[2])
+            (i32::from(seg[1]) << 8) | i32::from(seg[2])
         } else {
             i32::from(seg[1])
         });
@@ -481,7 +481,7 @@ pub fn inspect(data: &[u8]) -> Result<FrameScan, String> {
             return Err("frame ended before any scan".into());
         }
         let len = match data.get(pos..pos + 2) {
-            Some(b) => usize::from(b[0]) << 8 | usize::from(b[1]),
+            Some(b) => (usize::from(b[0]) << 8) | usize::from(b[1]),
             None => return Err("frame ended inside the headers".into()),
         };
         let seg = len
@@ -498,7 +498,7 @@ pub fn inspect(data: &[u8]) -> Result<FrameScan, String> {
             0xDB => parse_dqt(seg, &mut dc_steps)?,
             0xDD => {
                 let b = seg.get(..2).ok_or("malformed restart interval")?;
-                restart = u32::from(b[0]) << 8 | u32::from(b[1]);
+                restart = (u32::from(b[0]) << 8) | u32::from(b[1]);
             }
             0xDA => {
                 let frame = frame.ok_or("scan before any frame header")?;
@@ -531,7 +531,7 @@ mod tests {
     fn scan_start(data: &[u8]) -> usize {
         let mut pos = 2;
         loop {
-            let len = usize::from(data[pos + 2]) << 8 | usize::from(data[pos + 3]);
+            let len = (usize::from(data[pos + 2]) << 8) | usize::from(data[pos + 3]);
             if data[pos + 1] == 0xDA {
                 return pos + 2 + len;
             }
@@ -634,7 +634,7 @@ mod tests {
         let mut out = data[..2].to_vec();
         let mut pos = 2;
         loop {
-            let len = usize::from(data[pos + 2]) << 8 | usize::from(data[pos + 3]);
+            let len = (usize::from(data[pos + 2]) << 8) | usize::from(data[pos + 3]);
             if data[pos + 1] == 0xDA {
                 out.extend_from_slice(&data[pos..]);
                 return out;
@@ -651,7 +651,7 @@ mod tests {
         let mut tables = Vec::new();
         let mut pos = 2;
         while data[pos + 1] != 0xDA {
-            let len = usize::from(data[pos + 2]) << 8 | usize::from(data[pos + 3]);
+            let len = (usize::from(data[pos + 2]) << 8) | usize::from(data[pos + 3]);
             if data[pos + 1] == 0xC4 {
                 let mut seg = &data[pos + 4..pos + 2 + len];
                 while !seg.is_empty() {

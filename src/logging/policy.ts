@@ -13,6 +13,7 @@
  */
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { envValue } from '../lib/legacyEnv'
 
 export type LoggingMode = 'quiet' | 'off'
 export type EffectiveMode = LoggingMode | 'debug'
@@ -40,7 +41,7 @@ const RELOAD_EVERY_MS = 1000
 export const MAX_DEBUG_MINUTES = 240
 
 export function policyPath(env: NodeJS.ProcessEnv, dbPath: string): string {
-  return env.SEEDYPOD_RECORDING_POLICY_FILE || join(dirname(dbPath), 'recording-policy.json')
+  return envValue(env, 'THRYVE_RECORDING_POLICY_FILE') || join(dirname(dbPath), 'recording-policy.json')
 }
 
 function load(path: string): PolicyFile {

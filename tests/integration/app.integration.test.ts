@@ -69,7 +69,7 @@ describe('core HTTP surface', () => {
     const core = createCore({ hal, store: new MemoryStore(), events: createEventBus(), version: 'test', bootLog: async () => 't hub=1\n' })
     const r = await createApp({ ctx: core.ctx }).app.fetch(new Request('http://unit/api/system/boot-log'))
     expect(r.status).toBe(200)
-    expect(r.headers.get('content-disposition')).toContain('seedypod-boot-log.txt')
+    expect(r.headers.get('content-disposition')).toContain('thryve-boot-log.txt')
     expect(await r.text()).toBe('t hub=1\n')
   })
 

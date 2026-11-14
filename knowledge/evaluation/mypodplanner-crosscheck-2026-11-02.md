@@ -9,7 +9,7 @@ sources: [{"resource": "https://www.mypodplanner.com/", "title": "My Pod Planner
 
 # My Pod Planner cross-check (2026-11-02)
 
-My Pod Planner is a free web app (beta) that lays out Gardyn pods by light zone. Its 134-plant catalog (121 pod plants plus 13 microgreens) and its placement logic ship in the site's JavaScript bundle. We found no published repository or licence, so seedypod does not reuse its data; this note records only comparisons against Gardyn's own guidance.
+My Pod Planner is a free web app (beta) that lays out Gardyn pods by light zone. Its 134-plant catalog (121 pod plants plus 13 microgreens) and its placement logic ship in the site's JavaScript bundle. We found no published repository or licence, so thryve does not reuse its data; this note records only comparisons against Gardyn's own guidance.
 
 ## Results
 
@@ -25,7 +25,7 @@ Conclusion: the planner's zones were clearly derived from Gardyn; its harvest da
 
 ## Placement algorithm differences
 
-| Behaviour | Gardyn guidance | My Pod Planner | seedypod |
+| Behaviour | Gardyn guidance | My Pod Planner | thryve |
 |---|---|---|---|
 | Ideal zone full | Place one zone lower | Substitutes a different plant that fits the free zone, or fills with greens flagged as a fallback | One zone lower, flagged; overflow reported, never substituted |
 | Cucumbers | Bottom of the middle column | Bottom-centre | Bottom-centre |

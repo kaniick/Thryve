@@ -1,0 +1,14 @@
+[Unit]
+Description=thryve: finish this unit on its first boot
+Before=hald.service thryve-core.service
+After=swap.target
+ConditionFileNotEmpty=!/var/lib/thryve-image/unit.env
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+TimeoutStartSec=5min
+ExecStart=/usr/local/sbin/thryve-first-boot
+
+[Install]
+WantedBy=multi-user.target

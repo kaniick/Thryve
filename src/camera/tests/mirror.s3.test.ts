@@ -25,8 +25,8 @@ const region = process.env.MIRROR_TEST_REGION ?? 'us-east-1'
 
 describe.skipIf(!endpoint)('mirror against a real S3-compatible server', () => {
   const own = !process.env.MIRROR_TEST_BUCKET
-  const bucket = process.env.MIRROR_TEST_BUCKET ?? `seedypod-test-${Date.now().toString(36)}`
-  const run = `seedypod-test-${Date.now().toString(36)}/`
+  const bucket = process.env.MIRROR_TEST_BUCKET ?? `thryve-test-${Date.now().toString(36)}`
+  const run = `thryve-test-${Date.now().toString(36)}/`
   const cfg: MirrorConfig = { endpoint: endpoint ?? '', bucket, region, prefix: `${run}kitchen/`, accessKeyId, secretAccessKey }
   const admin = new AwsClient({ accessKeyId, secretAccessKey, region, service: 's3' })
   const bucketUrl = `${(endpoint ?? '').replace(/\/+$/, '')}/${bucket}`

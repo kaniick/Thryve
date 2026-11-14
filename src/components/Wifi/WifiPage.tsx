@@ -34,7 +34,7 @@ export function WifiPage() {
       {s?.mode === 'setup' && s.setup && (
         <Card highlight>
           <CardHeader title="Setup hotspot is on" subtitle={`Open network ${s.setup.ssid} · closes at ${new Date(s.setup.until).toLocaleTimeString()}`} icon={WifiIcon} />
-          <p className="mt-2 text-[13px] text-fg-2">Pick your home network below. The unit leaves the hotspot and joins it; then reconnect your phone to your home network and open http://seedypod.local:3000.</p>
+          <p className="mt-2 text-[13px] text-fg-2">Pick your home network below. The unit leaves the hotspot and joins it; then reconnect your phone to your home network and open http://thryve.local:3000.</p>
           <div className="mt-3"><Button size="sm" disabled={stopSetup.isPending} onClick={() => stopSetup.mutate()}>Close the hotspot</Button></div>
         </Card>
       )}

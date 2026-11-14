@@ -27,7 +27,7 @@ describe('the mqtt entry point', () => {
     const store = new MemoryStore()
     store.settings.update({ mqttUrl: 'mqtt://ha.local:1883' })
     const bridge = await connectBridge({ store, hal: new SimHal({ tickMs: 0 }), events: createEventBus(), unitId: 'u1' })
-    expect(connectAsync).toHaveBeenCalledWith('mqtt://ha.local:1883', expect.objectContaining({ clientId: 'seedypod-core-bridge-u1' }))
+    expect(connectAsync).toHaveBeenCalledWith('mqtt://ha.local:1883', expect.objectContaining({ clientId: 'thryve-core-bridge-u1' }))
     bridge?.stop()
   })
 })

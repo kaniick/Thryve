@@ -52,12 +52,12 @@ describe('RestorePanel', () => {
     const fetch = vi.fn()
     vi.stubGlobal('fetch', fetch)
     render(<RestorePanel savedMirror confirm onStarted={vi.fn()} />)
-    pick('seedypod-backup-kitchen-20261031-030000.tar.gz')
+    pick('thryve-backup-kitchen-20261031-030000.tar.gz')
     fireEvent.click(screen.getByRole('button', { name: 'Restore this file' }))
-    expect(screen.getByText(/^Restore seedypod-backup-kitchen-20261031-030000\.tar\.gz\?/)).toBeTruthy()
+    expect(screen.getByText(/^Restore thryve-backup-kitchen-20261031-030000\.tar\.gz\?/)).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
     expect(fetch).not.toHaveBeenCalled()
-    expect(screen.queryByText(/^Restore seedypod-backup/)).toBeNull()
+    expect(screen.queryByText(/^Restore thryve-backup/)).toBeNull()
   })
 
   it('reports a network failure and an error without a body', async () => {

@@ -1,15 +1,15 @@
 #!/usr/bin/env node
 /* eslint-disable @typescript-eslint/no-require-imports */
-// seedypod restore helper (ADR-0021). Installed root-owned at
-// /usr/local/sbin/seedypod-restore by scripts/install, which writes the
+// thryve restore helper (ADR-0021). Installed root-owned at
+// /usr/local/sbin/thryve-restore by scripts/install, which writes the
 // install prefix in and lets core's user run it with sudo, for this one path.
 // Node built-ins only; it must not load anything the core user can write.
 //
-// Usage: seedypod-restore <bundle.tar.gz>     check the bundle, then restore it
-//        seedypod-restore --detach <bundle>   check, then restore in its own unit (what core calls)
-//        seedypod-restore --check <bundle>    check only
-//        seedypod-restore --undo [--detach]   put back what the last restore replaced (again to redo)
-//        seedypod-restore --status            print the last run's status
+// Usage: thryve-restore <bundle.tar.gz>     check the bundle, then restore it
+//        thryve-restore --detach <bundle>   check, then restore in its own unit (what core calls)
+//        thryve-restore --check <bundle>    check only
+//        thryve-restore --undo [--detach]   put back what the last restore replaced (again to redo)
+//        thryve-restore --status            print the last run's status
 // Exit codes: 0 ok, 1 failed, 2 usage, 3 refused (bundle from a newer schema), 4 not a valid bundle.
 // The last line of stdout is a JSON result for core.
 'use strict'
@@ -23,20 +23,27 @@ const zlib = require('node:zlib')
 const INSTALLED_PREFIX = '__PREFIX__'
 const isRoot = typeof process.getuid === 'function' && process.getuid() === 0
 // Overrides exist for tests and the simulated bring-up; as root (under sudo) only the installed paths count.
-const env = name => (isRoot ? undefined : process.env[name]) || undefined
+const env = (name) => {
+  if (isRoot) return undefined
+  const v = process.env[name]
+  if (v) return v
+  // seedypod names, for a unit mid-migration (ignored as root; paths are baked in).
+  if (name.startsWith('THRYVE_')) return process.env['SEEDYPOD_' + name.slice(7)] || undefined
+  return undefined
+}
 const prefix = INSTALLED_PREFIX.startsWith('__') ? path.resolve(__dirname, '..') : INSTALLED_PREFIX
 
 const P = {
-  db: env('SEEDYPOD_RESTORE_DB') ?? path.join(prefix, 'data/seedypod.db'),
-  captures: env('SEEDYPOD_RESTORE_CAPTURES') ?? path.join(prefix, 'data/captures'),
-  homekit: env('SEEDYPOD_RESTORE_HOMEKIT') ?? path.join(prefix, 'data/homekit'),
-  journal: env('SEEDYPOD_RESTORE_JOURNAL') ?? path.join(prefix, 'src/db/migrations/meta/_journal.json'),
-  etc: env('SEEDYPOD_ETC_DIR') ?? '/etc/seedypod',
-  state: env('SEEDYPOD_STATE_DIR') ?? '/var/lib/seedypod',
-  passwd: env('SEEDYPOD_MOSQUITTO_PASSWD') ?? '/etc/mosquitto/seedypod.passwd',
-  mosquittoConf: env('SEEDYPOD_MOSQUITTO_CONF') ?? '/etc/mosquitto/conf.d/seedypod.conf',
-  work: env('SEEDYPOD_RESTORE_WORK') ?? '/var/lib/seedypod-restore',
-  busy: env('SEEDYPOD_BUSY_DIR') ?? '/run/seedypod-busy',
+  db: env('THRYVE_RESTORE_DB') ?? path.join(prefix, 'data/thryve.db'),
+  captures: env('THRYVE_RESTORE_CAPTURES') ?? path.join(prefix, 'data/captures'),
+  homekit: env('THRYVE_RESTORE_HOMEKIT') ?? path.join(prefix, 'data/homekit'),
+  journal: env('THRYVE_RESTORE_JOURNAL') ?? path.join(prefix, 'src/db/migrations/meta/_journal.json'),
+  etc: env('THRYVE_ETC_DIR') ?? '/etc/thryve',
+  state: env('THRYVE_STATE_DIR') ?? '/var/lib/thryve',
+  passwd: env('THRYVE_MOSQUITTO_PASSWD') ?? '/etc/mosquitto/thryve.passwd',
+  mosquittoConf: env('THRYVE_MOSQUITTO_CONF') ?? '/etc/mosquitto/conf.d/thryve.conf',
+  work: env('THRYVE_RESTORE_WORK') ?? '/var/lib/thryve-restore',
+  busy: env('THRYVE_BUSY_DIR') ?? '/run/thryve-busy',
 }
 const STAGING = path.join(P.work, 'staging')
 const PRE = path.join(P.work, 'pre-restore')
@@ -46,10 +53,10 @@ const STATUS = path.join(P.work, 'status.json')
 /** Archive names this helper accepts; keep in step with BUNDLE_NAMES in src/backup/bundle.ts. */
 const NAMES = [
   /^manifest\.json$/,
-  /^seedypod\.db$/,
-  /^etc\/seedypod\/hal\.toml$/,
-  /^etc\/mosquitto\/seedypod\.passwd$/,
-  /^var\/lib\/seedypod\/[a-z0-9_-]+\.json$/,
+  /^thryve\.db$/,
+  /^etc\/thryve\/hal\.toml$/,
+  /^etc\/mosquitto\/thryve\.passwd$/,
+  /^var\/lib\/thryve\/[a-z0-9_-]+\.json$/,
   /^homekit\/[A-Za-z0-9][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]+)?\.json$/,
   /^captures\/(?:[\w-][\w.@-]*\/)*[\w-][\w.@-]*$/,
 ]
@@ -128,7 +135,7 @@ async function extract(bundle, dir) {
   }
   catch (e) {
     if (e instanceof Refused) throw e
-    throw new Refused('invalid', `not a seedypod backup (${e.message})`)
+    throw new Refused('invalid', `not a thryve backup (${e.message})`)
   }
   finally {
     if (fd !== null) fs.closeSync(fd)
@@ -141,7 +148,7 @@ async function extract(bundle, dir) {
 function parseHeader(h) {
   const str = (at, len) => h.subarray(at, at + len).toString('utf8').replace(/\0.*$/s, '')
   const sum = h.reduce((n, b, i) => n + (i >= 148 && i < 156 ? 32 : b), 0)
-  if (sum !== parseInt(str(148, 8).trim(), 8)) throw new Refused('invalid', 'not a seedypod backup (bad tar header checksum)')
+  if (sum !== parseInt(str(148, 8).trim(), 8)) throw new Refused('invalid', 'not a thryve backup (bad tar header checksum)')
   if (str(345, 155)) throw new Refused('invalid', 'unexpected long path in the bundle')
   const name = str(0, 100).replace(/\/$/, '')
   const size = parseInt(str(124, 12).trim() || '0', 8)
@@ -178,7 +185,7 @@ function verify(dir, names) {
   catch {
     throw new Refused('invalid', 'manifest.json is not valid JSON')
   }
-  if (m?.format?.name !== 'seedypod-backup') throw new Refused('invalid', 'not a seedypod backup (manifest format)')
+  if (m?.format?.name !== 'thryve-backup') throw new Refused('invalid', 'not a thryve backup (manifest format)')
   if (m.format.version !== 1) throw new Refused('invalid', `backup format version ${m.format.version} is not supported here; update core first`)
   if (!m.files || typeof m.files !== 'object' || !Number.isInteger(m.schema?.migrations)) throw new Refused('invalid', 'manifest.json is incomplete')
   const listed = Object.keys(m.files)
@@ -189,15 +196,15 @@ function verify(dir, names) {
     const f = path.join(dir, n)
     if (fs.statSync(f).size !== m.files[n].bytes || sha256(f) !== m.files[n].sha256) throw new Refused('invalid', `${n} doesn't match its checksum; the file is damaged`)
   }
-  if (!staged.includes('seedypod.db')) throw new Refused('invalid', 'the bundle has no database')
+  if (!staged.includes('thryve.db')) throw new Refused('invalid', 'the bundle has no database')
   const head = Buffer.alloc(16)
-  const fd = fs.openSync(path.join(dir, 'seedypod.db'), 'r')
+  const fd = fs.openSync(path.join(dir, 'thryve.db'), 'r')
   fs.readSync(fd, head, 0, 16, 0)
   fs.closeSync(fd)
-  if (head.toString('latin1') !== 'SQLite format 3\0') throw new Refused('invalid', 'seedypod.db is not an SQLite database')
+  if (head.toString('latin1') !== 'SQLite format 3\0') throw new Refused('invalid', 'thryve.db is not an SQLite database')
   const here = installedSchema()
   if (m.schema.migrations > here.migrations) {
-    throw new Refused('newer-schema', `This backup was made by seedypod core ${m.core?.version ?? 'unknown'} (database schema ${m.schema.migrations}); this unit's core has schema ${here.migrations}. Install that version of core or newer first (scripts/install), then restore again.`)
+    throw new Refused('newer-schema', `This backup was made by thryve core ${m.core?.version ?? 'unknown'} (database schema ${m.schema.migrations}); this unit's core has schema ${here.migrations}. Install that version of core or newer first (scripts/install), then restore again.`)
   }
   return m
 }
@@ -218,7 +225,7 @@ async function stage(bundle) {
 // ---- system ----------------------------------------------------------------------
 
 function systemctl(...args) {
-  const cmd = env('SEEDYPOD_SYSTEMCTL') ? JSON.parse(env('SEEDYPOD_SYSTEMCTL')) : ['systemctl']
+  const cmd = env('THRYVE_SYSTEMCTL') ? JSON.parse(env('THRYVE_SYSTEMCTL')) : ['systemctl']
   const r = spawnSync(cmd[0], [...cmd.slice(1), ...args], { stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf8' })
   return r.status === 0
 }
@@ -343,17 +350,17 @@ function readJson(file) {
 function plan(names, manifest) {
   const files = path.join(STAGING, 'files')
   const items = [
-    ['data/seedypod.db', P.db, path.join(files, 'seedypod.db'), 'db'],
-    ['data/seedypod.db-wal', `${P.db}-wal`, null, 'db'],
-    ['data/seedypod.db-shm', `${P.db}-shm`, null, 'db'],
+    ['data/thryve.db', P.db, path.join(files, 'thryve.db'), 'db'],
+    ['data/thryve.db-wal', `${P.db}-wal`, null, 'db'],
+    ['data/thryve.db-shm', `${P.db}-shm`, null, 'db'],
   ]
-  if (names.includes('etc/seedypod/hal.toml')) items.push(['etc/seedypod/hal.toml', path.join(P.etc, 'hal.toml'), path.join(files, 'etc/seedypod/hal.toml'), 'hal'])
-  if (names.includes('etc/mosquitto/seedypod.passwd')) items.push(['etc/mosquitto/seedypod.passwd', P.passwd, path.join(files, 'etc/mosquitto/seedypod.passwd'), 'passwd'])
-  const state = names.filter(n => n.startsWith('var/lib/seedypod/')).map(n => path.basename(n))
+  if (names.includes('etc/thryve/hal.toml')) items.push(['etc/thryve/hal.toml', path.join(P.etc, 'hal.toml'), path.join(files, 'etc/thryve/hal.toml'), 'hal'])
+  if (names.includes('etc/mosquitto/thryve.passwd')) items.push(['etc/mosquitto/thryve.passwd', P.passwd, path.join(files, 'etc/mosquitto/thryve.passwd'), 'passwd'])
+  const state = names.filter(n => n.startsWith('var/lib/thryve/')).map(n => path.basename(n))
   if (state.length) {
     const live = fs.existsSync(P.state) ? fs.readdirSync(P.state).filter(f => /^[a-z0-9_-]+\.json$/.test(f)) : []
     for (const f of [...new Set([...state, ...live])].sort()) {
-      items.push([`var/lib/seedypod/${f}`, path.join(P.state, f), state.includes(f) ? path.join(files, 'var/lib/seedypod', f) : null, 'state'])
+      items.push([`var/lib/thryve/${f}`, path.join(P.state, f), state.includes(f) ? path.join(files, 'var/lib/thryve', f) : null, 'state'])
     }
   }
   // HomeKit's identity and pairings (ADR 0023) are swapped as one directory, and only when the bundle has them.
@@ -363,20 +370,20 @@ function plan(names, manifest) {
 }
 
 function stopServices() {
-  systemctl('stop', 'seedypod-core')
+  systemctl('stop', 'thryve-core')
   systemctl('stop', 'hald')
 }
 
 function startServices(mosquitto) {
   if (mosquitto) systemctl('try-restart', 'mosquitto')
   const hald = systemctl('start', 'hald')
-  const core = systemctl('start', 'seedypod-core')
+  const core = systemctl('start', 'thryve-core')
   return hald && core
 }
 
 function apply() {
   const names = readJson(path.join(STAGING, 'names.json'))
-  if (!names) throw new Error('nothing staged; run seedypod-restore <bundle> first')
+  if (!names) throw new Error('nothing staged; run thryve-restore <bundle> first')
   // Re-check here: this step runs as its own unit, after the bundle was checked.
   const manifest = verify(path.join(STAGING, 'files'), names)
   const items = plan(names, manifest)
@@ -416,7 +423,7 @@ function apply() {
   fs.writeFileSync(UNDO_INFO, `${JSON.stringify({ restoredAt: new Date().toISOString(), bundle: summary(manifest), items: done, undoneAt: null }, null, 2)}\n`, { mode: 0o644 })
   fs.rmSync(STAGING, { recursive: true, force: true })
   writeStatus({ op: 'restore', state: 'starting', bundle: summary(manifest) })
-  if (!startServices(mosquitto)) throw new Error('the services did not start; see journalctl -u hald -u seedypod-core')
+  if (!startServices(mosquitto)) throw new Error('the services did not start; see journalctl -u hald -u thryve-core')
   writeStatus({ op: 'restore', state: 'done', bundle: summary(manifest) })
 }
 
@@ -445,7 +452,7 @@ function undo() {
   fs.writeFileSync(UNDO_INFO, `${JSON.stringify(info, null, 2)}\n`, { mode: 0o644 })
   const mosquitto = info.items.some(i => i.kind === 'passwd') && fs.existsSync(P.passwd) && ensureLanListener()
   writeStatus({ op: 'undo', state: 'starting', bundle: info.bundle })
-  if (!startServices(mosquitto)) throw new Error('the services did not start; see journalctl -u hald -u seedypod-core')
+  if (!startServices(mosquitto)) throw new Error('the services did not start; see journalctl -u hald -u thryve-core')
   writeStatus({ op: 'undo', state: 'done', bundle: info.bundle, undone: !!info.undoneAt })
 }
 
@@ -455,12 +462,12 @@ function summary(m) {
 
 /**
  * Runs `args` after this process exits. Core calls with --detach because
- * stopping seedypod-core would otherwise stop this helper with it.
+ * stopping thryve-core would otherwise stop this helper with it.
  */
 function detach(args) {
   const self = [process.execPath, __filename, ...args]
-  if (env('SEEDYPOD_RESTORE_DETACH') !== 'fork' && isRoot && fs.existsSync('/usr/bin/systemd-run')) {
-    execFileSync('/usr/bin/systemd-run', ['--quiet', '--collect', `--unit=seedypod-restore-${Date.now()}`, '--description=seedypod restore (ADR-0021)', ...self])
+  if (env('THRYVE_RESTORE_DETACH') !== 'fork' && isRoot && fs.existsSync('/usr/bin/systemd-run')) {
+    execFileSync('/usr/bin/systemd-run', ['--quiet', '--collect', `--unit=thryve-restore-${Date.now()}`, '--description=thryve restore (ADR-0021)', ...self])
     return
   }
   spawn(self[0], self.slice(1), { detached: true, stdio: 'ignore', env: process.env }).unref()
@@ -499,7 +506,7 @@ async function main(argv) {
     }
     if (flags.has('--undo-now')) return runUndo()
     if (!bundle) {
-      process.stderr.write('usage: seedypod-restore [--check | --detach] <bundle.tar.gz> | --undo [--detach] | --status\n')
+      process.stderr.write('usage: thryve-restore [--check | --detach] <bundle.tar.gz> | --undo [--detach] | --status\n')
       return result(2, { ok: false, code: 'usage', error: 'no bundle given' })
     }
     writeStatus({ op: 'restore', state: 'checking' })
@@ -521,7 +528,7 @@ async function main(argv) {
       writeStatus({ op: 'restore', state: 'failed', error: e.message })
       throw e
     }
-    process.stderr.write(`restored the backup from ${manifest.createdAt}; undo with: sudo seedypod-restore --undo\n`)
+    process.stderr.write(`restored the backup from ${manifest.createdAt}; undo with: sudo thryve-restore --undo\n`)
     return result(0, { ok: true, bundle: summary(manifest) })
   }
   catch (e) {

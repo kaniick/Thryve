@@ -51,7 +51,7 @@ describe('HaBridge', () => {
       'homeassistant/button/u1_core_water_now/config',
     ]))
     expect(cfgs.every(c => c.retain)).toBe(true)
-    expect(mqtt.published.find(p => p.topic === 'seedypod/u1/core/availability')?.payload).toBe('online')
+    expect(mqtt.published.find(p => p.topic === 'thryve/u1/core/availability')?.payload).toBe('online')
   })
 
   it('state reflects reminders and grow day; done button clears a reminder', async () => {
@@ -62,7 +62,7 @@ describe('HaBridge', () => {
     const state = JSON.parse(mqtt.published.at(-1)?.payload ?? '{}') as { grow: { day: number }, reminders: Record<string, boolean> }
     expect(state.grow.day).toBe(11)
     expect(state.reminders.reminder_nutrients).toBe(true)
-    await bridge.onMessage('seedypod/u1/core/done/reminder_nutrients', '{}')
+    await bridge.onMessage('thryve/u1/core/done/reminder_nutrients', '{}')
     expect(store.alerts.list({ activeOnly: true })).toHaveLength(0)
     const after = JSON.parse(mqtt.published.at(-1)?.payload ?? '{}') as { reminders: Record<string, boolean> }
     expect(after.reminders.reminder_nutrients).toBe(false)
@@ -72,7 +72,7 @@ describe('HaBridge', () => {
     const { mqtt, store, events } = setup()
     mqtt.fire('connect')
     const cfg = JSON.parse(mqtt.published.find(p => p.topic === 'homeassistant/binary_sensor/u1_core_backup_stale/config')?.payload ?? '{}') as Record<string, string>
-    expect(cfg).toMatchObject({ name: 'Backup overdue', device_class: 'problem', state_topic: 'seedypod/u1/core/state' })
+    expect(cfg).toMatchObject({ name: 'Backup overdue', device_class: 'problem', state_topic: 'thryve/u1/core/state' })
     store.alerts.raise('backup_stale', 'No off-card backup yet', '2026-10-31T00:00:00Z')
     events.emit({ kind: 'mutation', path: 'alerts.backup_stale' })
     expect(JSON.parse(mqtt.published.at(-1)?.payload ?? '{}')).toMatchObject({ backupStale: true })
@@ -94,8 +94,8 @@ describe('HaBridge', () => {
     await vi.waitFor(() => expect(stills).toHaveBeenCalled())
     const cfgs = mqtt.published.filter(p => p.topic.startsWith('homeassistant/camera/'))
     expect(cfgs.map(c => c.topic)).toEqual(['homeassistant/camera/u1_core_camera_upper/config'])
-    expect(JSON.parse(cfgs[0]?.payload ?? '{}')).toMatchObject({ name: 'Upper camera', topic: 'seedypod/u1/core/camera/upper', unique_id: 'u1_core_camera_upper' })
-    const frames = () => mqtt.published.filter(p => p.topic === 'seedypod/u1/core/camera/upper')
+    expect(JSON.parse(cfgs[0]?.payload ?? '{}')).toMatchObject({ name: 'Upper camera', topic: 'thryve/u1/core/camera/upper', unique_id: 'u1_core_camera_upper' })
+    const frames = () => mqtt.published.filter(p => p.topic === 'thryve/u1/core/camera/upper')
     expect(frames()).toEqual([])
 
     const bytes = new Uint8Array([0xFF, 0xD8, 1, 2, 0xFF, 0xD9])
@@ -126,7 +126,7 @@ describe('HaBridge', () => {
 
   it('water_now runs a bounded pump cycle through the HAL', async () => {
     const { hal, bridge } = setup()
-    await bridge.onMessage('seedypod/u1/core/water_now', '120')
+    await bridge.onMessage('thryve/u1/core/water_now', '120')
     expect(hal.snapshot().actuators.pump).toMatchObject({ on: true, remainingS: 120 })
   })
 

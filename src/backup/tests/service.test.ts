@@ -19,12 +19,12 @@ function enoent(path: string) {
 /** A unit's files in memory; `denied` paths fail like a file core may not read. */
 function sources(files: Record<string, string>, denied: string[] = [], database: BackupSources['database'] = async () => enc.encode('SQLite format 3\0…')): BackupSources {
   return {
-    paths: { etcDir: '/etc/seedypod', stateDir: '/var/lib/seedypod', mosquittoPasswd: '/etc/mosquitto/seedypod.passwd', capturesDir: './data/captures' },
+    paths: { etcDir: '/etc/thryve', stateDir: '/var/lib/thryve', mosquittoPasswd: '/etc/mosquitto/thryve.passwd', capturesDir: './data/captures' },
     database,
     systemFiles: () => [
-      { name: 'etc/seedypod/hal.toml', path: '/etc/seedypod/hal.toml', optional: false },
-      { name: 'etc/mosquitto/seedypod.passwd', path: '/etc/mosquitto/seedypod.passwd', optional: true },
-      { name: 'var/lib/seedypod/state.json', path: '/var/lib/seedypod/state.json', optional: true },
+      { name: 'etc/thryve/hal.toml', path: '/etc/thryve/hal.toml', optional: false },
+      { name: 'etc/mosquitto/thryve.passwd', path: '/etc/mosquitto/thryve.passwd', optional: true },
+      { name: 'var/lib/thryve/state.json', path: '/var/lib/thryve/state.json', optional: true },
     ],
     read: async (path) => {
       if (denied.includes(path)) throw Object.assign(new Error(`EACCES: ${path}`), { code: 'EACCES' })
@@ -65,7 +65,7 @@ function rig(opts: { files?: Record<string, string>, denied?: string[], mirror?:
   const cfg: MirrorConfig = { endpoint: 'https://s3.example.com', bucket: 'pods', region: 'auto', prefix: '', accessKeyId: 'AK', secretAccessKey: 'SK' }
   if (opts.mirror) store.settings.update({ mirrorEndpoint: cfg.endpoint, mirrorBucket: cfg.bucket, mirrorAccessKeyId: cfg.accessKeyId, mirrorSecretAccessKey: cfg.secretAccessKey })
   const mirror = new MirroredSink({ local: new MemorySink(), store, events, remote: () => b.remote, retryDelayMs: 1 })
-  const files = opts.files ?? { '/etc/seedypod/hal.toml': 'unit_id = "kitchen"\n', '/var/lib/seedypod/state.json': '{"light":40}' }
+  const files = opts.files ?? { '/etc/thryve/hal.toml': 'unit_id = "kitchen"\n', '/var/lib/thryve/state.json': '{"light":40}' }
   const svc = new BackupService({ store, hal, events, version: 'main@abc1234', sources: sources(files, opts.denied, opts.database), mirror, bucket: () => b.bucket, now: () => now })
   return { svc, store, b, cfg, seen, advance: (ms: number) => (now = new Date(now.getTime() + ms)), at: (iso: string) => (now = new Date(iso)) }
 }
@@ -84,15 +84,15 @@ describe('a database that can\'t be copied', () => {
 describe('bundle names', () => {
   it('sort by time within a unit and parse back', () => {
     const n = backupName('Kitchen Tower', new Date('2026-10-31T03:00:05Z'))
-    expect(n).toBe('seedypod-backup-kitchen-tower-20261031-030005.tar.gz')
+    expect(n).toBe('thryve-backup-kitchen-tower-20261031-030005.tar.gz')
     expect(parseBackupName(n)).toEqual({ unit: 'kitchen-tower', createdAt: '2026-10-31T03:00:05Z' })
     expect(parseBackupName('notes.txt')).toBeNull()
   })
 
   it('only allow the paths the restore helper accepts', () => {
     const ok = (p: string) => BUNDLE_NAMES.some(re => re.test(p))
-    expect(['seedypod.db', 'etc/seedypod/hal.toml', 'etc/mosquitto/seedypod.passwd', 'var/lib/seedypod/sensors.json', 'homekit/identity.json', 'homekit/AccessoryInfo.B6C26B920340.json', 'captures/upper-2026-10-31T03-00-00-000Z.jpg'].every(ok)).toBe(true)
-    expect(['etc/passwd', '../seedypod.db', 'captures/../../etc/shadow', 'var/lib/seedypod/x/state.json', 'captures/.hidden', 'homekit/../seedypod.json', 'homekit/sub/identity.json', 'homekit/identity.json.tmp'].some(ok)).toBe(false)
+    expect(['thryve.db', 'etc/thryve/hal.toml', 'etc/mosquitto/thryve.passwd', 'var/lib/thryve/sensors.json', 'homekit/identity.json', 'homekit/AccessoryInfo.B6C26B920340.json', 'captures/upper-2026-10-31T03-00-00-000Z.jpg'].every(ok)).toBe(true)
+    expect(['etc/passwd', '../thryve.db', 'captures/../../etc/shadow', 'var/lib/thryve/x/state.json', 'captures/.hidden', 'homekit/../thryve.json', 'homekit/sub/identity.json', 'homekit/identity.json.tmp'].some(ok)).toBe(false)
   })
 })
 
@@ -100,12 +100,12 @@ describe('BackupService bundle', () => {
   it('holds the database, config and state, with a manifest of checksums last', async () => {
     const { svc } = rig()
     const { name, stream } = await svc.bundle({ photos: false })
-    expect(name).toBe('seedypod-backup-kitchen-20261031-120000.tar.gz')
+    expect(name).toBe('thryve-backup-kitchen-20261031-120000.tar.gz')
     const files = untar(await collect(stream))
-    expect([...files.keys()]).toEqual(['seedypod.db', 'etc/seedypod/hal.toml', 'var/lib/seedypod/state.json', 'manifest.json'])
+    expect([...files.keys()]).toEqual(['thryve.db', 'etc/thryve/hal.toml', 'var/lib/thryve/state.json', 'manifest.json'])
     const m = JSON.parse(new TextDecoder().decode(files.get('manifest.json')))
     expect(m).toMatchObject({
-      format: { name: 'seedypod-backup', version: 1 },
+      format: { name: 'thryve-backup', version: 1 },
       createdAt: '2026-10-31T12:00:00.000Z',
       unit: { id: 'kitchen', name: 'Gardyn' },
       core: { version: 'main@abc1234' },
@@ -118,15 +118,15 @@ describe('BackupService bundle', () => {
   })
 
   it('leaves out a missing optional file silently and names an unreadable one', async () => {
-    const { svc } = rig({ files: { '/etc/seedypod/hal.toml': 'x', '/etc/mosquitto/seedypod.passwd': 'ha:$7$…' }, denied: ['/etc/mosquitto/seedypod.passwd'] })
+    const { svc } = rig({ files: { '/etc/thryve/hal.toml': 'x', '/etc/mosquitto/thryve.passwd': 'ha:$7$…' }, denied: ['/etc/mosquitto/thryve.passwd'] })
     const files = untar(await collect((await svc.bundle({ photos: false })).stream))
-    expect(files.has('etc/mosquitto/seedypod.passwd')).toBe(false)
+    expect(files.has('etc/mosquitto/thryve.passwd')).toBe(false)
     const m = JSON.parse(new TextDecoder().decode(files.get('manifest.json')))
-    expect(m.skipped).toEqual([{ path: '/etc/mosquitto/seedypod.passwd', reason: 'permission denied: rerun install-hal so core can read it' }])
+    expect(m.skipped).toEqual([{ path: '/etc/mosquitto/thryve.passwd', reason: 'permission denied: rerun install-hal so core can read it' }])
   })
 
   it('adds the photos under captures/ when asked', async () => {
-    const { svc, store } = rig({ files: { '/etc/seedypod/hal.toml': 'x', './data/captures/upper-1.jpg': 'jpeg' } })
+    const { svc, store } = rig({ files: { '/etc/thryve/hal.toml': 'x', './data/captures/upper-1.jpg': 'jpeg' } })
     store.captures.add({ id: 'upper-1', camera: 'upper', ts: '2026-10-31T00:00:00Z', path: './data/captures/upper-1.jpg', bytes: 4 })
     store.captures.add({ id: 'upper-0', camera: 'upper', ts: '2026-10-30T00:00:00Z', path: './data/captures/upper-0.jpg', bytes: 4 })
     const files = untar(await collect((await svc.bundle({ photos: true })).stream))
@@ -155,7 +155,7 @@ describe('download', () => {
 describe('bucket backups', () => {
   it('uploads to backups/ through the mirror and keeps the newest 14 for this unit', async () => {
     const { svc, b, store, advance } = rig({ mirror: true })
-    b.objects.set('backups/seedypod-backup-garage-20260101-030000.tar.gz', { bytes: new Uint8Array(1), at: '' })
+    b.objects.set('backups/thryve-backup-garage-20260101-030000.tar.gz', { bytes: new Uint8Array(1), at: '' })
     for (let i = 0; i < 16; i++) {
       const r = await svc.backupToBucket()
       expect(r.ok).toBe(true)
@@ -163,11 +163,11 @@ describe('bucket backups', () => {
     }
     const keys = [...b.objects.keys()].sort()
     expect(keys.filter(k => k.includes('-kitchen-'))).toHaveLength(14)
-    expect(keys).toContain('backups/seedypod-backup-garage-20260101-030000.tar.gz')
-    expect(keys.filter(k => k.includes('-kitchen-'))[0]).toBe('backups/seedypod-backup-kitchen-20261102-120000.tar.gz')
+    expect(keys).toContain('backups/thryve-backup-garage-20260101-030000.tar.gz')
+    expect(keys.filter(k => k.includes('-kitchen-'))[0]).toBe('backups/thryve-backup-kitchen-20261102-120000.tar.gz')
     expect(store.backups.list(1)[0]).toMatchObject({ destination: 'bucket', ok: true, detail: 'removed 1 older' })
     const files = untar(b.objects.get(keys.at(-1) as string)?.bytes as Uint8Array)
-    expect(files.has('seedypod.db')).toBe(true)
+    expect(files.has('thryve.db')).toBe(true)
   })
 
   it('records a failed upload and refuses without a mirror', async () => {
@@ -183,8 +183,8 @@ describe('bucket backups', () => {
 
   it('lists newest first across units and only fetches backup keys', async () => {
     const { svc, b, cfg } = rig({ mirror: true })
-    b.objects.set('backups/seedypod-backup-kitchen-20261001-030000.tar.gz', { bytes: new Uint8Array([1]), at: '' })
-    b.objects.set('backups/seedypod-backup-garage-20261003-030000.tar.gz', { bytes: new Uint8Array([2]), at: '' })
+    b.objects.set('backups/thryve-backup-kitchen-20261001-030000.tar.gz', { bytes: new Uint8Array([1]), at: '' })
+    b.objects.set('backups/thryve-backup-garage-20261003-030000.tar.gz', { bytes: new Uint8Array([2]), at: '' })
     b.objects.set('backups/readme.txt', { bytes: new Uint8Array([3]), at: '' })
     const list = await svc.list(cfg)
     expect(list.map(x => [x.unit, x.createdAt])).toEqual([['garage', '2026-10-03T03:00:00Z'], ['kitchen', '2026-10-01T03:00:00Z']])

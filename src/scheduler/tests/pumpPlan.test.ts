@@ -29,7 +29,7 @@ describe('pump presets', () => {
     const headings = note.split('\n').filter(l => /^#{1,6} /.test(l)).map(l => l.replace(/^#+ /, '').trim())
     for (const c of [...PUMP_PRESETS.map(p => p.citation), TIPS_CITATION]) {
       expect(headings).toContain(c.section)
-      expect(c.url).toBe(`https://github.com/seedypod/core/blob/dev/knowledge/watering/schedules.md#${anchor(c.section)}`)
+      expect(c.url).toBe(`https://github.com/kaniick/Thryve/blob/dev/knowledge/watering/schedules.md#${anchor(c.section)}`)
     }
     expect(note).toContain('Once a week, 15 min at 08:00, on the sowing weekday')
     expect(note).toContain('Once a day, 10 min (5–15 min), at 08:00')

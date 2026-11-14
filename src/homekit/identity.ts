@@ -17,7 +17,7 @@ import type { SystemInfo } from '../hardware/contract'
 
 // Bumping this changes every unit's identity the next time identity.json is
 // missing. It is the escape hatch if a derivation bug ships.
-const HKDF_SALT = 'seedypod-homekit-v1'
+const HKDF_SALT = 'thryve-homekit-v1'
 
 const IDENTITY_FILE = 'identity.json'
 

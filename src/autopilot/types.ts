@@ -1,7 +1,7 @@
 /**
  * Autopilot rule model — the WHEN / IF / THEN AST (ADR-0020). Ported from
  * sleepypod `src/automation/types.ts` (AGPL-3.0, same owner); the actions are
- * seedypod's: the light, the pump, the dosers and pods instead of bed sides.
+ * thryve's: the light, the pump, the dosers and pods instead of bed sides.
  */
 
 export type DayOfWeek = 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday' | 'sunday'

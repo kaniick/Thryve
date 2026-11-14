@@ -14,7 +14,7 @@ sources: [{"resource": "https://github.com/sleepypod/core/blob/dev/docs/adr/0023
 
 ## Context
 
-Everything seedypod does on its own is **time-triggered**:
+Everything thryve does on its own is **time-triggered**:
 
 - Light curves and pump cycles fire from the scheduler.
 - Grow reminders fire from the grow engine.
@@ -47,7 +47,7 @@ core can be ported directly.
 What doesn't port is the output side:
 
 - sleepypod arbitrates bed-temperature "leases" per side.
-- seedypod has one light, one pump, up to four dosers, and pods.
+- thryve has one light, one pump, up to four dosers, and pods.
 
 Of these, only the light is a **continuous** setpoint that a rule, a schedule and
 a person could fight over. Pump runs and doses are bounded one-shots, already
@@ -96,7 +96,7 @@ The AST is ported from sleepypod `src/automation/types.ts`.
 - The catalog is served by the router, so the rule builder only offers keys that
   exist and the units each one uses.
 
-### Actions: seedypod's verbs, through the normal paths
+### Actions: thryve's verbs, through the normal paths
 
 | Action | Goes through | Bounded by |
 |---|---|---|
@@ -130,7 +130,7 @@ The arbiter writes only when the resolved level changes. While a higher source
 is in charge, the schedule's clock keeps running. That way, when a hold
 expires, the light resolves to the current curve point and doesn't replay old
 ones. This is the precedence [sleepypod](https://sleepypod.github.io/core/autopilot-engine/) reached in its revision of ADR 0023,
-minus run-once sessions, which seedypod doesn't have.
+minus run-once sessions, which thryve doesn't have.
 
 ### Safety
 
@@ -219,7 +219,7 @@ It uses forms, not a node graph, for the reasons sleepypod gives.
 - **Home Assistant automations instead.**
   - HA already sees every entity and can automate them.
   - Not every owner runs HA. HA can't see analysis signals or backtest against
-    seedypod's history. And HA cutting out would stop the garden's own rules.
+    thryve's history. And HA cutting out would stop the garden's own rules.
   - The two coexist: HA commands count as manual through the arbiter.
 - **Rules in `hald`.**
   - Rejected. `hald` is the safety floor and stays small (ADR 0004).

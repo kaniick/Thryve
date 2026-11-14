@@ -22,7 +22,7 @@ describe('useCoreStatus', () => {
   })
 
   it('falls back while loading, without a HAL, and when core is unreachable', () => {
-    expect(renderHook(() => useCoreStatus()).result.current).toEqual({ name: 'seedypod', line: '…', online: false })
+    expect(renderHook(() => useCoreStatus()).result.current).toEqual({ name: 'thryve', line: '…', online: false })
     data.set('system.info', { data: { coreVersion: 'dev', halOnline: false, system: null } })
     expect(renderHook(() => useCoreStatus()).result.current.line).toBe('no HAL · core dev · offline')
     data.set('system.info', { isError: true })

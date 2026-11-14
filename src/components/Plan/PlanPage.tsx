@@ -28,7 +28,7 @@ const CATS: { value: Category | 'all', label: string }[] = [
 ]
 
 type View = '3d' | '2d'
-export const VIEW_KEY = 'seedypod.planView'
+export const VIEW_KEY = 'thryve.planView'
 const VIEWS: { value: View, label: ReactNode }[] = [
   { value: '3d', label: [<Box key="i" size={14} aria-hidden="true" />, '3D'] },
   { value: '2d', label: [<LayoutGrid key="i" size={14} aria-hidden="true" />, '2D'] },

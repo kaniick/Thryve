@@ -16,18 +16,18 @@ const script = resolve(import.meta.dirname, '../../scripts/install-hal')
 const STUBS: Record<string, string> = {
   'systemctl': `echo "systemctl $*" >> "$STATE/log"
 case "$*" in
-  "restart systemd-journald") [ -f "$STATE/fail-journald" ] && grep -q volatile "$SEEDYPOD_ROOT/etc/systemd/journald.conf.d/"*.conf 2>/dev/null && exit 1; exit 0 ;;
-  "is-active --quiet systemd-journald") [ -f "$STATE/fail-journald" ] && grep -q volatile "$SEEDYPOD_ROOT/etc/systemd/journald.conf.d/"*.conf 2>/dev/null && exit 3; exit 0 ;;
-  "start dev-zram0.swap") [ -f "$STATE/fail-zram" ] && exit 1; echo '/dev/zram0 partition 435196 0 100' >> "$SEEDYPOD_ROOT/proc/swaps" ;;
-  "stop dev-zram0.swap") sed -i.bak /zram/d "$SEEDYPOD_ROOT/proc/swaps" ;;
+  "restart systemd-journald") [ -f "$STATE/fail-journald" ] && grep -q volatile "$THRYVE_ROOT/etc/systemd/journald.conf.d/"*.conf 2>/dev/null && exit 1; exit 0 ;;
+  "is-active --quiet systemd-journald") [ -f "$STATE/fail-journald" ] && grep -q volatile "$THRYVE_ROOT/etc/systemd/journald.conf.d/"*.conf 2>/dev/null && exit 3; exit 0 ;;
+  "start dev-zram0.swap") [ -f "$STATE/fail-zram" ] && exit 1; echo '/dev/zram0 partition 435196 0 100' >> "$THRYVE_ROOT/proc/swaps" ;;
+  "stop dev-zram0.swap") sed -i.bak /zram/d "$THRYVE_ROOT/proc/swaps" ;;
 esac
 exit 0`,
   'dphys-swapfile': `echo "dphys-swapfile $*" >> "$STATE/log"; [ "$1" = swapoff ] && rm -f "$STATE/dphys-on"; exit 0`,
   'apt-get': `echo "apt-get $*" >> "$STATE/log"
 [ -f "$STATE/fail-apt" ] && exit 100
-mkdir -p "$SEEDYPOD_ROOT/usr/lib/systemd/system-generators"
-printf '#!/bin/sh\\n' > "$SEEDYPOD_ROOT/usr/lib/systemd/system-generators/zram-generator"
-chmod +x "$SEEDYPOD_ROOT/usr/lib/systemd/system-generators/zram-generator"`,
+mkdir -p "$THRYVE_ROOT/usr/lib/systemd/system-generators"
+printf '#!/bin/sh\\n' > "$THRYVE_ROOT/usr/lib/systemd/system-generators/zram-generator"
+chmod +x "$THRYVE_ROOT/usr/lib/systemd/system-generators/zram-generator"`,
   'mount': `echo "mount $*" >> "$STATE/log"
 if [ "$*" = "-o remount,noatime /" ]; then [ -f "$STATE/fail-remount" ] && exit 32; echo rw,noatime > "$STATE/root-opts"; fi
 exit 0`,
@@ -48,7 +48,7 @@ let state: string
 let bin: string
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'seedypod-wear-'))
+  dir = mkdtempSync(join(tmpdir(), 'thryve-wear-'))
   root = join(dir, 'root')
   state = join(dir, 'state')
   bin = join(dir, 'bin')
@@ -73,7 +73,7 @@ const log = () => (existsSync(join(state, 'log')) ? readFileSync(join(state, 'lo
 function run(fn: string) {
   const r = spawnSync('bash', ['-c', `source "${script}"; SUDO=; ${fn}`], {
     encoding: 'utf8',
-    env: { PATH: `${bin}:/usr/bin:/bin`, SEEDYPOD_LIB_ONLY: '1', SEEDYPOD_ROOT: root, STATE: state },
+    env: { PATH: `${bin}:/usr/bin:/bin`, THRYVE_LIB_ONLY: '1', THRYVE_ROOT: root, STATE: state },
   })
   return { code: r.status, out: r.stdout, err: r.stderr }
 }
@@ -82,7 +82,7 @@ describe('journal in RAM', () => {
   it('writes the volatile drop-in and restarts journald', () => {
     const r = run('wear_journald')
     expect(r.code).toBe(0)
-    expect(read('etc/systemd/journald.conf.d/50-seedypod-volatile.conf')).toContain('Storage=volatile\nRuntimeMaxUse=32M')
+    expect(read('etc/systemd/journald.conf.d/50-thryve-volatile.conf')).toContain('Storage=volatile\nRuntimeMaxUse=32M')
     expect(log()).toContain('systemctl restart systemd-journald')
   })
 
@@ -97,7 +97,7 @@ describe('journal in RAM', () => {
     flag('fail-journald')
     const r = run('wear_journald')
     expect(r.code).toBe(1)
-    expect(existsSync(join(root, 'etc/systemd/journald.conf.d/50-seedypod-volatile.conf'))).toBe(false)
+    expect(existsSync(join(root, 'etc/systemd/journald.conf.d/50-thryve-volatile.conf'))).toBe(false)
     expect(r.err).toContain('didn\'t take')
   })
 })
@@ -166,7 +166,7 @@ describe('swap on zram', () => {
     const r = run('wear_swap')
     expect(r.code).toBe(1)
     expect(read('etc/systemd/zram-generator.conf')).toBe('[zram0]\nzram-size = 64\n')
-    expect(existsSync(join(root, 'etc/systemd/zram-generator.conf.seedypod-bak'))).toBe(false)
+    expect(existsSync(join(root, 'etc/systemd/zram-generator.conf.thryve-bak'))).toBe(false)
   })
 })
 
@@ -178,7 +178,7 @@ describe('noatime on /', () => {
     expect(fstab[2]).toMatch(/^PARTUUID=abcd-02\s+\/\s+ext4\s+defaults,noatime\s+0\s+1$/)
     expect(fstab[1]).toBe(FSTAB.split('\n')[1])
     expect(log()).toContain('mount -o remount,noatime /')
-    expect(existsSync(join(root, 'etc/fstab.seedypod-bak'))).toBe(false)
+    expect(existsSync(join(root, 'etc/fstab.thryve-bak'))).toBe(false)
   })
 
   it('skips an fstab that already has it (stock Raspberry Pi OS)', () => {
@@ -209,7 +209,7 @@ it('applies the rest when one setting fails, and never fails the install', () =>
   flag('fail-zram')
   const r = run('apply_wear_settings')
   expect(r.code).toBe(0)
-  expect(existsSync(join(root, 'etc/systemd/journald.conf.d/50-seedypod-volatile.conf'))).toBe(true)
+  expect(existsSync(join(root, 'etc/systemd/journald.conf.d/50-thryve-volatile.conf'))).toBe(true)
   expect(read('etc/fstab')).toContain('defaults,noatime')
   expect(existsSync(join(root, 'etc/systemd/zram-generator.conf'))).toBe(false)
   expect(r.err).toContain('some SD card settings were skipped')

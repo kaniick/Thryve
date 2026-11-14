@@ -1,7 +1,7 @@
 /**
  * Core's side of a restore (ADR-0021 phase 3): hand a bundle to the root
- * helper (`scripts/seedypod-restore.cjs`, installed as
- * /usr/local/sbin/seedypod-restore) and read back what it did. The helper
+ * helper (`scripts/thryve-restore.cjs`, installed as
+ * /usr/local/sbin/thryve-restore) and read back what it did. The helper
  * checks the bundle before it returns, so a refusal (a newer schema, a damaged
  * file) comes back here; the restore itself then runs in its own unit and
  * restarts core. Node-only.
@@ -10,8 +10,9 @@ import { execFile } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { envValue } from '../lib/legacyEnv'
 
-export const INSTALLED_HELPER = '/usr/local/sbin/seedypod-restore'
+export const INSTALLED_HELPER = '/usr/local/sbin/thryve-restore'
 
 export interface BundleSummary {
   createdAt: string | null
@@ -43,9 +44,10 @@ export class RestoreRefused extends Error {
   }
 }
 
-/** `SEEDYPOD_RESTORE_CMD` (a JSON array) overrides; otherwise sudo and the installed helper, when it's there. */
+/** `THRYVE_RESTORE_CMD` (a JSON array) overrides; otherwise sudo and the installed helper, when it's there. */
 export function restoreCommand(env: NodeJS.ProcessEnv = process.env): string[] | null {
-  if (env.SEEDYPOD_RESTORE_CMD) return JSON.parse(env.SEEDYPOD_RESTORE_CMD) as string[]
+  const cmd = envValue(env, 'THRYVE_RESTORE_CMD')
+  if (cmd) return JSON.parse(cmd) as string[]
   return existsSync(INSTALLED_HELPER) ? ['sudo', '-n', INSTALLED_HELPER] : null
 }
 

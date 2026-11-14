@@ -127,11 +127,11 @@ describe('Settings → Updates', () => {
   })
 
   it('shows the step and the log while it runs, and polls only then', () => {
-    state.info = { ...idle, status: run('downloading'), log: ['2026-11-08T01:00:00Z downloading seedypod-core.tar.gz'] }
+    state.info = { ...idle, status: run('downloading'), log: ['2026-11-08T01:00:00Z downloading thryve-core.tar.gz'] }
     state.check.data = found()
     render(<UpdateSection />)
     expect(screen.getByTestId('update-progress').textContent).toBe('Downloading the release…')
-    expect(screen.getByTestId('update-log').textContent).toContain('downloading seedypod-core.tar.gz')
+    expect(screen.getByTestId('update-log').textContent).toContain('downloading thryve-core.tar.gz')
     expect(screen.getByRole('button', { name: 'Check for updates' }).hasAttribute('disabled')).toBe(true)
     expect(screen.queryByRole('button', { name: /^Update to/ })).toBeNull()
     expect(state.refetch?.({ state: { data: state.info } })).toBe(1500)
@@ -151,11 +151,11 @@ describe('Settings → Updates', () => {
     cleanup()
     state.info = { ...idle, status: run('rollback-failed', { error: 'boom', to: { tag: 'dev-latest', commit: 'c'.repeat(40) } }) }
     render(<UpdateSection />)
-    expect(screen.getByText(/The update to dev-latest \(ccccccc\) failed and the previous version didn't come back: boom\. Over SSH, run sudo seedypod-update --rollback\./)).toBeTruthy()
+    expect(screen.getByText(/The update to dev-latest \(ccccccc\) failed and the previous version didn't come back: boom\. Over SSH, run sudo thryve-update --rollback\./)).toBeTruthy()
     cleanup()
-    state.info = { ...idle, status: run('refused', { error: 'seedypod-core.tar.gz doesn\'t match its checksum', to: undefined }) }
+    state.info = { ...idle, status: run('refused', { error: 'thryve-core.tar.gz doesn\'t match its checksum', to: undefined }) }
     render(<UpdateSection />)
-    expect(screen.getByText('The update didn\'t start, and nothing changed: seedypod-core.tar.gz doesn\'t match its checksum')).toBeTruthy()
+    expect(screen.getByText('The update didn\'t start, and nothing changed: thryve-core.tar.gz doesn\'t match its checksum')).toBeTruthy()
   })
 
   it('offers a reload once the update it started is done', () => {

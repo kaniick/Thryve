@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Build locally and push to a unit over SSH (sleepypod scripts/deploy pattern).
-# Usage: scripts/deploy pi@seedypod.local [/opt/seedypod]
+# Usage: scripts/deploy pi@thryve.local [/opt/thryve]
 set -euo pipefail
 # Corepack would otherwise stop to ask before fetching a newer pinned pnpm.
 export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 HOST="${1:?usage: scripts/deploy user@host [prefix]}"
-PREFIX="${2:-/opt/seedypod}"
+PREFIX="${2:-/opt/thryve}"
 pnpm build
-tar czf /tmp/seedypod-core.tar.gz --exclude=node_modules --exclude=.git --exclude='*.db*' --exclude=hal/target --exclude=.claude .
-scp -q /tmp/seedypod-core.tar.gz "$HOST:/tmp/"
-ssh "$HOST" "set -e; mkdir -p $PREFIX && tar xzf /tmp/seedypod-core.tar.gz -C $PREFIX && cd $PREFIX && COREPACK_ENABLE_DOWNLOAD_PROMPT=0 pnpm install --prod --frozen-lockfile && sudo systemctl restart seedypod-core && systemctl is-active seedypod-core"
+tar czf /tmp/thryve-core.tar.gz --exclude=node_modules --exclude=.git --exclude='*.db*' --exclude=hal/target --exclude=.claude .
+scp -q /tmp/thryve-core.tar.gz "$HOST:/tmp/"
+ssh "$HOST" "set -e; mkdir -p $PREFIX && tar xzf /tmp/thryve-core.tar.gz -C $PREFIX && cd $PREFIX && COREPACK_ENABLE_DOWNLOAD_PROMPT=0 pnpm install --prod --frozen-lockfile && sudo systemctl restart thryve-core && systemctl is-active thryve-core"
 echo "✓ deployed to $HOST:$PREFIX"

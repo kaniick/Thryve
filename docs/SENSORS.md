@@ -9,7 +9,7 @@ sources: [{"resource": "/adr/0018-runtime-sensor-inventory.md", "title": "ADR 00
 
 # Adding a probe
 
-seedypod reads Atlas Scientific EZO circuits on the Pi's I²C bus: **pH**,
+thryve reads Atlas Scientific EZO circuits on the Pi's I²C bus: **pH**,
 **conductivity (EC)** and **water temperature (RTD)**. You add them from the app;
 there's no config file to edit and nothing to restart.
 
@@ -56,5 +56,5 @@ Assistant; its history is kept. Built-in sensors can't be removed from the app
 `GET /api/devices`, `POST /api/devices/sensors {kind, addr}`,
 `DELETE /api/devices/sensors/{kind}/{addr}` and
 `POST /api/sensors/{id}/calibrate`. Agents can read the inventory
-(`list_devices`, `seedypod://devices`) but can't change it. To support a new
+(`list_devices`, `thryve://devices`) but can't change it. To support a new
 probe type, see ADR-0018.

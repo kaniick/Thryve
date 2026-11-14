@@ -171,7 +171,7 @@ pub const STOCK_CAMERA_PORTS: [(&str, &str); 2] = [("upper", "1-1.3:1.0"), ("low
 #[serde(deny_unknown_fields)]
 pub struct CameraEntry {
     pub name: String,
-    /// Normally the stable udev name `/dev/seedypod/camera-<name>` (`hald --camera-rules`).
+    /// Normally the stable udev name `/dev/thryve/camera-<name>` (`hald --camera-rules`).
     pub device: PathBuf,
     /// Used while `device` doesn't exist, e.g. before the udev rules are installed.
     #[serde(default)]
@@ -238,7 +238,7 @@ impl CameraEntry {
     fn stock(name: &str, fallback: &str) -> Self {
         Self {
             name: name.into(),
-            device: format!("/dev/seedypod/camera-{name}").into(),
+            device: format!("/dev/thryve/camera-{name}").into(),
             fallback: Some(fallback.into()),
             resolution: default_resolution(),
             palette: default_palette(),
@@ -315,7 +315,7 @@ impl Default for Config {
             http_bind: "0.0.0.0:3001".into(),
             telemetry_interval_s: 10,
             light_fade_ms: 800,
-            state_dir: PathBuf::from("/var/lib/seedypod"),
+            state_dir: PathBuf::from("/var/lib/thryve"),
             pins: Pins::default(),
             i2c: I2c::default(),
             limits: Limits::default(),
@@ -687,7 +687,7 @@ pub fn parse_actuator_id(s: &str) -> Option<hal_core::ActuatorId> {
 }
 
 /// The commented `hal.toml` written by the installer and `--print-default-config`.
-pub const DEFAULT_CONFIG_TOML: &str = r##"# seedypod hald configuration. Every pin, address and limit lives here;
+pub const DEFAULT_CONFIG_TOML: &str = r##"# thryve hald configuration. Every pin, address and limit lives here;
 # drivers take them as arguments. Values shown are the defaults for a stock
 # Gardyn (BCM GPIO numbering). Uncomment to change.
 
@@ -699,7 +699,7 @@ pub const DEFAULT_CONFIG_TOML: &str = r##"# seedypod hald configuration. Every p
 # http_bind = "0.0.0.0:3001"
 # telemetry_interval_s = 10
 # light_fade_ms = 800     # how long a full swing of the light takes; 0 for no fade
-# state_dir = "/var/lib/seedypod"
+# state_dir = "/var/lib/thryve"
 # mdns = true
 
 [pins]
@@ -778,7 +778,7 @@ pub const DEFAULT_CONFIG_TOML: &str = r##"# seedypod hald configuration. Every p
 # fallback because the numbering can swap across reboots.
 # [[camera]]
 # name = "upper"
-# device = "/dev/seedypod/camera-upper"
+# device = "/dev/thryve/camera-upper"
 # fallback = "/dev/video0"
 # resolution = "1280x960"
 # palette = "MJPEG"
@@ -791,7 +791,7 @@ pub const DEFAULT_CONFIG_TOML: &str = r##"# seedypod hald configuration. Every p
 # full_capture_timeout_s = 60
 # [[camera]]
 # name = "lower"
-# device = "/dev/seedypod/camera-lower"
+# device = "/dev/thryve/camera-lower"
 # fallback = "/dev/video2"
 
 # Explicit device list. When absent, the stock set above is used. Kinds:

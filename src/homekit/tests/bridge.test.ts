@@ -16,7 +16,7 @@ function deps(): { deps: Omit<AccessoryDeps, 'hap'>, events: ReturnType<typeof c
 }
 
 function options(d: Omit<AccessoryDeps, 'hap'>, o: Partial<BridgeOptions> = {}): BridgeOptions {
-  return { identity, dir: '/tmp/seedypod-homekit-bridge-test', deps: d, name: 'Kitchen', port: 51827, advertiser: 'ciao', version: 'v0.3.1-4-gabc', onPaired: vi.fn(), onUnpaired: vi.fn(), ...o }
+  return { identity, dir: '/tmp/thryve-homekit-bridge-test', deps: d, name: 'Kitchen', port: 51827, advertiser: 'ciao', version: 'v0.3.1-4-gabc', onPaired: vi.fn(), onUnpaired: vi.fn(), ...o }
 }
 
 afterEach(() => vi.restoreAllMocks())
@@ -72,10 +72,10 @@ describe('accessory tree', () => {
   it('cleans names HAP would reject, and versions it can\'t parse', () => {
     expect(hapName('Kitchen')).toBe('Kitchen')
     expect(hapName('  Jon\'s  tower #2! ')).toBe('Jon\'s tower 2')
-    expect(hapName('🌱')).toBe('seedypod')
+    expect(hapName('🌱')).toBe('Thryve')
     expect(hapName('-Gardyn-')).toBe('Gardyn')
     expect(hapName('Jons\'')).toBe('Jons')
-    expect(hapName('A')).toBe('seedypod')
+    expect(hapName('A')).toBe('Thryve')
     expect(firmware('v0.3.1-4-gabc')).toBe('0.3.1')
     expect(firmware('main@abc1234')).toBe('1234')
     expect(firmware('dev')).toBe('0.0.0')
@@ -135,8 +135,8 @@ describe('publishBridge', () => {
 
   it('keeps one HAP storage path per process', async () => {
     const h = { HAPStorage: { setCustomStoragePath: vi.fn() } } as unknown as typeof hap
-    initStorage(h, '/tmp/seedypod-homekit-bridge-test')
-    initStorage(h, '/tmp/seedypod-homekit-bridge-test')
+    initStorage(h, '/tmp/thryve-homekit-bridge-test')
+    initStorage(h, '/tmp/thryve-homekit-bridge-test')
     expect(vi.mocked(h.HAPStorage.setCustomStoragePath).mock.calls.length).toBeLessThanOrEqual(1)
     expect(() => initStorage(h, '/elsewhere')).toThrow(/restart core/)
   })
