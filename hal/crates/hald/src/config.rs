@@ -87,10 +87,19 @@ pub struct Limits {
     /// Below this pump current (A) the running pump is pulling air. Unset (the
     /// default until a wet and a dry run are measured) or no INA219: off.
     pub pump_dry_current_a: Option<f64>,
-    /// How long the current must stay below `pump_dry_current_a` to stop the pump.
-    pub pump_dry_after_s: u64,
+    /// How long the current must stay below `pump_dry_current_a` to stop the
+    /// pump (at least three reads in a row; hald reads it every 100 ms while the
+    /// pump runs). Unset: [`PUMP_DRY_AFTER_MS`].
+    pub pump_dry_after_ms: Option<u64>,
     /// How long after a start the current isn't judged, while the pump spins up.
-    pub pump_dry_grace_s: u64,
+    /// Unset: [`PUMP_DRY_GRACE_MS`].
+    pub pump_dry_grace_ms: Option<u64>,
+    /// The same two in whole seconds, as hald read them before milliseconds.
+    /// Still read so an older `hal.toml` loads; the `_ms` keys are preferred.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pump_dry_after_s: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pump_dry_grace_s: Option<u64>,
     pub distance_samples: usize,
     pub distance_timeout_ms: u64,
     /// Quiet time between pings, so one doesn't hear the last one's echo.
@@ -382,8 +391,10 @@ impl Default for Limits {
             // PCT2075 alert at 70 °C.
             over_temp_c: Some(65.0),
             pump_dry_current_a: None,
-            pump_dry_after_s: 5,
-            pump_dry_grace_s: 3,
+            pump_dry_after_ms: None,
+            pump_dry_grace_ms: None,
+            pump_dry_after_s: None,
+            pump_dry_grace_s: None,
             distance_samples: 5,
             distance_timeout_ms: 60,
             distance_gap_ms: 60,
@@ -460,10 +471,33 @@ impl From<&Limits> for PumpLimits {
             water_low_cm: l.water_low_cm,
             over_temp_c: l.over_temp_c,
             dry_current_a: l.pump_dry_current_a,
-            dry_current_s: l.pump_dry_after_s,
-            dry_grace_s: l.pump_dry_grace_s,
+            dry_after_ms: l.dry_after_ms(),
+            dry_grace_ms: l.dry_grace_ms(),
         }
     }
+}
+
+/// Three reads at the guard's 100 ms: a pump pulling air stops in about a third of a second.
+pub const PUMP_DRY_AFTER_MS: u64 = 300;
+/// Spin-up and priming after a start, before the current is judged.
+pub const PUMP_DRY_GRACE_MS: u64 = 1000;
+/// No setting may hold the current guard off longer than this after a start.
+pub const PUMP_DRY_MAX_MS: u64 = 10_000;
+
+impl Limits {
+    /// `pump_dry_after_ms`, or the older `pump_dry_after_s`, or the default.
+    pub fn dry_after_ms(&self) -> u64 {
+        ms_or_s(self.pump_dry_after_ms, self.pump_dry_after_s, PUMP_DRY_AFTER_MS)
+    }
+
+    /// `pump_dry_grace_ms`, or the older `pump_dry_grace_s`, or the default.
+    pub fn dry_grace_ms(&self) -> u64 {
+        ms_or_s(self.pump_dry_grace_ms, self.pump_dry_grace_s, PUMP_DRY_GRACE_MS)
+    }
+}
+
+fn ms_or_s(ms: Option<u64>, s: Option<u64>, default: u64) -> u64 {
+    ms.or(s.map(|s| s.saturating_mul(1000))).unwrap_or(default)
 }
 
 impl From<&Dosing> for DoseLimits {
@@ -610,8 +644,22 @@ impl Config {
                 ));
             }
         }
-        if self.limits.pump_dry_after_s == 0 {
-            errs.push("limits.pump_dry_after_s must be ≥ 1".into());
+        let l = &self.limits;
+        for (ms, s, name) in [
+            (l.pump_dry_after_ms, l.pump_dry_after_s, "after"),
+            (l.pump_dry_grace_ms, l.pump_dry_grace_s, "grace"),
+        ] {
+            if ms.is_some() && s.is_some() {
+                errs.push(format!(
+                    "limits: set pump_dry_{name}_ms or the older pump_dry_{name}_s, not both"
+                ));
+            }
+        }
+        if !(100..=PUMP_DRY_MAX_MS).contains(&l.dry_after_ms()) {
+            errs.push(format!("limits.pump_dry_after_ms must be 100–{PUMP_DRY_MAX_MS}"));
+        }
+        if l.dry_grace_ms() > PUMP_DRY_MAX_MS {
+            errs.push(format!("limits.pump_dry_grace_ms must be ≤ {PUMP_DRY_MAX_MS}"));
         }
         if self.limits.distance_samples == 0 {
             errs.push("limits.distance_samples must be ≥ 1".into());
@@ -731,10 +779,12 @@ pub const DEFAULT_CONFIG_TOML: &str = r##"# seedypod hald configuration. Every p
 # water_low_cm = 16.0     # dry-run interlock; comment out to disable
 # over_temp_c = 65.0      # PCB cutoff; comment out to disable
 # pump_dry_current_a = 1.2 # pump current guard: off until set (needs the ina219). Stops a running
-#                          # pump that draws less than this, past the grace, for pump_dry_after_s.
+#                          # pump that draws less than this, past the grace, for pump_dry_after_ms.
 #                          # Set it below the wet current at the lowest duty you run.
-# pump_dry_after_s = 5
-# pump_dry_grace_s = 3    # spin-up after a start, not judged
+#                          # hald reads the current every 100 ms while the pump runs.
+# pump_dry_after_ms = 300  # at least 3 low reads in a row; 100–10000
+# pump_dry_grace_ms = 1000 # spin-up after a start, not judged; ≤ 10000
+#                          # (pump_dry_after_s / pump_dry_grace_s, in seconds, still load)
 # distance_samples = 5    # median of N pings
 # distance_timeout_ms = 60
 # distance_gap_ms = 60    # between pings, so one doesn't hear the last one's echo
@@ -990,6 +1040,8 @@ mqtt_url = "http://x"
 pump_max_duty = 150
 pump_dry_current_a = 5.0
 pump_dry_after_s = 0
+pump_dry_grace_ms = 10001
+pump_dry_grace_s = 1
 [tank]
 full_cm = 30
 [[sensor]]
@@ -1026,7 +1078,9 @@ kind = "pwm_pump"
             "mqtt_url",
             "pump_max_duty",
             "pump_dry_current_a must be above 0 and below i2c.ina219_max_amps (3.2)",
-            "pump_dry_after_s must be ≥ 1",
+            "pump_dry_after_ms must be 100–10000",
+            "pump_dry_grace_ms must be ≤ 10000",
+            "set pump_dry_grace_ms or the older pump_dry_grace_s, not both",
             "tank.full_cm",
             "unknown kind \"bme280\"",
             "(ina219): addr required",
@@ -1065,18 +1119,30 @@ kind = "pwm_pump"
         // No baseline yet: the current guard ships off, with the guard's own timings.
         let guard = PumpLimits::default();
         assert_eq!(p.dry_current_a, None);
+        assert_eq!((p.dry_after_ms, p.dry_grace_ms), (300, 1000));
         assert_eq!(
-            (p.dry_current_s, p.dry_grace_s),
-            (guard.dry_current_s, guard.dry_grace_s)
+            (p.dry_after_ms, p.dry_grace_ms),
+            (guard.dry_after_ms, guard.dry_grace_ms)
         );
-        let on: Config =
-            toml::from_str("[limits]\npump_dry_current_a = 1.2\npump_dry_after_s = 4\n").unwrap();
+        let on: Config = toml::from_str(
+            "[limits]\npump_dry_current_a = 1.2\npump_dry_after_ms = 400\npump_dry_grace_ms = 1500\n",
+        )
+        .unwrap();
         let p: PumpLimits = (&on.limits).into();
         assert_eq!(
-            (p.dry_current_a, p.dry_current_s, p.dry_grace_s),
-            (Some(1.2), 4, 3)
+            (p.dry_current_a, p.dry_after_ms, p.dry_grace_ms),
+            (Some(1.2), 400, 1500)
         );
         assert!(on.validate().is_empty());
+        // A hal.toml from before milliseconds still loads, in seconds.
+        let old: Config = toml::from_str(
+            "[limits]\npump_dry_current_a = 1.2\npump_dry_after_s = 4\npump_dry_grace_s = 2\n",
+        )
+        .unwrap();
+        let p: PumpLimits = (&old.limits).into();
+        assert_eq!((p.dry_after_ms, p.dry_grace_ms), (4000, 2000));
+        assert!(old.validate().is_empty());
+        assert!(!toml::to_string(&c).unwrap().contains("pump_dry_after_s"));
         let d: DoseLimits = (&c.dosing).into();
         assert_eq!(d, DoseLimits::default());
         let t: hal_core::derived::TankGeometry = (&c.tank).into();

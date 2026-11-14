@@ -65,10 +65,10 @@ prints every key with its default; the important ones:
 | `[pins]` | `button`, `over_temp_alert` | 13, 25 | |
 | `[i2c]` | `bus`, `pct2075`, `ina219`, `dht20`, `am2320` | 1, 0x48, 0x40, 0x38, 0x5C | |
 | `[i2c]` | `ezo_ph`, `ezo_ec`, `ezo_rtd` | 0x63, 0x64, 0x66 | Only used by explicit `[[sensor]]` entries. |
-| `[i2c]` | `ina219_shunt_ohms`, `ina219_max_amps` | 0.08, 3.2 | Calibration register derived from these. |
+| `[i2c]` | `ina219_shunt_ohms`, `ina219_max_amps` | 0.08, 3.2 | Calibration register derived from these. The driver sets the INA219 to average 128 shunt samples (68 ms, about 3.4 periods of the 50 Hz pump PWM) and 16 bus samples: config `0x3E7F`. A single sample would land anywhere in the PWM cycle. |
 | `[limits]` | `pump_max_run_s`, `pump_max_duty` | 900, 30 | ADR-0009. |
 | `[limits]` | `water_low_cm`, `over_temp_c` | 16, 65 | Comment out to disable an interlock. |
-| `[limits]` | `pump_dry_current_a`, `pump_dry_after_s`, `pump_dry_grace_s` | **unset**, 5, 3 | The pump current guard (#220): off until a cutoff is set, and off without an INA219. Past the grace after a start, a pump that reads below the cutoff for `pump_dry_after_s` is pulling air and stops with a dry-run. Set the cutoff below the wet current at the lowest duty you run; the one reading so far is 1.87 A wet at 30 %. |
+| `[limits]` | `pump_dry_current_a`, `pump_dry_after_ms`, `pump_dry_grace_ms` | **unset**, 300, 1000 | The pump current guard (#220): off until a cutoff is set, and off without an INA219. While the pump runs, `hald` reads its current every 100 ms (skipping the INA219's 500 ms cache). Past the grace after a start, at least three reads in a row below the cutoff, covering `pump_dry_after_ms`, mean it's pulling air, and it stops with a dry-run: about 0.3 s. The grace may be up to 10000 ms, the after 100–10000 ms. The older `pump_dry_after_s` / `pump_dry_grace_s`, in seconds, still load (not both forms of one). Set the cutoff below the wet current at the lowest duty you run; the one reading so far is 1.87 A wet at 30 %. |
 | `[limits]` | `distance_samples`, `distance_timeout_ms`, `distance_gap_ms`, `distance_max_cm` | 5, 60, 60, empty × 1.5 | Median of N pings, taken `distance_gap_ms` apart so one ping doesn't hear the last one's echo. With an even count of answers the lower middle one counts, since stray echoes only read long. A ping further than `distance_max_cm` (the tank's empty depth plus half again by default) is a stray echo and counts as no answer. Fewer than two answers within 3 cm of the median marks the distance, and the level from it, `suspect`; two that agree are a reading however many pings were dropped. |
 | `[tank]` | `full_cm`, `empty_cm` | 5, 20 | Geometry for `water_level_pct`. |
 | `[button]` | `debounce_ms`, `double_window_ms`, `long_press_ms`, `setup_hold_ms`, `active_low`, `pump_run_s` | 30, 400, 1000, 10000, true, 300 | |
@@ -145,11 +145,19 @@ Semantics worth knowing:
   when the PCB is ≥ `over_temp_c`, when the board's GPIO25 alert line is
   asserted, or while a fault is latched. A running pump that trips latches
   `fault` (`dry-run`, `over-temp`) until `alert/pump_fault/ack`. `{"on":false}`
-  always works. With `pump_dry_current_a` set, a pump drawing less than that
-  trips a dry-run that says so: `dry-run: pump drew 0.4 A, below 1.2 A for 5 s:
-  it's pulling air`. A failed INA219 read restarts the count and never trips it.
+  always works. While the pump runs, and for 2 s after, `hald` reads the pump
+  current every 100 ms and the ranger once a second, between telemetry rounds;
+  these reads feed the guard in memory only, so telemetry, MQTT and core stay on
+  `telemetry_interval_s`. Two trusted readings at `water_low_cm`, 0.5 s or more
+  apart, stop it with a dry-run; `suspect` readings neither confirm the water low
+  nor say it's back, and 3 s with no trusted reading counts as the ranger gone.
+  With `pump_dry_current_a` set, a pump drawing less than that trips a dry-run
+  that says so: `dry-run: pump drew 0.4 A, below 1.2 A for 0.3 s: it's pulling
+  air`. A failed INA219 read restarts the count and never trips it.
   Either dry-run clears itself after a minute of good water; one from the current
-  waits a whole minute after the trip, as the tank read full all along.
+  waits a whole minute after the trip, as the tank read full all along. A stop
+  the pump driver refuses latches `stop-failed: …` and is retried on every read
+  until it takes; it waits for an acknowledge.
 - **`water_low`** is debounced over the last 6 telemetry rounds, so a ranger
   on stray echoes doesn't raise a new alert every few seconds. A reading at
   `water_low_cm` raises it at once, no reading raises it on the third such round

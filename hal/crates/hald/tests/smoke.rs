@@ -80,7 +80,8 @@ fn check_validates_and_reports_unknown_kinds() {
     assert_eq!(v["actuators"], serde_json::json!(["light", "pump"]));
     // The pump current guard ships off until a baseline is measured.
     assert!(v["limits"]["pump_dry_current_a"].is_null());
-    assert_eq!(v["limits"]["pump_dry_after_s"], 5);
+    assert_eq!(v["limits"]["pump_dry_after_ms"], 300);
+    assert_eq!(v["limits"]["pump_dry_grace_ms"], 1000);
     let _ = std::fs::remove_dir_all(dir);
 }
 
