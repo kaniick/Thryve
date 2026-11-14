@@ -33,11 +33,12 @@ export const LABEL_COLOR: Record<PodLabelValue, string> = {
 export const LABEL_MEANING: Record<PodLabelValue, string> = {
   empty: 'Capped, no yCube',
   seeded: 'A yCube in, nothing visible yet',
-  sprouted: 'First leaves showing',
-  growing: 'Leafy, not ready yet',
+  sprouted: 'Only seed leaves: the first pair of small, rounded leaves',
+  growing: 'True leaves showing (the plant\'s own leaf shape), not ready yet',
   ready: 'Ready to harvest',
   unhealthy: 'Yellowing, wilting or damaged',
 }
+const EMPTY_COUNTS = Object.fromEntries(POD_LABELS.map(l => [l, 0])) as Record<PodLabelValue, number>
 const name = (l: PodLabelValue) => l[0]?.toUpperCase() + l.slice(1)
 const SHOWN = [{ value: 'upper', label: 'Upper' }, { value: 'lower', label: 'Lower' }, { value: 'both', label: 'Both' }] as const
 const TABS = [{ value: 'tag', label: 'Tag photos' }, { value: 'all', label: 'All labels' }] as const
@@ -72,14 +73,15 @@ function Dot({ label }: { label: PodLabelValue }) {
   return <span aria-hidden className="size-2 shrink-0 rounded-full" style={{ background: LABEL_COLOR[label] }} />
 }
 
-/** One chip per label, and Clear when `clear` is set. */
-function LabelChips({ value, onPick, clear, ariaLabel }: { value: Brush | null, onPick: (b: Brush) => void, clear?: boolean, ariaLabel: string }) {
+/** One chip per label, with how many pods carry it when `counts` is given, and Clear when `clear` is set. */
+function LabelChips({ value, onPick, clear, counts, ariaLabel }: { value: Brush | null, onPick: (b: Brush) => void, clear?: boolean, counts?: Record<PodLabelValue, number>, ariaLabel: string }) {
   return (
     <div role="group" aria-label={ariaLabel} className="flex flex-wrap gap-1.5">
       {POD_LABELS.map(l => (
-        <Pill key={l} selected={value === l} title={LABEL_MEANING[l]} className="flex items-center gap-1.5 px-2.5 py-1 text-xs" onClick={() => onPick(l)}>
+        <Pill key={l} selected={value === l} title={LABEL_MEANING[l]} aria-label={counts ? `${name(l)}, ${counts[l]} labelled` : undefined} className="flex items-center gap-1.5 px-2.5 py-1 text-xs" onClick={() => onPick(l)}>
           <Dot label={l} />
           {name(l)}
+          {counts && <span className="font-mono text-[11px] text-fg-3">{counts[l]}</span>}
         </Pill>
       ))}
       {clear && (
@@ -266,19 +268,12 @@ export function LabelPods({ boxes }: { boxes: (camera: Camera) => PodRegions }) 
         ? <AllLabels boxes={boxes} counts={counts} total={total} onOpen={open} />
         : (
             <>
-              <div className="flex flex-wrap gap-x-4 gap-y-1.5 font-mono text-[11px] text-fg-3" aria-label="Label counts">
-                {POD_LABELS.map(l => (
-                  <span key={l} className="flex items-center gap-1.5" data-testid={`count-${l}`}>
-                    <Dot label={l} />
-                    {`${name(l)} ${counts?.[l] ?? 0}`}
-                  </span>
-                ))}
-                <span className="ml-auto">{`${total} pod${total === 1 ? '' : 's'} labelled`}</span>
-              </div>
-
               <div className="flex flex-col gap-1.5">
-                <LabelChips ariaLabel="Label to apply" value={brush} onPick={setBrush} clear />
-                <span className="text-xs text-fg-3">Tap a pod to tag it; tap again with the same label, or use Clear, to remove it.</span>
+                <LabelChips ariaLabel="Label to apply" value={brush} onPick={setBrush} clear counts={counts ?? EMPTY_COUNTS} />
+                <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-fg-3">
+                  <span className="flex-1">Tap a pod to tag it; tap again with the same label, or use Clear, to remove it.</span>
+                  <span className="font-mono text-[11px]">{`${total} pod${total === 1 ? '' : 's'} labelled`}</span>
+                </div>
               </div>
 
               <figure className="m-0 flex min-w-0 flex-col gap-1.5">

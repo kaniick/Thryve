@@ -59,7 +59,7 @@ const entry = (captureId: string, camera: 'upper' | 'lower', slot: number, l: st
   captureId, ts: '2026-11-08T10:00:00Z', camera, slot, label: l, labelledAt: '', plant: null, plantedAt: null, daysSinceSowing: null, url: `/api/captures/${captureId}.jpg`, ...more,
 })
 const pod = (slot: number) => screen.getByRole('button', { name: new RegExp(`^Pod ${slot}:`) })
-const chip = (name: string) => within(screen.getByRole('group', { name: 'Label to apply' })).getByRole('button', { name })
+const chip = (name: string) => within(screen.getByRole('group', { name: 'Label to apply' })).getByRole('button', { name: new RegExp(`^${name}(, \\d+ labelled)?$`) })
 const boxes = (c: 'upper' | 'lower') => podRegions(c)
 const stats = { counts: { empty: 4, seeded: 3, sprouted: 1, growing: 0, ready: 2, unhealthy: 1 }, pods: 11, captures: [] }
 
@@ -82,9 +82,10 @@ describe('LabelPods', () => {
     render(<LabelPods boxes={boxes} />)
     expect(calls.frames).toHaveBeenCalledTimes(1)
     expect(calls.frames).toHaveBeenLastCalledWith({ camera: 'upper', limit: HISTORY })
-    expect(screen.getByTestId('count-empty').textContent).toBe('Empty 4')
-    expect(screen.getByTestId('count-seeded').textContent).toBe('Seeded 3')
-    expect(screen.getByTestId('count-unhealthy').textContent).toBe('Unhealthy 1')
+    expect(chip('Empty').getAttribute('aria-label')).toBe('Empty, 4 labelled')
+    expect(chip('Seeded').getAttribute('aria-label')).toBe('Seeded, 3 labelled')
+    expect(chip('Unhealthy').getAttribute('aria-label')).toBe('Unhealthy, 1 labelled')
+    expect(screen.queryByLabelText('Label counts')).toBeNull()
     expect(screen.getByText('11 pods labelled')).toBeTruthy()
     expect((screen.getByRole('img') as HTMLImageElement).src).toBe('http://unit/api/captures/upper-0.jpg')
     expect(screen.getByTestId('label-pods-upper').querySelectorAll('button')).toHaveLength(15)
@@ -98,8 +99,10 @@ describe('LabelPods', () => {
     data.set('frames:upper', [frame('upper', 0)])
     render(<LabelPods boxes={boxes} />)
     const chips = within(screen.getByRole('group', { name: 'Label to apply' })).getAllByRole('button').map(b => b.textContent)
-    expect(chips).toEqual(['Empty', 'Seeded', 'Sprouted', 'Growing', 'Ready', 'Unhealthy', 'Clear'])
+    expect(chips).toEqual(['Empty0', 'Seeded0', 'Sprouted0', 'Growing0', 'Ready0', 'Unhealthy0', 'Clear'])
     expect(chip('Empty').getAttribute('title')).toBe('Capped, no yCube')
+    expect(chip('Sprouted').getAttribute('title')).toBe('Only seed leaves: the first pair of small, rounded leaves')
+    expect(chip('Growing').getAttribute('title')).toBe('True leaves showing (the plant\'s own leaf shape), not ready yet')
     expect(chip('Seeded').getAttribute('title')).toBe('A yCube in, nothing visible yet')
     expect(screen.getByText('Tap a pod to tag it; tap again with the same label, or use Clear, to remove it.')).toBeTruthy()
     expect(screen.getByText(/Empty is capped, Seeded has a yCube/)).toBeTruthy()
@@ -179,6 +182,13 @@ describe('LabelPods', () => {
     expect(screen.queryByRole('button', { name: /^Pod 1:/ })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: /^Pod 30:/ }))
     expect(calls.setLabel).toHaveBeenLastCalledWith({ captureId: 'lower-0', slot: 30, label: 'growing' })
+  })
+
+  it('says one pod labelled in the singular', () => {
+    data.set('frames:upper', [frame('upper', 0)])
+    data.set('stats', { ...stats, pods: 1 })
+    render(<LabelPods boxes={boxes} />)
+    expect(screen.getByText('1 pod labelled')).toBeTruthy()
   })
 
   it('says when a camera has no photos, and takes a demo still as it is', () => {
