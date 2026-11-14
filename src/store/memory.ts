@@ -1,5 +1,5 @@
 import type { SensorId } from '../hardware/contract'
-import type { AlertRow, Automation, AutomationRun, AnalysisPoint, AnalysisRow, AnalyzerStats, BackupRecord, Capture, CustomPlant, DeviceSettings, FlashSample, GrowCycle, GrowProtocolState, GrowStage, PlanRow, PlantProfile, Pod, PodCodePair, PodCodeRead, PodLabel, PodLabelCursor, PodLabelValue, SavedSchedule, Schedule, ScheduleRun, Store, TankAction, TankActionKind, TelemetryPoint } from './types'
+import type { AlertRow, Automation, AutomationRun, AnalysisPoint, AnalysisRow, AnalyzerStats, BackupRecord, Capture, CustomPlant, DeviceSettings, FlashSample, GrowCycle, GrowProtocolState, GrowStage, PlanRow, PlantProfile, Pod, PodCodePair, PodCodeRead, PodLabel, PodLabelCursor, PodLabelInput, PodLabelSource, PodLabelValue, SavedSchedule, Schedule, ScheduleRun, Store, TankAction, TankActionKind, TelemetryPoint } from './types'
 import type { AutomationRule } from '../autopilot/types'
 import { DEFAULT_SETTINGS, POD_LABELS, profileKey } from './types'
 
@@ -321,7 +321,8 @@ export class MemoryStore implements Store {
   }
 
   podLabels = {
-    set: (l: PodLabel): PodLabel => {
+    set: (input: PodLabelInput): PodLabel => {
+      const l: PodLabel = { source: 'picked', suggested: null, suggestedBy: null, suggestedConfidence: null, ...input }
       const k = `${l.captureId}#${l.slot}`
       const was = this.labelRows.get(k)
       const row = was?.plant != null ? { ...l, plant: was.plant, plantedAt: was.plantedAt } : { ...l }
@@ -347,6 +348,26 @@ export class MemoryStore implements Store {
       const out = Object.fromEntries(POD_LABELS.map(l => [l, 0])) as Record<PodLabelValue, number>
       for (const l of this.labelRows.values()) out[l.label]++
       return out
+    },
+    bySource: (): Array<{ source: PodLabelSource, suggestedBy: string | null, n: number }> => {
+      const m = new Map<string, { source: PodLabelSource, suggestedBy: string | null, n: number }>()
+      for (const l of this.labelRows.values()) {
+        const k = `${l.source}#${l.suggestedBy}`
+        const c = m.get(k) ?? { source: l.source, suggestedBy: l.suggestedBy, n: 0 }
+        c.n++
+        m.set(k, c)
+      }
+      // As SQLite orders them: by text, no suggester first. Keys are unique, so never equal.
+      const key = (r: { source: string, suggestedBy: string | null }) => `${r.source}\u0000${r.suggestedBy ?? ''}`
+      return [...m.values()].sort((a, b) => (key(a) < key(b) ? -1 : 1))
+    },
+    lastBefore: (ts: string): PodLabel[] => {
+      const m = new Map<number, PodLabel>()
+      for (const l of this.labelRows.values()) {
+        const had = m.get(l.slot)
+        if (l.ts < ts && (!had || l.ts > had.ts || (l.ts === had.ts && l.captureId < had.captureId))) m.set(l.slot, l)
+      }
+      return [...m.values()].sort((a, b) => a.slot - b.slot).map(l => ({ ...l }))
     },
     captures: (limit = 50): Array<{ captureId: string, ts: string, camera: 'upper' | 'lower', pods: number }> => {
       const m = new Map<string, { captureId: string, ts: string, camera: 'upper' | 'lower', pods: number }>()

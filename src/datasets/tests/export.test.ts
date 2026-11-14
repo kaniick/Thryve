@@ -10,6 +10,7 @@ import { createCore } from '../../server/bootstrap'
 import { appRouter } from '../../server/routers/app'
 import { createCallerFactory } from '../../server/trpc'
 import { MemoryStore } from '../../store/memory'
+import type { PodLabel } from '../../store/types'
 import { cropPixels } from '../../vision/regions'
 import { jpeg } from '../../vision/tests/fixtures'
 import { datasetName, resolveWindow } from '../export'
@@ -39,12 +40,13 @@ async function unit() {
   store.telemetry.add([{ ts: '2026-10-25T00:00:00Z', sensor: 'air_temp', value: 22.5 }, { ts: '2026-08-01T00:00:00Z', sensor: 'ph', value: 6 }])
   // Pod 1's box is calibrated; the rest keep the measured defaults.
   store.settings.update({ podRegions: { upper: { 1: { x: 0.1, y: 0.2, w: 0.5, h: 0.5 } } } })
-  const label = (captureId: string, ts: string, slot: number, label: 'empty' | 'seeded' | 'growing' | 'ready', plant: string | null = null, plantedAt: string | null = null) =>
-    store.podLabels.set({ captureId, ts, camera: slot > 15 ? 'lower' : 'upper', slot, label, labelledAt: '2026-10-31T09:00:00.000Z', plant, plantedAt })
+  const label = (captureId: string, ts: string, slot: number, label: 'empty' | 'seeded' | 'growing' | 'ready', plant: string | null = null, plantedAt: string | null = null, s: Partial<PodLabel> = {}) =>
+    store.podLabels.set({ captureId, ts, camera: slot > 15 ? 'lower' : 'upper', slot, label, labelledAt: '2026-10-31T09:00:00.000Z', plant, plantedAt, ...s })
   label('upper-0', '2026-09-01T00:00:00Z', 1, 'empty')
   label('upper-1', '2026-10-20T00:00:00Z', 1, 'growing', 'Basil', '2026-10-06')
-  label('upper-1', '2026-10-20T00:00:00Z', 2, 'seeded', 'Kale', null)
-  label('upper-2', '2026-10-30T00:00:00Z', 1, 'ready')
+  // The grower corrected pod-state's guess.
+  label('upper-1', '2026-10-20T00:00:00Z', 2, 'seeded', 'Kale', null, { source: 'corrected', suggested: 'empty', suggestedBy: 'pod-state@1', suggestedConfidence: 0.84 })
+  label('upper-2', '2026-10-30T00:00:00Z', 1, 'ready', null, null, { source: 'accepted', suggested: 'ready', suggestedBy: 'carry' })
   label('demo-svg', '2026-10-29T00:00:00Z', 16, 'empty')
   // A still pruned since it was labelled: the label stays, without a crop.
   label('upper-gone', '2026-10-25T00:00:00Z', 3, 'growing')
@@ -102,7 +104,7 @@ describe('dataset export', () => {
     const root = join(untar(new Uint8Array(await res.arrayBuffer())), 'seedypod-kitchen-gardyn-20261001-20261031')
     expect(readdirSync(root).sort()).toEqual(['README.md', 'analyses.jsonl', 'captures.jsonl', 'grow_cycles.json', 'images', 'labels.jsonl', 'manifest.json', 'pod_codes.json', 'pods.json', 'regions.json', 'telemetry.jsonl'])
     const manifest = JSON.parse(readFileSync(join(root, 'manifest.json'), 'utf8')) as Record<string, unknown>
-    expect(manifest).toMatchObject({ format: { name: 'seedypod-dataset', version: 2 }, unit: { name: 'Kitchen Gardyn' }, core: 'test', primaryAnalyzer: 'green-threshold', counts: { captures: 3, analyses: 60, telemetry: 1, labels: 5, podCodes: 1 } })
+    expect(manifest).toMatchObject({ format: { name: 'seedypod-dataset', version: 3 }, unit: { name: 'Kitchen Gardyn' }, core: 'test', primaryAnalyzer: 'green-threshold', counts: { captures: 3, analyses: 60, telemetry: 1, labels: 5, podCodes: 1 } })
     // The owner's confirmed dot code → plant pairs (#259).
     expect(JSON.parse(readFileSync(join(root, 'pod_codes.json'), 'utf8'))).toEqual([{ code: 'oo||', plant: 'Green Bok Choy', confirmedAt: '2026-08-01T00:00:00.000Z' }])
     const captures = readFileSync(join(root, 'captures.jsonl'), 'utf8').trim().split('\n').map(l => JSON.parse(l) as { id: string, image: string | null })
@@ -121,7 +123,7 @@ describe('dataset export', () => {
     // The plant and its age when the photo was taken, so a replant later doesn't relabel the history.
     expect(labels[0]).toEqual({
       captureId: 'upper-1', ts: '2026-10-20T00:00:00Z', camera: 'upper', slot: 1, label: 'growing', labelledAt: '2026-10-31T09:00:00.000Z',
-      plant: 'Basil', plantedAt: '2026-10-06', daysSinceSowing: 14,
+      plant: 'Basil', plantedAt: '2026-10-06', daysSinceSowing: 14, source: 'picked', suggested: null, suggestedBy: null, suggestedConfidence: null,
       image: 'images/upper-1.jpg', width: 80, height: 60, region: { x: 8, y: 12, w: 40, h: 30 }, box: { x: 0.1, y: 0.2, w: 0.5, h: 0.5 },
     })
     const regions = JSON.parse(readFileSync(join(root, 'regions.json'), 'utf8')) as Record<'upper' | 'lower', Record<string, { x: number, y: number, w: number, h: number }>>
@@ -129,6 +131,9 @@ describe('dataset export', () => {
     expect(Object.keys(regions.lower)).toHaveLength(15)
     expect(regions.upper['1']).toEqual({ x: 0.1, y: 0.2, w: 0.5, h: 0.5 })
     expect(labels[1]).toMatchObject({ plant: 'Kale', plantedAt: null, daysSinceSowing: null })
+    // How each label was saved, so training can weight corrections and drop a model's own accepted guesses (#261).
+    expect(labels[1]).toMatchObject({ source: 'corrected', suggested: 'empty', suggestedBy: 'pod-state@1', suggestedConfidence: 0.84 })
+    expect(labels[4]).toMatchObject({ source: 'accepted', suggested: 'ready', suggestedBy: 'carry', suggestedConfidence: null })
     expect(labels[3]).toMatchObject({ plant: null, plantedAt: null, daysSinceSowing: null })
     expect(labels[1]?.box).toEqual(regions.upper['2'])
     expect(labels[1]?.region).toEqual(cropPixels(regions.upper['2'] as { x: number, y: number, w: number, h: number }, 80, 60))
@@ -138,6 +143,7 @@ describe('dataset export', () => {
     expect(readme).toContain('labels.jsonl')
     expect(readme).toContain('`daysSinceSowing`')
     expect(readme).toContain('`pod_codes.json`')
+    expect(readme).toContain('`suggestedBy`')
     expect(readme).toMatch(/`seeded` \(a yCube in, nothing\s+visible yet\)/)
     expect(readme).toMatch(/map `seeded` to `empty`/)
   })
