@@ -343,6 +343,8 @@ export interface Store {
     remove(id: string): boolean
     /** Returns false if the key was already recorded (idempotent firing). */
     recordRun(run: ScheduleRun): boolean
+    /** What came of a recorded run (`fired`, `refused: <why>`); a key never recorded is left alone. */
+    setRunResult(key: string, result: string): void
     recentRuns(limit?: number): ScheduleRun[]
   }
   alerts: {

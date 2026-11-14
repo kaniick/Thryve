@@ -100,6 +100,9 @@ export class SqliteStore implements Store {
       const r = this.db.insert(t.scheduleRuns).values(run).onConflictDoNothing().run()
       return r.changes > 0
     },
+    setRunResult: (key: string, result: string): void => {
+      this.db.update(t.scheduleRuns).set({ result }).where(eq(t.scheduleRuns.key, key)).run()
+    },
     recentRuns: (limit = 50): ScheduleRun[] =>
       this.db.select({ scheduleId: t.scheduleRuns.scheduleId, key: t.scheduleRuns.key, firedAt: t.scheduleRuns.firedAt, result: t.scheduleRuns.result })
         .from(t.scheduleRuns).orderBy(desc(t.scheduleRuns.id)).limit(limit).all(),
