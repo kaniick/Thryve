@@ -14,6 +14,7 @@ import { apiBase, trpc } from '@/src/utils/trpc'
 import type { Rect } from '@/src/vision/greenArea'
 import { POD_STATES } from '@/src/vision/podState'
 import { podRegions, type PodRegions } from '@/src/vision/regions'
+import { AllPods } from './AllPods'
 import { LabelPods } from './LabelPods'
 import { LeafCover } from './LeafCover'
 import { PodBounds } from './PodBounds'
@@ -22,7 +23,8 @@ import { PodCard, PodHits, stateGuess, type Pod, type Reading, type Trend } from
 const pct = (v: number) => `${Math.round(v * 100)}%`
 const key = (a: { analyzer: string, version: number }) => `${a.analyzer}@${a.version}`
 const listingKey = (a: Listing) => key({ analyzer: a.id, version: a.version })
-const SLOTS = Array.from({ length: 30 }, (_, i) => ({ value: i + 1, label: `Pod ${i + 1}` }))
+/** `0` is every pod at once. */
+const SLOTS = [{ value: 0, label: 'All pods' }, ...Array.from({ length: 30 }, (_, i) => ({ value: i + 1, label: `Pod ${i + 1}` }))]
 /** Each analyser's mark in the legend, the per-pod bars and the chart, in listing order. */
 const COLORS = ['var(--meter)', 'var(--pod-ok)', 'var(--pod-ready)', 'var(--pod-attention)']
 const colorAt = (i: number) => COLORS[i % COLORS.length] as string
@@ -76,7 +78,7 @@ export function AnalysisPage() {
   const [view, setView] = useState<View>('photo')
   // The pod picked on a photo: its card stays open and the chart below follows it.
   const [pinned, setPinned] = useState<number | null>(null)
-  const [slot, setSlot] = useState(1)
+  const [slot, setSlot] = useState(0)
   const latest = [useLatest('upper'), useLatest('lower')]
   const calibration = useCalibration()
   const st = status.data
@@ -146,7 +148,7 @@ export function AnalysisPage() {
       <LeafCover capturedAt={latest.map(l => l.frame?.ts).filter((t): t is string => !!t).sort().at(-1) ?? null} />
       <LabelPods boxes={calibration.boxes} />
       <PerPod analyzers={list} latest={cameras} colorOf={colorOf} plant={slot => pod(slot)?.plant ?? '—'} empty={slot => pod(slot)?.status === 'empty'} />
-      <ComparePod colorOf={colorOf} slot={slot} onSlot={setSlot} />
+      <ComparePod colorOf={colorOf} slot={slot} onSlot={setSlot} pods={pods.data ?? []} trends={trends.data ?? []} />
 
       {exporting && (
         <Modal open onClose={() => setExporting(false)} title="Export a dataset" icon={Download}>
@@ -458,16 +460,27 @@ function Calibrate({ c, cameras }: { c: Calibration, cameras: Camera[] }) {
   )
 }
 
-function ComparePod({ colorOf, slot, onSlot }: { colorOf: (k: string) => string, slot: number, onSlot: (slot: number) => void }) {
-  const cmp = trpc.vision.compare.useQuery({ slot, metric: 'green_fraction', limit: 200 })
-  const states = trpc.vision.compare.useQuery({ slot, metric: 'pod_state', limit: 1 })
+/** One pod's series from every analyser, or every planted pod side by side. */
+function ComparePod({ colorOf, slot, onSlot, pods, trends }: { colorOf: (k: string) => string, slot: number, onSlot: (slot: number) => void, pods: Pod[], trends: Trend[] }) {
+  const one = slot > 0
+  const cmp = trpc.vision.compare.useQuery({ slot: Math.max(1, slot), metric: 'green_fraction', limit: 200 }, { enabled: one })
+  const states = trpc.vision.compare.useQuery({ slot: Math.max(1, slot), metric: 'pod_state', limit: 1 }, { enabled: one })
   const series = (cmp.data ?? []).map(s => ({ name: key(s), color: colorOf(key(s)), points: s.points.map(p => ({ x: Date.parse(p.ts), y: p.value })) }))
+  const head = (
+    <div className="flex flex-wrap items-center gap-3">
+      <span className="flex-1 text-[15px] font-medium">{one ? 'One pod over time' : 'All pods over time'}</span>
+      <SelectValue label="Pod" value={slot} options={SLOTS} onChange={onSlot} />
+    </div>
+  )
+  if (!one) return (
+    <Panel>
+      {head}
+      <AllPods pods={pods} trends={trends} onPick={onSlot} />
+    </Panel>
+  )
   return (
     <Panel>
-      <div className="flex flex-wrap items-center gap-3">
-        <span className="flex-1 text-[15px] font-medium">One pod over time</span>
-        <SelectValue label="Pod" value={slot} options={SLOTS} onChange={onSlot} />
-      </div>
+      {head}
       <TimeChart series={series} height={180} yMin={0} yMax={1} formatY={pct} formatX={x => new Date(x).toLocaleDateString()} />
       {series.length > 0 && (
         <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm">

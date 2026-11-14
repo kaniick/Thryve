@@ -104,8 +104,11 @@ is close), the trend with its recent photos and the pod's note. Click or tap
 the pod to keep the card open and chart that pod under **One pod over time**.
 
 Below it, **Per pod, latest frames** lists every pod on the cameras shown in
-one table, with every analyser's number from its camera's newest still, and
-**One pod over time** draws one line per analyser.
+one table, with every analyser's number from its camera's newest still. The
+chart under it starts on **All pods**: a small chart of each planted pod's
+leaf cover from the primary analyser over about the last week, all on one
+scale, so the pods that are coming up stand out. Pick a pod there or in the
+**Pod** picker for **One pod over time**, which draws one line per analyser.
 
 **Keep analysis masks** (Settings → Cameras) also stores `exg-otsu`'s
 plant/not-plant mask for each photo as a 1-bit PBM image, about 115 kB each.
