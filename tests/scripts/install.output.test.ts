@@ -136,7 +136,7 @@ describe('the installers\' logo', () => {
     expect(cols).toBeLessThanOrEqual(60)
   })
 
-  const lfsPointer = readFileSync(join(repo, 'web/public/brand/icon-192.png')).toString('latin1', 0, 8) === 'version '
+  const lfsPointer = readFileSync(join(repo, 'web/public/brand/thryve-icon-192.png')).toString('latin1', 0, 8) === 'version '
   it.skipIf(lfsPointer)('is what the generator makes of the icon', () => {
     for (const script of SCRIPTS) expect(logoBlock(script)).toBe(banner())
   })

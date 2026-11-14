@@ -197,7 +197,7 @@ export function Sidebar({ status }: { status: { name: string, line: string, onli
   return (
     <aside className="sticky top-0 hidden h-dvh w-[244px] shrink-0 flex-col gap-3.5 overflow-y-auto border-r border-line bg-surface px-3 pb-3 pt-[18px] min-[900px]:flex">
       <Link to="/" className="flex items-center gap-2.5 px-2">
-        <img src="/brand/icon-64.png" alt="" width={26} height={26} className="size-[26px]" />
+        <img src="/brand/thryve-icon-64.png" alt="" width={26} height={26} className="size-[26px]" />
         <span className="font-semibold tracking-tight">thryve</span>
       </Link>
       <SidebarSearch className="w-full" />

@@ -252,7 +252,7 @@ describe('logo.frames', () => {
     expect(glyphs(played)).toEqual(glyphs(final))
   })
 
-  const lfsPointer = readFileSync(join(repo, 'web/public/brand/icon-192.png')).toString('latin1', 0, 8) === 'version '
+  const lfsPointer = readFileSync(join(repo, 'web/public/brand/thryve-icon-192.png')).toString('latin1', 0, 8) === 'version '
   it.skipIf(lfsPointer)('is what the generator makes of the icon', () => {
     expect(generate()).toBe(readFileSync(framesFile, 'utf8'))
   })
