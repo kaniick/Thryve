@@ -137,6 +137,53 @@ describe('AnalysisPage', () => {
     expect(screen.getAllByTestId('pod-bounds')[0]?.querySelector('[data-slot]')?.textContent).toBe('1 · growing')
   })
 
+  it('shows everything known about a pod on hover, and pins it and charts it on a click', () => {
+    const state = { ...row('pod-state', 1, 1), metric: 'pod_state', detail: { state: 'sprouted', confidence: 0.9, probabilities: { empty: 0, sprouted: 0.9, unhealthy: 0.06 } } }
+    data.set('analyzers', [...(data.get('analyzers') as object[]), { ...base, id: 'pod-state', version: 1, label: 'Pod state (learned)', description: 'A small CNN.', primary: false, metrics: [{ name: 'pod_state', label: 'Pod state', description: '' }] }])
+    data.set('capture:upper-1', [row('exg-otsu', 1, 0.02), row('green-threshold', 1, 0.018), state])
+    data.set('pods', [{ slot: 1, plant: 'Cilantro', status: 'seeded', plantedAt: '2026-01-01', notes: 'pinned to pod 1 by the caller' }, { slot: 3, plant: null, status: 'empty', plantedAt: null, notes: '' }])
+    data.set('podTrends', [{ slot: 1, green: 0.018, verdict: 'growing', slope: 0.01, samples: 48, recent: [0, 0, 0.01, 0.018] }])
+    render(<AnalysisPage />)
+    expect(screen.queryByTestId('pod-card')).toBeNull()
+    const hit = screen.getAllByRole('button', { name: 'Pod 1 details' })[0] as HTMLElement
+    fireEvent.pointerEnter(hit)
+    const card = screen.getByRole('dialog', { name: 'Pod 1' })
+    expect(card.textContent).toContain('Cilantro')
+    expect(card.textContent).toContain('Seeded · day')
+    expect([...card.querySelectorAll('.font-mono.text-fg')].map(e => e.textContent)).toEqual(['2%', '2%', 'sprouted 90%'])
+    expect(card.textContent).toContain('Growing over the last 4 photos')
+    expect(card.textContent).toContain('pinned to pod 1 by the caller')
+    expect(screen.queryByRole('button', { name: 'Close' })).toBeNull()
+    fireEvent.pointerLeave(hit)
+    expect(screen.queryByTestId('pod-card')).toBeNull()
+
+    fireEvent.click(hit)
+    expect(calls.compare).toHaveBeenLastCalledWith({ slot: 1, metric: 'pod_state', limit: 1 })
+    expect(hit.getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByRole('dialog', { name: 'Pod 1' })).toBeTruthy()
+    // Hovering another pod shows it for a moment; leaving it brings the pinned one back.
+    const other = screen.getAllByRole('button', { name: 'Pod 3 details' })[0] as HTMLElement
+    fireEvent.focus(other)
+    expect(screen.getByRole('dialog', { name: 'Pod 3' }).textContent).toContain('Empty')
+    fireEvent.blur(other)
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+    expect(screen.queryByTestId('pod-card')).toBeNull()
+    fireEvent.click(hit)
+    fireEvent.click(hit)
+    expect(screen.queryByTestId('pod-card')).toBeNull()
+  })
+
+  it('says a pod marked empty has no cover, and hides the pod targets while the boxes are edited', () => {
+    data.set('pods', [{ slot: 2, plant: null, status: 'empty', plantedAt: null, notes: '' }])
+    render(<AnalysisPage />)
+    fireEvent.pointerEnter(screen.getAllByRole('button', { name: 'Pod 2 details' })[0] as HTMLElement)
+    expect(screen.getByRole('dialog', { name: 'Pod 2' }).textContent).toContain('Marked empty, so none of this counts as cover.')
+    fireEvent.click(screen.getByRole('tab', { name: 'Pod bounds' }))
+    fireEvent.click(screen.getByText('Edit boxes'))
+    expect(screen.queryByTestId('pod-hits')).toBeNull()
+    expect(screen.queryByTestId('pod-card')).toBeNull()
+  })
+
   it('says when an on-device analyser is off, and offers no re-run', () => {
     data.set('analyzers', [{ ...base, id: 'pod-state', version: 1, label: 'Pod state (learned)', description: 'A small CNN.', primary: false, metrics: [], captures: 0, rows: 0, disabled: 'No weights file is installed, so this analyser is off.' }])
     render(<AnalysisPage />)
