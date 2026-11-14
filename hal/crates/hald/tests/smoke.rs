@@ -82,6 +82,53 @@ fn check_validates_and_reports_unknown_kinds() {
     assert!(v["limits"]["pump_dry_current_a"].is_null());
     assert_eq!(v["limits"]["pump_dry_after_ms"], 300);
     assert_eq!(v["limits"]["pump_dry_grace_ms"], 1000);
+    assert_eq!(v["limits"]["pump_dry_grace_min_ms"], 300);
+    assert_eq!(v["limits"]["pump_dry_grace_max_ms"], 5000);
+    // Both asked, no cutoff yet: the tank level alone, and a warning that says so.
+    assert_eq!(v["limits"]["pump_dry_guard_asked"], "both");
+    assert_eq!(v["limits"]["pump_dry_guard"], "level");
+    assert_eq!(
+        v["limits"]["pump_dry_guard_why"],
+        "tank level only: no pump_dry_current_a"
+    );
+    assert_eq!(
+        v["warnings"],
+        serde_json::json!(["tank level only: no pump_dry_current_a"])
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn check_prints_the_dry_run_guard_in_effect_and_why() {
+    let dir = tmp("check-guard");
+    let cfg = dir.join("hal.toml");
+    let check = |toml: &str| {
+        std::fs::write(&cfg, toml).unwrap();
+        let out = hald().args(["--check", "--config"]).arg(&cfg).output().unwrap();
+        serde_json::from_slice::<serde_json::Value>(&out.stdout).unwrap()
+    };
+    let v = check("[limits]\npump_dry_guard = \"current\"\npump_dry_current_a = 1.2\n");
+    assert_eq!(v["limits"]["pump_dry_guard"], "current");
+    assert_eq!(v["warnings"], serde_json::json!([]));
+    let v = check("[limits]\npump_dry_current_a = 1.2\n");
+    assert_eq!(v["limits"]["pump_dry_guard"], "both");
+    assert_eq!(v["limits"]["pump_dry_guard_why"], "tank level + pump current");
+    // Current without a monitor falls back to the tank, never to no guard.
+    let v = check(
+        "[limits]\npump_dry_guard = \"current\"\npump_dry_current_a = 1.2\n[[sensor]]\nkind = \"pct2075\"\naddr = 0x48\n[[sensor]]\nkind = \"dyp_a01\"\ntrigger = 26\necho = 19\n",
+    );
+    assert_eq!(v["limits"]["pump_dry_guard"], "level");
+    assert_eq!(
+        v["warnings"][0],
+        "pump_dry_guard = \"current\" needs a pump monitor (ina219): falling back to the tank level"
+    );
+    // Bounds the default sits outside of are refused.
+    let v = check("[limits]\npump_dry_grace_ms = 6000\n");
+    assert_eq!(v["ok"], false);
+    assert!(v["errors"][0]
+        .as_str()
+        .unwrap()
+        .contains("pump_dry_grace_max_ms (5000)"));
     let _ = std::fs::remove_dir_all(dir);
 }
 

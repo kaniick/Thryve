@@ -57,12 +57,36 @@ export const ActuatorCommand = z.object({
 })
 export type ActuatorCommand = z.infer<typeof ActuatorCommand>
 
+/**
+ * Which dry-run guard stops a running pump: the tank level, the pump current, or
+ * either. Set in hal.toml on the unit and nowhere else (pump safety outranks the
+ * app), so core only ever reads it.
+ */
+export const DryGuard = z.enum(['level', 'current', 'both'])
+export type DryGuard = z.infer<typeof DryGuard>
+
 export const Limits = z.object({
   pumpMaxRunS: z.number().int().positive(),
   pumpMaxDuty: z.number().min(0).max(100),
   waterLowCm: z.number().nullable(),
+  /** The dry-run guard in effect, after hald's fallbacks; absent from an older hald. */
+  pumpDryGuard: DryGuard.optional(),
+  /** The current guard's spin-up grace in effect (ms), and the bounds a PumpGuardCommand is clamped into. */
+  pumpDryGraceMs: z.number().int().nonnegative().optional(),
+  pumpDryGraceMinMs: z.number().int().nonnegative().optional(),
+  pumpDryGraceMaxMs: z.number().int().nonnegative().optional(),
 })
 export type Limits = z.infer<typeof Limits>
+
+/**
+ * `pump/guard/set`: ask for the current guard's spin-up grace; hald clamps it
+ * into hal.toml's bounds. The one guard setting core may change: there is no
+ * field for the mode or the cutoff, and hald refuses a payload with any other.
+ */
+export const PumpGuardCommand = z.object({
+  dryGraceMs: z.number().int().nonnegative(),
+}).strict()
+export type PumpGuardCommand = z.infer<typeof PumpGuardCommand>
 
 export const SystemInfo = z.object({
   contract: z.literal(CONTRACT_VERSION),
@@ -191,4 +215,5 @@ export const topics = {
   button: (u: string) => `${topics.prefix(u)}/event/button`,
   alert: (u: string, kind: AlertKind) => `${topics.prefix(u)}/alert/${kind}`,
   alertAck: (u: string, kind: AlertKind) => `${topics.prefix(u)}/alert/${kind}/ack`,
+  pumpGuardSet: (u: string) => `${topics.prefix(u)}/pump/guard/set`,
 } as const

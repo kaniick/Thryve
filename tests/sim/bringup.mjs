@@ -364,6 +364,18 @@ try {
     return `"${alert.detail}" ${simS} s (hald time) / ${realMs} ms after going dry → cleared; ${trace.split('\n').length} trace lines`
   })
 
+  await check('pump: the guard is reported read-only, and the grace set from core is held to hal.toml\'s bounds', async () => {
+    const limits = (await get('/system')).system.limits
+    assert(limits.pumpDryGuard === 'both' && limits.pumpDryGraceMs === 1000 && limits.pumpDryGraceMinMs === 300 && limits.pumpDryGraceMaxMs === 5000, `limits ${JSON.stringify(limits)}`)
+    const high = await post('/pump/dry-grace', { ms: 8000 })
+    assert(high.status === 200 && high.body.pumpDryGraceMs === 5000, `${high.status} ${JSON.stringify(high.body)}`)
+    const back = await post('/pump/dry-grace', { ms: 1000 })
+    assert(back.status === 200 && back.body.pumpDryGraceMs === 1000, `${back.status} ${JSON.stringify(back.body)}`)
+    const saved = JSON.parse(readFileSync(join(work, 'hal-state/state.json'), 'utf8'))
+    assert(saved.pumpDryGraceMs === 1000, `state.json ${JSON.stringify(saved)}`)
+    return `guard ${limits.pumpDryGuard}; 8000 ms → ${high.body.pumpDryGraceMs} ms, kept in hald's state file`
+  })
+
   await check('camera: still fetched over hald HTTP and stored', async () => {
     const r = await post('/camera/upper/capture', {})
     assert(r.status === 200, `${r.status} ${JSON.stringify(r.body)}`)

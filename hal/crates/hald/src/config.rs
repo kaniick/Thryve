@@ -9,7 +9,7 @@
 
 use std::path::PathBuf;
 
-use hal_core::{DoseLimits, PumpLimits};
+use hal_core::{DoseLimits, DryGuard, PumpLimits};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,8 +92,14 @@ pub struct Limits {
     /// pump runs). Unset: [`PUMP_DRY_AFTER_MS`].
     pub pump_dry_after_ms: Option<u64>,
     /// How long after a start the current isn't judged, while the pump spins up.
-    /// Unset: [`PUMP_DRY_GRACE_MS`].
+    /// Unset: [`PUMP_DRY_GRACE_MS`]. It's the default: the app may set the grace
+    /// (the one guard setting it may), within the two bounds below.
     pub pump_dry_grace_ms: Option<u64>,
+    pub pump_dry_grace_min_ms: u64,
+    pub pump_dry_grace_max_ms: u64,
+    /// Which dry-run guard stops a running pump: `level`, `current` or `both`.
+    /// Only here: no app, API or MCP route can change it.
+    pub pump_dry_guard: DryGuard,
     /// The same two in whole seconds, as hald read them before milliseconds.
     /// Still read so an older `hal.toml` loads; the `_ms` keys are preferred.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -393,6 +399,9 @@ impl Default for Limits {
             pump_dry_current_a: None,
             pump_dry_after_ms: None,
             pump_dry_grace_ms: None,
+            pump_dry_grace_min_ms: 300,
+            pump_dry_grace_max_ms: 5000,
+            pump_dry_guard: DryGuard::Both,
             pump_dry_after_s: None,
             pump_dry_grace_s: None,
             distance_samples: 5,
@@ -473,6 +482,8 @@ impl From<&Limits> for PumpLimits {
             dry_current_a: l.pump_dry_current_a,
             dry_after_ms: l.dry_after_ms(),
             dry_grace_ms: l.dry_grace_ms(),
+            // What hal.toml asks for; the engine resolves what the unit can run.
+            dry_guard: l.pump_dry_guard,
         }
     }
 }
@@ -658,8 +669,16 @@ impl Config {
         if !(100..=PUMP_DRY_MAX_MS).contains(&l.dry_after_ms()) {
             errs.push(format!("limits.pump_dry_after_ms must be 100–{PUMP_DRY_MAX_MS}"));
         }
-        if l.dry_grace_ms() > PUMP_DRY_MAX_MS {
-            errs.push(format!("limits.pump_dry_grace_ms must be ≤ {PUMP_DRY_MAX_MS}"));
+        let (min, grace, max) = (l.pump_dry_grace_min_ms, l.dry_grace_ms(), l.pump_dry_grace_max_ms);
+        if !(min <= grace && grace <= max) {
+            errs.push(format!(
+                "limits: pump_dry_grace_min_ms ({min}) ≤ pump_dry_grace_ms ({grace}) ≤ pump_dry_grace_max_ms ({max}) must hold"
+            ));
+        }
+        if max > PUMP_DRY_MAX_MS {
+            errs.push(format!(
+                "limits.pump_dry_grace_max_ms must be ≤ {PUMP_DRY_MAX_MS}"
+            ));
         }
         if self.limits.distance_samples == 0 {
             errs.push("limits.distance_samples must be ≥ 1".into());
@@ -783,8 +802,14 @@ pub const DEFAULT_CONFIG_TOML: &str = r##"# seedypod hald configuration. Every p
 #                          # Set it below the wet current at the lowest duty you run.
 #                          # hald reads the current every 100 ms while the pump runs.
 # pump_dry_after_ms = 300  # at least 3 low reads in a row; 100–10000
-# pump_dry_grace_ms = 1000 # spin-up after a start, not judged; ≤ 10000
+# pump_dry_grace_ms = 1000 # spin-up after a start, not judged. The default: the app may set it
+# pump_dry_grace_min_ms = 300  # within these bounds (it's the one guard setting it may);
+# pump_dry_grace_max_ms = 5000 # min ≤ default ≤ max ≤ 10000
 #                          # (pump_dry_after_s / pump_dry_grace_s, in seconds, still load)
+# pump_dry_guard = "both"  # which dry-run guard stops the pump: "level" (tank), "current"
+#                          # (pump current) or "both". Only here, never from the app.
+#                          # "current" needs pump_dry_current_a and the ina219, else it falls
+#                          # back to "level"; there, and in "both", a low tank refuses a start.
 # distance_samples = 5    # median of N pings
 # distance_timeout_ms = 60
 # distance_gap_ms = 60    # between pings, so one doesn't hear the last one's echo
@@ -1041,6 +1066,8 @@ pump_max_duty = 150
 pump_dry_current_a = 5.0
 pump_dry_after_s = 0
 pump_dry_grace_ms = 10001
+pump_dry_grace_max_ms = 20000
+pump_dry_grace_min_ms = 12000
 pump_dry_grace_s = 1
 [tank]
 full_cm = 30
@@ -1079,7 +1106,8 @@ kind = "pwm_pump"
             "pump_max_duty",
             "pump_dry_current_a must be above 0 and below i2c.ina219_max_amps (3.2)",
             "pump_dry_after_ms must be 100–10000",
-            "pump_dry_grace_ms must be ≤ 10000",
+            "pump_dry_grace_min_ms (12000) ≤ pump_dry_grace_ms (10001) ≤ pump_dry_grace_max_ms (20000) must hold",
+            "pump_dry_grace_max_ms must be ≤ 10000",
             "set pump_dry_grace_ms or the older pump_dry_grace_s, not both",
             "tank.full_cm",
             "unknown kind \"bme280\"",
@@ -1143,6 +1171,25 @@ kind = "pwm_pump"
         assert_eq!((p.dry_after_ms, p.dry_grace_ms), (4000, 2000));
         assert!(old.validate().is_empty());
         assert!(!toml::to_string(&c).unwrap().contains("pump_dry_after_s"));
+        // The dry-run guard: both unless hal.toml says otherwise, and only a known one loads.
+        assert_eq!(p.dry_guard, DryGuard::Both);
+        assert_eq!(
+            (
+                c.limits.pump_dry_grace_min_ms,
+                c.limits.dry_grace_ms(),
+                c.limits.pump_dry_grace_max_ms
+            ),
+            (300, 1000, 5000)
+        );
+        let level: Config = toml::from_str("[limits]\npump_dry_guard = \"current\"\n").unwrap();
+        assert_eq!(PumpLimits::from(&level.limits).dry_guard, DryGuard::Current);
+        assert!(toml::from_str::<Config>("[limits]\npump_dry_guard = \"none\"\n").is_err());
+        // The bounds may sit on the default, up to the ceiling.
+        let edge: Config = toml::from_str(
+            "[limits]\npump_dry_grace_min_ms = 1000\npump_dry_grace_ms = 1000\npump_dry_grace_max_ms = 10000\n",
+        )
+        .unwrap();
+        assert!(edge.validate().is_empty(), "{:?}", edge.validate());
         let d: DoseLimits = (&c.dosing).into();
         assert_eq!(d, DoseLimits::default());
         let t: hal_core::derived::TankGeometry = (&c.tank).into();

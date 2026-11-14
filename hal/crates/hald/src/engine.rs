@@ -14,11 +14,14 @@ use std::time::{Duration, Instant};
 
 use hal_core::device::{now_epoch_s, rfc3339_from_epoch};
 use hal_core::registry::Registry;
-use hal_core::safety::{is_dry_run, Decision, DoseGuard, DoseLimits, Env, PumpGuard, PumpLimits, DRY_RUN};
+use hal_core::safety::{
+    is_dry_run, resolve_dry_guard, Decision, DoseGuard, DoseLimits, Env, PumpGuard, PumpLimits, DRY_RUN,
+};
 use hal_core::{
     topics, ActuatorCommand, ActuatorId, ActuatorState, Alert, AlertKind, BinarySensor, ButtonEvent,
     ButtonPress, CalibrationCommand, CalibrationResult, DeviceCommand, DeviceEntry, DeviceInventory,
-    DeviceOp, DeviceResult, DeviceSource, DeviceStatus, Quality, Reading, SensorId, SystemInfo,
+    DeviceOp, DeviceResult, DeviceSource, DeviceStatus, DryGuard, PumpGuardCommand, Quality, Reading,
+    SensorId, SystemInfo,
 };
 use serde::Serialize;
 use tracing::{error, info, warn};
@@ -62,6 +65,8 @@ pub enum Inbound {
     Calibrate(SensorId, CalibrationCommand),
     /// Add or remove a sensor at runtime (`devices/set`).
     Devices(DeviceCommand),
+    /// The app asks for the current guard's spin-up grace (`pump/guard/set`).
+    PumpGuard(PumpGuardCommand),
     Button(ButtonPress),
     /// Outcome of a camera capture (from the HTTP server) → `camera_missing`.
     CameraResult {
@@ -130,6 +135,14 @@ pub struct EngineConfig {
     pub button_pump_run_s: u64,
     /// `Some(prefix)` publishes HA discovery.
     pub ha_prefix: Option<String>,
+    /// The bounds (ms) a grace from the app is clamped into: hal.toml's
+    /// `pump_dry_grace_min_ms` and `pump_dry_grace_max_ms`.
+    pub dry_grace_bounds: (u64, u64),
+}
+
+/// A grace from the app, held to hal.toml's bounds.
+fn clamp_grace(ms: u64, (min, max): (u64, u64)) -> u64 {
+    ms.clamp(min, max.max(min))
 }
 
 const HOURS_PERSIST_EVERY: Duration = Duration::from_secs(900);
@@ -293,8 +306,20 @@ impl Engine {
         snapshot: SharedSnapshot,
     ) -> Self {
         let mut cfg = cfg;
-        if cfg.pump.dry_current_a.is_some() && !system.caps.sensors.contains(&SensorId::PumpA) {
-            warn!("pump current guard off: no pump monitor (ina219) to read the current from");
+        let mut system = system;
+        let guard = resolve_dry_guard(
+            cfg.pump.dry_guard,
+            cfg.pump.dry_current_a,
+            system.caps.sensors.contains(&SensorId::PumpA),
+            cfg.pump.water_low_cm.is_some(),
+        );
+        if guard.warn {
+            warn!(mode = %key(&guard.mode), why = %guard.why, "pump dry-run guard");
+        } else {
+            info!(mode = %key(&guard.mode), why = %guard.why, "pump dry-run guard");
+        }
+        cfg.pump.dry_guard = guard.mode;
+        if guard.mode == DryGuard::Level {
             cfg.pump.dry_current_a = None;
         }
         let mut registry = registry;
@@ -302,6 +327,14 @@ impl Engine {
             .remove_actuator(ActuatorId::Light)
             .map(|driver| LightFader::new(driver, cfg.light_fade));
         let persisted = state_file.as_ref().map(StateFile::load).unwrap_or_default();
+        // The app's grace if it set one, held to hal.toml's bounds as they are now.
+        if let Some(ms) = persisted.pump_dry_grace_ms {
+            cfg.pump.dry_grace_ms = clamp_grace(ms, cfg.dry_grace_bounds);
+        }
+        system.limits.pump_dry_guard = Some(guard.mode);
+        system.limits.pump_dry_grace_ms = Some(cfg.pump.dry_grace_ms);
+        system.limits.pump_dry_grace_min_ms = Some(cfg.dry_grace_bounds.0);
+        system.limits.pump_dry_grace_max_ms = Some(cfg.dry_grace_bounds.1);
         let mut doses = BTreeMap::new();
         for id in &system.caps.actuators {
             if matches!(id, ActuatorId::Dose1 | ActuatorId::Dose2 | ActuatorId::Dose3) {
@@ -548,6 +581,7 @@ impl Engine {
                 ));
             }
             Inbound::Devices(cmd) => out.extend(self.devices_cmd(cmd, now)),
+            Inbound::PumpGuard(cmd) => out.extend(self.set_dry_grace(cmd.dry_grace_ms, now)),
             Inbound::Resync => out.extend(self.resync(now)),
             Inbound::Shutdown => out.extend(self.shutdown(now)),
         }
@@ -1123,6 +1157,31 @@ impl Engine {
         self.update_snapshot(now);
     }
 
+    // ---- the one guard setting from the app --------------------------------
+
+    /// `pump/guard/set`: the current guard's spin-up grace, the one dry-run
+    /// setting the app may change. Held to hal.toml's bounds (logged when it had
+    /// to be, never refused), kept in the state file, and reported in `system`.
+    fn set_dry_grace(&mut self, asked: u64, now: Now) -> Vec<Outbound> {
+        let ms = clamp_grace(asked, self.cfg.dry_grace_bounds);
+        let (min, max) = self.cfg.dry_grace_bounds;
+        if ms != asked {
+            warn!(
+                asked,
+                ms, min, max, "pump dry-run grace held to hal.toml's bounds"
+            );
+        } else {
+            info!(ms, "pump dry-run grace set");
+        }
+        self.cfg.pump.dry_grace_ms = ms;
+        self.pump.set_dry_grace_ms(ms);
+        self.system.limits.pump_dry_grace_ms = Some(ms);
+        self.persisted.pump_dry_grace_ms = Some(ms);
+        self.save_state(now);
+        self.update_snapshot(now);
+        vec![Outbound::json(topics::system(&self.unit), &self.system, true)]
+    }
+
     // ---- runtime sensors ----------------------------------------------------
 
     /// `devices/set`: apply, then publish the result and the new inventory.
@@ -1332,6 +1391,7 @@ mod tests {
                 pump_max_run_s: 900,
                 pump_max_duty: 30.0,
                 water_low_cm: Some(16.0),
+                ..Limits::default()
             },
         }
     }
@@ -1347,6 +1407,7 @@ mod tests {
             },
             button_pump_run_s: 300,
             ha_prefix: ha.then(|| "homeassistant".to_owned()),
+            dry_grace_bounds: (300, 5000),
         }
     }
 
@@ -1647,6 +1708,19 @@ mod tests {
     /// A pump with the current guard on, and the INA219's three quantities unless `monitor` is false.
     fn current_rig(tag: &str, monitor: bool) -> Rig {
         let mut r = rig(vec![ActuatorId::Pump], false, tag);
+        r.engine = current_engine(&r, current_cfg(), monitor);
+        r
+    }
+
+    fn current_cfg() -> EngineConfig {
+        let mut c = cfg(false);
+        // The sim draws 0.22 A wet at 30 % and a quarter of that pulling air.
+        c.pump.dry_current_a = Some(0.15);
+        c
+    }
+
+    /// An engine over the rig's world and state dir, as after a restart.
+    fn current_engine(r: &Rig, c: EngineConfig, monitor: bool) -> Engine {
         let mut sys = system(vec![ActuatorId::Pump]);
         let mut registry = Registry::default();
         let mut ids = sys.caps.sensors.clone();
@@ -1661,18 +1735,105 @@ mod tests {
             r.world.clone(),
         )));
         sys.caps.sensors = ids;
-        let mut c = cfg(false);
-        // The sim draws 0.22 A wet at 30 % and a quarter of that pulling air.
-        c.pump.dry_current_a = Some(0.15);
-        r.engine = Engine::new(
+        Engine::new(
             sys,
             c,
             registry,
             None,
             Some(StateFile::new(&r.dir)),
             r.snapshot.clone(),
+        )
+    }
+
+    fn grace(ms: u64) -> Inbound {
+        Inbound::PumpGuard(PumpGuardCommand { dry_grace_ms: ms })
+    }
+
+    #[test]
+    fn the_app_sets_the_grace_within_hal_toml_bounds_and_it_survives_a_restart() {
+        let mut r = current_rig("grace", true);
+        let out = r.engine.boot(r.now);
+        let limits = &payload(&out, "seedypod/u1/system")["limits"];
+        assert_eq!(limits["pumpDryGuard"], "both");
+        assert_eq!(
+            (
+                &limits["pumpDryGraceMs"],
+                &limits["pumpDryGraceMinMs"],
+                &limits["pumpDryGraceMaxMs"]
+            ),
+            (
+                &serde_json::json!(1000),
+                &serde_json::json!(300),
+                &serde_json::json!(5000)
+            )
         );
-        r
+        // In bounds it's taken as asked; out of them, held to the nearer bound, never refused.
+        for (asked, got) in [(1200, 1200), (10, 300), (60_000, 5000), (2500, 2500)] {
+            let out = r.engine.handle(grace(asked), r.now);
+            let sys = payload(&out, "seedypod/u1/system");
+            assert_eq!(sys["limits"]["pumpDryGraceMs"], got, "asked {asked}");
+            assert!(out.iter().all(|o| o.topic != "seedypod/u1/system" || o.retain));
+            assert_eq!(r.engine.pump.limits().dry_grace_ms, got);
+        }
+        let snap = r.snapshot.read().unwrap().system.clone().unwrap();
+        assert_eq!(snap.limits.pump_dry_grace_ms, Some(2500));
+        // The guard goes by it: a dry intake trips 0.3 s past a 2.5 s grace.
+        r.world.lock().unwrap().intake_dry = true;
+        r.engine
+            .handle(Inbound::ActuatorSet(ActuatorId::Pump, on(None, Some(60))), r.now);
+        let mut tripped = None;
+        for n in 1..=40 {
+            step(&mut r);
+            if r.world.lock().unwrap().pump_level == 0.0 {
+                tripped = Some(n * 100);
+                break;
+            }
+        }
+        assert_eq!(tripped, Some(2800));
+        // Restarted, hald uses the grace it kept, without waiting on core.
+        let again = current_engine(&r, current_cfg(), true);
+        assert_eq!(again.pump.limits().dry_grace_ms, 2500);
+        assert_eq!(again.system.limits.pump_dry_grace_ms, Some(2500));
+        // hal.toml's bounds outrank what was kept: narrowed, the kept grace is held to them.
+        let mut narrow = current_cfg();
+        narrow.dry_grace_bounds = (300, 2000);
+        let held = current_engine(&r, narrow, true);
+        assert_eq!(held.pump.limits().dry_grace_ms, 2000);
+        assert_eq!(held.system.limits.pump_dry_grace_max_ms, Some(2000));
+        let _ = std::fs::remove_dir_all(&r.dir);
+    }
+
+    #[test]
+    fn current_mode_runs_on_a_low_tank_and_reports_itself() {
+        let mut r = rig(vec![ActuatorId::Pump], false, "mode-current");
+        let mut c = current_cfg();
+        c.pump.dry_guard = DryGuard::Current;
+        r.engine = current_engine(&r, c, true);
+        r.world.lock().unwrap().water_distance_cm = 17.0;
+        let out = r.engine.boot(r.now);
+        assert_eq!(
+            payload(&out, "seedypod/u1/system")["limits"]["pumpDryGuard"],
+            "current"
+        );
+        let out = r
+            .engine
+            .handle(Inbound::ActuatorSet(ActuatorId::Pump, on(None, Some(30))), r.now);
+        assert_eq!(payload(&out, "seedypod/u1/actuator/pump/state")["on"], true);
+        for _ in 0..50 {
+            step(&mut r);
+        }
+        assert_eq!(
+            r.world.lock().unwrap().pump_level,
+            30.0,
+            "the tank doesn't stop it"
+        );
+        // Asked for current with no monitor, it runs on the tank level instead.
+        let mut c = current_cfg();
+        c.pump.dry_guard = DryGuard::Current;
+        let fallback = current_engine(&r, c, false);
+        assert_eq!(fallback.system.limits.pump_dry_guard, Some(DryGuard::Level));
+        assert_eq!(fallback.pump.limits().dry_current_a, None);
+        let _ = std::fs::remove_dir_all(&r.dir);
     }
 
     #[test]
