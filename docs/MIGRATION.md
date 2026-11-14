@@ -1,3 +1,12 @@
+---
+type: "Guide"
+title: "Migrating from seedypod"
+description: "Move a seedypod v1.5.0 unit to Thryve without reflashing: one-shot SSH migration, rollback, later updates, and pump checks."
+status: "draft"
+generated: {"by": "kaniick", "at": "2026-11-14T18:30:00+00:00"}
+sources: [{"resource": "/INSTALLATION.md", "title": "Installation"}, {"resource": "/DEPLOYMENT.md", "title": "Deployment"}, {"resource": "/adr/0026-web-update.md", "title": "ADR 0026: Web update"}]
+---
+
 # Migrating a seedypod unit to Thryve
 
 Thryve is a rebranded fork of seedypod. If the tower already runs **seedypod v1.5.0** (or later `dev`) from the microSD card, **do not reflash**. A one-time migration moves data, units, users and config onto the Thryve names, then installs a Thryve release from `kaniick/Thryve`.
