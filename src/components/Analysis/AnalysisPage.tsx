@@ -40,8 +40,8 @@ const SHOWN = [{ value: 'both', label: 'Both' }, { value: 'upper', label: 'Upper
 const VIEWS = [{ value: 'photo', label: 'Photo' }, { value: 'bounds', label: 'Pod bounds' }] as const
 const title = (c: Camera) => (c === 'upper' ? 'Upper' : 'Lower')
 
-function Panel({ className, children }: { className?: string, children: ReactNode }) {
-  return <div className={cn('flex min-w-0 flex-col gap-4 rounded-[14px] border border-line bg-surface p-4 sm:p-5', className)}>{children}</div>
+function Panel({ id, className, children }: { id?: string, className?: string, children: ReactNode }) {
+  return <div id={id} className={cn('flex min-w-0 flex-col gap-4 rounded-[14px] border border-line bg-surface p-4 sm:p-5', className)}>{children}</div>
 }
 
 /** `rows` are green fractions; `states` are a learned analyser's pod states (#185). */
@@ -108,7 +108,7 @@ export function AnalysisPage() {
         </p>
       )}
 
-      <Panel>
+      <Panel id="latest-photos">
         <div className="flex flex-wrap items-center gap-2.5">
           <span className="mr-auto text-[15px] font-medium">Latest photos</span>
           {list.length > 0 && selected && (
@@ -146,7 +146,13 @@ export function AnalysisPage() {
       </Panel>
 
       <LeafCover capturedAt={latest.map(l => l.frame?.ts).filter((t): t is string => !!t).sort().at(-1) ?? null} />
-      <LabelPods boxes={calibration.boxes} />
+      <LabelPods
+        boxes={calibration.boxes}
+        onEditBoxes={() => {
+          setView('bounds')
+          document.getElementById('latest-photos')?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
+        }}
+      />
       <PerPod analyzers={list} latest={cameras} colorOf={colorOf} plant={slot => pod(slot)?.plant ?? '—'} empty={slot => pod(slot)?.status === 'empty'} />
       <ComparePod colorOf={colorOf} slot={slot} onSlot={setSlot} pods={pods.data ?? []} trends={trends.data ?? []} />
 

@@ -244,6 +244,21 @@ export const podLabels = sqliteTable('pod_labels', {
   index('pod_labels_ts').on(t.ts),
 ])
 
+/**
+ * Suggestions the grower dismissed (#261), per capture and pod: the pod can't be
+ * seen there, or its box isn't on a pod. Not labels, so label counts never see them.
+ */
+export const suggestionDismissals = sqliteTable('suggestion_dismissals', {
+  captureId: text().notNull(),
+  /** Capture timestamp, denormalised so the export's window never joins. */
+  ts: text().notNull(),
+  slot: integer().notNull(),
+  dismissedAt: text().notNull(),
+}, t => [
+  uniqueIndex('suggestion_dismissals_key').on(t.captureId, t.slot),
+  index('suggestion_dismissals_ts').on(t.ts),
+])
+
 /** Owner-confirmed yCube dot code → plant pairs (#224). Unconfirmed pairs are never stored. */
 export const podCodes = sqliteTable('pod_codes', {
   code: text().primaryKey(),

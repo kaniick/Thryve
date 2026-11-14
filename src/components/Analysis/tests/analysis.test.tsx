@@ -12,7 +12,12 @@ const { data, calls, invalidate, demo } = vi.hoisted(() => ({
 
 vi.mock('@/src/demo/mode', () => ({ isDemo: () => demo.on }))
 // The tagger has its own tests (labelPods.test.tsx); here it only has to be on the page with the pod boxes.
-vi.mock('../LabelPods', () => ({ LabelPods: ({ boxes }: { boxes: (c: 'upper' | 'lower') => Record<number, unknown> }) => <div data-testid="label-pods-stub">{Object.keys(boxes('lower')).join(',')}</div> }))
+vi.mock('../LabelPods', () => ({ LabelPods: ({ boxes, onEditBoxes }: { boxes: (c: 'upper' | 'lower') => Record<number, unknown>, onEditBoxes: () => void }) => (
+  <div>
+    <span data-testid="label-pods-stub">{Object.keys(boxes('lower')).join(',')}</span>
+    <button type="button" onClick={onEditBoxes}>stub move boxes</button>
+  </div>
+) }))
 
 vi.mock('@/src/utils/trpc', () => {
   const query = (name: string) => ({ useQuery: (input?: unknown, opts?: { enabled?: boolean }) => {
@@ -195,6 +200,18 @@ describe('AnalysisPage', () => {
     fireEvent.click(screen.getByText('Edit boxes'))
     expect(screen.queryByTestId('pod-hits')).toBeNull()
     expect(screen.queryByTestId('pod-card')).toBeNull()
+  })
+
+  it('takes the tagger to the pod boxes for a box that isn\'t on a pod', () => {
+    const scroll = vi.fn()
+    Element.prototype.scrollIntoView = scroll
+    render(<AnalysisPage />)
+    expect(screen.queryByText('Edit boxes')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'stub move boxes' }))
+    expect(screen.getByRole('tab', { name: 'Pod bounds' }).getAttribute('aria-selected')).toBe('true')
+    expect(screen.getByText('Edit boxes')).toBeTruthy()
+    expect(scroll).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' })
+    expect(scroll.mock.contexts[0]).toBe(document.getElementById('latest-photos'))
   })
 
   it('starts on every planted pod side by side, on one scale, and charts one when it is picked', () => {

@@ -244,6 +244,58 @@ describe('vision router (ADR-0019)', () => {
     await expect(c.vision.acceptSuggestions({ captureId: 'nope' })).rejects.toThrow(/no capture nope/)
   })
 
+  it('dismisses a pod\'s suggestion on one photo, leaves it out of suggestions and Accept the rest, and restores it (#261)', async () => {
+    const { c, ctx } = await scored(3)
+    const seen: string[] = []
+    ctx.events.subscribe(e => e.kind === 'mutation' && seen.push(e.path))
+    ctx.now = () => new Date('2026-01-05T08:00:00.000Z')
+    for (const slot of [1, 2, 3]) await c.vision.setLabel({ captureId: 'upper-0', slot, label: 'seeded' })
+    const slots = async (captureId = 'upper-1') => (await c.vision.suggestions({ captureId })).map(s => s.slot)
+    expect(await slots()).toEqual([1, 2, 3])
+
+    seen.length = 0
+    expect(await c.vision.dismissSuggestion({ captureId: 'upper-1', slot: 2 })).toEqual({ captureId: 'upper-1', slot: 2, dismissedAt: '2026-01-05T08:00:00.000Z' })
+    expect(seen).toEqual(['labels'])
+    expect(await slots()).toEqual([1, 3])
+    // Only on that photo.
+    expect(await slots('upper-2')).toEqual([1, 2, 3])
+    expect(await c.vision.dismissals({ captureId: 'upper-1' })).toEqual([{ slot: 2, dismissedAt: '2026-01-05T08:00:00.000Z' }])
+    // Dismissing again keeps the first time.
+    ctx.now = () => new Date('2026-01-06T00:00:00.000Z')
+    expect(await c.vision.dismissSuggestion({ captureId: 'upper-1', slot: 2 })).toMatchObject({ dismissedAt: '2026-01-05T08:00:00.000Z' })
+
+    // A dismissal is not a label: nothing counts it.
+    expect(await c.vision.labels({ captureId: 'upper-1' })).toEqual([])
+    expect(await c.vision.labelStats()).toMatchObject({ pods: 3, sources: { picked: 3, accepted: 0, corrected: 0 } })
+    expect((await c.vision.labelList({ limit: 60 })).labels).toHaveLength(3)
+
+    // The server skips it on Accept the rest, whatever the UI sent.
+    expect(await c.vision.acceptSuggestions({ captureId: 'upper-1' })).toEqual({ captureId: 'upper-1', slots: [1, 3] })
+    expect((await c.vision.labels({ captureId: 'upper-1' })).map(l => l.slot)).toEqual([1, 3])
+    // A label picked on a dismissed pod had no suggestion.
+    await c.vision.setLabel({ captureId: 'upper-1', slot: 2, label: 'empty' })
+    expect((await c.vision.labels({ captureId: 'upper-1' })).find(l => l.slot === 2)).toMatchObject({ label: 'empty', source: 'picked', suggested: null })
+    await c.vision.setLabel({ captureId: 'upper-1', slot: 2, label: null })
+
+    seen.length = 0
+    expect(await c.vision.restoreSuggestion({ captureId: 'upper-1', slot: 2 })).toEqual({ captureId: 'upper-1', slot: 2, restored: true })
+    expect(seen).toEqual(['labels'])
+    expect(await c.vision.dismissals({ captureId: 'upper-1' })).toEqual([])
+    expect((await c.vision.suggestions({ captureId: 'upper-1' })).find(s => s.slot === 2)).toMatchObject({ label: 'seeded', by: 'carry' })
+    // Restoring one that isn't dismissed changes nothing.
+    expect(await c.vision.restoreSuggestion({ captureId: 'upper-1', slot: 2 })).toEqual({ captureId: 'upper-1', slot: 2, restored: false })
+    expect(seen).toEqual(['labels'])
+
+    // Without a clock of its own, the unit stamps it now.
+    delete ctx.now
+    const before = Date.now()
+    const { dismissedAt } = await c.vision.dismissSuggestion({ captureId: 'upper-2', slot: 1 })
+    expect(Date.parse(dismissedAt)).toBeGreaterThanOrEqual(before)
+
+    await expect(c.vision.dismissSuggestion({ captureId: 'upper-1', slot: 16 })).rejects.toThrow(/pod 16 is not on the upper camera/)
+    await expect(c.vision.dismissSuggestion({ captureId: 'nope', slot: 2 })).rejects.toThrow(/no capture nope/)
+  })
+
   it('keeps a sown pod\'s plant with each label, but not a planned one or one sown after the photo\'s day', async () => {
     const { c, ctx } = await scored(2)
     const sow = (slot: number, plant: string, plantedAt: string | null, status: 'empty' | 'seeded' | 'growing') => ctx.store.pods.update(slot, { plant, plantedAt, status }, '2025-12-20T00:00:00Z')

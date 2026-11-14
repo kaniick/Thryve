@@ -9,7 +9,7 @@ import type { SensorId } from '../hardware/contract'
 import type { AutomationRule } from '../autopilot/types'
 import * as t from '../db/schema'
 import { downsample } from './memory'
-import type { AlertRow, Automation, AutomationRun, AnalysisPoint, AnalysisRow, AnalyzerStats, BackupRecord, Capture, CustomPlant, DeviceSettings, FlashSample, GrowCycle, GrowProtocolState, GrowStage, LightSpec, PlanRow, PlantProfile, Pod, PodCodePair, PodCodeRead, PodLabel, PodLabelCursor, PodLabelInput, PodLabelSource, PodLabelValue, PumpSpec, SavedCycle, SavedSchedule, Schedule, ScheduleRun, Store, TankAction, TankActionKind, TelemetryPoint } from './types'
+import type { AlertRow, Automation, AutomationRun, AnalysisPoint, AnalysisRow, AnalyzerStats, BackupRecord, Capture, CustomPlant, DeviceSettings, FlashSample, GrowCycle, GrowProtocolState, GrowStage, LightSpec, PlanRow, PlantProfile, Pod, PodCodePair, PodCodeRead, PodLabel, PodLabelCursor, PodLabelInput, PodLabelSource, PodLabelValue, PumpSpec, SavedCycle, SavedSchedule, Schedule, ScheduleRun, Store, SuggestionDismissal, TankAction, TankActionKind, TelemetryPoint } from './types'
 import { DEFAULT_SETTINGS, POD_LABELS, profileKey } from './types'
 
 export interface SqliteStoreOptions {
@@ -423,6 +423,19 @@ export class SqliteStore implements Store {
     captures: (limit = 50): Array<{ captureId: string, ts: string, camera: 'upper' | 'lower', pods: number }> =>
       this.db.select({ captureId: t.podLabels.captureId, ts: t.podLabels.ts, camera: t.podLabels.camera, pods: sql<number>`count(*)` }).from(t.podLabels)
         .groupBy(t.podLabels.captureId).orderBy(desc(t.podLabels.ts), asc(t.podLabels.captureId)).limit(limit).all(),
+  }
+
+  dismissals = {
+    dismiss: (d: SuggestionDismissal): SuggestionDismissal =>
+      this.db.insert(t.suggestionDismissals).values(d)
+        .onConflictDoUpdate({ target: [t.suggestionDismissals.captureId, t.suggestionDismissals.slot], set: { ts: d.ts } }).returning().get(),
+    restore: (captureId: string, slot: number): boolean =>
+      this.db.delete(t.suggestionDismissals).where(and(eq(t.suggestionDismissals.captureId, captureId), eq(t.suggestionDismissals.slot, slot))).run().changes > 0,
+    forCapture: (captureId: string): SuggestionDismissal[] =>
+      this.db.select().from(t.suggestionDismissals).where(eq(t.suggestionDismissals.captureId, captureId)).orderBy(asc(t.suggestionDismissals.slot)).all(),
+    range: (fromTs: string, toTs: string): SuggestionDismissal[] =>
+      this.db.select().from(t.suggestionDismissals).where(and(gte(t.suggestionDismissals.ts, fromTs), lte(t.suggestionDismissals.ts, toTs)))
+        .orderBy(asc(t.suggestionDismissals.ts), asc(t.suggestionDismissals.captureId), asc(t.suggestionDismissals.slot)).all(),
   }
 
   podCodes = {

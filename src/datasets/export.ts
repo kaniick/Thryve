@@ -6,6 +6,7 @@
  * sleep-stage dataset script. The grower's pod labels (#184) ride along with
  * each pod's crop, so a trainer sees exactly what the analysers see, and the
  * owner's confirmed dot code → plant pairs (#259) go with the archive whole.
+ * Suggestions the grower dismissed (#261) go in their own file, never as labels.
  */
 import { SensorId } from '../hardware/contract'
 import { daysSinceSowing } from '../scheduler/pumpPlan'
@@ -34,8 +35,9 @@ export interface DatasetSummary extends ExportWindow {
 /**
  * Version 2: `labels.jsonl` gained the `seeded` label and `plant`, `plantedAt` and `daysSinceSowing`.
  * Version 3: `labels.jsonl` gained `source`, `suggested`, `suggestedBy` and `suggestedConfidence` (#261), and `pod_codes.json` came in (#259).
+ * Version 4: `suggestion_dismissals.json` came in (#261).
  */
-export const DATASET_FORMAT = { name: 'seedypod-dataset', version: 3 }
+export const DATASET_FORMAT = { name: 'seedypod-dataset', version: 4 }
 
 const DAY = 86_400_000
 const enc = new TextEncoder()
@@ -135,6 +137,7 @@ export async function* datasetEntries(ctx: Context, w: ExportWindow): AsyncGener
   const labels = ctx.store.podLabels.range(w.from, w.to)
   const regions = regionsOf(ctx)
   const podCodes = ctx.store.podCodes.pairs()
+  const dismissals = ctx.store.dismissals.range(w.from, w.to)
   const system = ctx.hal.snapshot().system
 
   yield file('manifest.json', json({
@@ -145,7 +148,7 @@ export async function* datasetEntries(ctx: Context, w: ExportWindow): AsyncGener
     core: ctx.version,
     primaryAnalyzer: settings.primaryAnalyzer,
     analyzers: ctx.analysis.list().map(({ primary, ...a }) => ({ ...a, primary })),
-    counts: { captures: captures.length, analyses: analyses.length, telemetry: telemetry.length, labels: labels.length, podCodes: podCodes.length },
+    counts: { captures: captures.length, analyses: analyses.length, telemetry: telemetry.length, labels: labels.length, podCodes: podCodes.length, dismissals: dismissals.length },
     images: w.images,
   }))
   yield file('README.md', enc.encode(README))
@@ -158,6 +161,7 @@ export async function* datasetEntries(ctx: Context, w: ExportWindow): AsyncGener
   yield file('pods.json', json(ctx.store.pods.list()))
   yield file('grow_cycles.json', json(ctx.store.grow.history()))
   yield file('pod_codes.json', json(podCodes))
+  yield file('suggestion_dismissals.json', json(dismissals))
 
   if (!w.images) return
   for (const c of captures) {
@@ -183,6 +187,7 @@ Exported from a seedypod unit (ADR-0019). Every file covers the window in
 | \`pods.json\` | The 30 pods: plant, planted date, status, notes |
 | \`grow_cycles.json\` | Grow cycles with start/end and stage |
 | \`pod_codes.json\` | The yCube dot codes the owner confirmed: \`code\`, \`plant\`, \`confirmedAt\`, whenever they were confirmed |
+| \`suggestion_dismissals.json\` | Pods whose suggestion the grower dismissed on a photo, because the pod can't be seen there or its box isn't on a pod: \`captureId\`, \`ts\` (the photo's time), \`slot\`, \`dismissedAt\`. Not labels: nothing in \`labels.jsonl\` comes from them |
 | \`images/<id>.jpg\` | The stills, when exported with images |
 
 Labels are \`empty\` (capped, no yCube), \`seeded\` (a yCube in, nothing
