@@ -10,9 +10,9 @@ vi.mock('../PodOrder', () => ({ PodOrder: () => null }))
 
 const { data, calls, invalidate, mutation, infinite } = vi.hoisted(() => ({
   data: new Map<string, unknown>(),
-  calls: { frames: vi.fn(), get: vi.fn(), labels: vi.fn(), setLabel: vi.fn(), labelList: vi.fn(), fetchNextPage: vi.fn() },
+  calls: { frames: vi.fn(), get: vi.fn(), labels: vi.fn(), setLabel: vi.fn(), accept: vi.fn(), labelList: vi.fn(), fetchNextPage: vi.fn() },
   invalidate: vi.fn(),
-  mutation: { fail: false, error: null as null | { message: string } },
+  mutation: { fail: false, error: null as null | { message: string }, acceptFail: false, acceptError: null as null | { message: string } },
   infinite: { hasNextPage: false, isLoading: false },
 }))
 
@@ -34,6 +34,16 @@ vi.mock('@/src/utils/trpc', () => ({
         calls.labels(input, opts)
         return { data: opts?.enabled === false ? undefined : data.get(`labels:${input.captureId}`) }
       } },
+      suggestions: { useQuery: (input: { captureId: string }, opts?: { enabled?: boolean }) => ({ data: opts?.enabled === false ? undefined : data.get(`hints:${input.captureId}`) }) },
+      acceptSuggestions: { useMutation: (o: { onSuccess?: () => void, onError?: (e: Error, v: unknown) => void }) => ({
+        error: mutation.acceptError,
+        isPending: false,
+        mutate: (v: unknown) => {
+          calls.accept(v)
+          if (mutation.acceptFail) o.onError?.(new Error('nope'), v)
+          else o.onSuccess?.()
+        },
+      }) },
       labelStats: { useQuery: () => ({ data: data.get('stats') }) },
       labelList: { useInfiniteQuery: (input: { label?: string, limit: number }, opts: { getNextPageParam: (p: { next: string | null }) => string | undefined }) => {
         calls.labelList(input, opts.getNextPageParam({ next: 'cursor-1' }), opts.getNextPageParam({ next: null }))
@@ -69,6 +79,8 @@ beforeEach(() => {
   invalidate.mockReset()
   mutation.fail = false
   mutation.error = null
+  mutation.acceptFail = false
+  mutation.acceptError = null
   infinite.hasNextPage = false
   infinite.isLoading = false
 })
@@ -104,7 +116,7 @@ describe('LabelPods', () => {
     expect(chip('Sprouted').getAttribute('title')).toBe('Only seed leaves: the first pair of small, rounded leaves')
     expect(chip('Growing').getAttribute('title')).toBe('True leaves showing (the plant\'s own leaf shape), not ready yet')
     expect(chip('Seeded').getAttribute('title')).toBe('A yCube in, nothing visible yet')
-    expect(screen.getByText('Tap a pod to tag it; tap again with the same label, or use Clear, to remove it.')).toBeTruthy()
+    expect(screen.getByText('Tap a dashed pod with no label picked to accept its suggestion. Pick a label and tap pods to set it; tap again with the same label, or use Clear, to remove it.')).toBeTruthy()
     expect(screen.getByText(/Empty is capped, Seeded has a yCube/)).toBeTruthy()
     fireEvent.click(chip('Seeded'))
     fireEvent.click(pod(7))
@@ -115,6 +127,7 @@ describe('LabelPods', () => {
   it('tags a pod with one tap, retags it with another label, and clears it with a second tap', () => {
     data.set('frames:upper', [frame('upper', 0)])
     render(<LabelPods boxes={boxes} />)
+    fireEvent.click(chip('Growing'))
     fireEvent.click(pod(4))
     expect(calls.setLabel).toHaveBeenLastCalledWith({ captureId: 'upper-0', slot: 4, label: 'growing' })
     expect(pod(4).getAttribute('aria-label')).toBe('Pod 4: growing')
@@ -168,6 +181,7 @@ describe('LabelPods', () => {
     fireEvent.click(older)
     expect(calls.labels).toHaveBeenCalledWith({ captureId: 'upper-1' }, { enabled: true })
     expect(older.disabled).toBe(true)
+    fireEvent.click(chip('Growing'))
     fireEvent.click(pod(1))
     expect(calls.setLabel).toHaveBeenLastCalledWith({ captureId: 'upper-1', slot: 1, label: 'growing' })
     calls.labels.mockReset()
@@ -223,6 +237,7 @@ describe('LabelPods', () => {
     expect(pod(20).textContent).toBe('20')
     expect(pod(20).getAttribute('aria-label')).toBe('Pod 20: ready')
 
+    fireEvent.click(chip('Growing'))
     fireEvent.click(pod(3))
     expect(calls.setLabel).toHaveBeenLastCalledWith({ captureId: 'upper-0', slot: 3, label: 'growing' })
     fireEvent.click(pod(16))
@@ -364,6 +379,7 @@ describe('LabelPods', () => {
     expect((screen.getByRole('img') as HTMLImageElement).src).toBe('http://unit/api/captures/upper-9.jpg')
     expect(screen.getByText(`Older than the last ${HISTORY} photos: the arrows go back to them.`)).toBeTruthy()
     expect(pod(2).getAttribute('aria-label')).toBe('Pod 2: seeded')
+    fireEvent.click(chip('Growing'))
     fireEvent.click(pod(5))
     expect(calls.setLabel).toHaveBeenLastCalledWith({ captureId: 'upper-9', slot: 5, label: 'growing' })
     expect((screen.getByRole('button', { name: 'Older photo' }) as HTMLButtonElement).disabled).toBe(true)
@@ -390,5 +406,98 @@ describe('LabelPods', () => {
     Object.defineProperty(crop, 'naturalHeight', { value: 900 })
     fireEvent.load(crop as HTMLImageElement)
     expect(parseFloat(tile.style.aspectRatio)).toBeCloseTo((box.w / box.h) * 16 / 9)
+  })
+})
+
+describe('LabelPods suggestions (#261)', () => {
+  const FROM = '2026-11-13T10:00:00Z'
+  const hint = (slot: number, l: string, by: string, more: Record<string, unknown> = {}) => ({ slot, label: l, by, confidence: null, from: null, ...more })
+  const hints = [hint(2, 'sprouted', 'carry', { from: FROM }), hint(3, 'growing', 'pod-state@1', { confidence: 0.86 }), hint(4, 'seeded', 'record'), hint(5, 'ready', 'carry', { from: FROM })]
+  const accept = () => screen.getByRole('button', { name: 'Accept the rest on the upper photo' })
+  beforeEach(() => {
+    data.set('frames:upper', [frame('upper', 0)])
+    data.set('hints:upper-0', hints)
+    data.set('labels:upper-0', [label('upper-0', 5, 'growing')])
+  })
+
+  it('shows a suggestion dashed with ? and says where it came from, until a label replaces it', () => {
+    render(<LabelPods boxes={boxes} />)
+    expect(pod(2).textContent).toBe('2 · sprouted?')
+    expect(pod(2).getAttribute('aria-label')).toBe('Pod 2: suggested sprouted')
+    expect(pod(2).getAttribute('aria-pressed')).toBe('false')
+    expect(pod(2).className).toContain('border-dashed')
+    expect(pod(2).getAttribute('data-suggested')).toBe('sprouted')
+    expect(pod(2).getAttribute('title')).toBe(`Suggested sprouted: last labelled sprouted on ${new Date(FROM).toLocaleDateString([], { day: 'numeric', month: 'short' })}`)
+    expect(pod(3).getAttribute('title')).toBe('Suggested growing: pod-state 86%')
+    expect(pod(4).getAttribute('title')).toBe('Suggested seeded: the pod record says seeded')
+    // A saved label replaces its suggestion.
+    expect(pod(5).textContent).toBe('5 · growing')
+    expect(pod(5).className).toContain('border-solid')
+    expect(pod(5).getAttribute('title')).toBeNull()
+    expect(pod(1).getAttribute('aria-label')).toBe('Pod 1: not labelled')
+    expect(pod(1).getAttribute('title')).toBeNull()
+    // Side by side, a suggestion is its pod's number and a question mark.
+    data.set('frames:lower', [{ ...frame('lower', 0), ts: '2026-11-09T10:00:20Z' }])
+    fireEvent.click(screen.getByRole('tab', { name: 'Both' }))
+    expect(pod(2).textContent).toBe('2?')
+  })
+
+  it('accepts a suggestion with a tap when no label is picked, and saves another label over it when one is', () => {
+    render(<LabelPods boxes={boxes} />)
+    expect(within(screen.getByRole('group', { name: 'Label to apply' })).getAllByRole('button').every(b => b.getAttribute('aria-pressed') === 'false')).toBe(true)
+    fireEvent.click(pod(2))
+    expect(calls.setLabel).toHaveBeenLastCalledWith({ captureId: 'upper-0', slot: 2, label: 'sprouted' })
+    expect(pod(2).getAttribute('aria-label')).toBe('Pod 2: sprouted')
+    // With no label picked, a labelled pod or one with no suggestion is left alone.
+    calls.setLabel.mockReset()
+    fireEvent.click(pod(2))
+    fireEvent.click(pod(5))
+    fireEvent.click(pod(1))
+    expect(calls.setLabel).not.toHaveBeenCalled()
+    // Another label picked: the unit saves it as corrected, keeping the suggestion.
+    fireEvent.click(chip('Ready'))
+    fireEvent.click(pod(3))
+    expect(calls.setLabel).toHaveBeenLastCalledWith({ captureId: 'upper-0', slot: 3, label: 'ready' })
+    expect(pod(3).getAttribute('aria-label')).toBe('Pod 3: ready')
+    // Tapping the picked chip again puts it down, back to accepting.
+    fireEvent.click(chip('Ready'))
+    expect(chip('Ready').getAttribute('aria-pressed')).toBe('false')
+    fireEvent.click(pod(4))
+    expect(calls.setLabel).toHaveBeenLastCalledWith({ captureId: 'upper-0', slot: 4, label: 'seeded' })
+  })
+
+  it('accepts the rest of a photo\'s suggestions in one go, and never saves a pod without one', () => {
+    render(<LabelPods boxes={boxes} />)
+    fireEvent.click(pod(2))
+    expect(accept().textContent).toBe('Accept the rest (2)')
+    fireEvent.click(accept())
+    expect(calls.accept).toHaveBeenCalledWith({ captureId: 'upper-0' })
+    expect(invalidate).toHaveBeenCalled()
+    expect([3, 4].map(s => pod(s).getAttribute('aria-label'))).toEqual(['Pod 3: growing', 'Pod 4: seeded'])
+    expect(pod(5).getAttribute('aria-label')).toBe('Pod 5: growing')
+    // The untouched pods with no suggestion stay unlabelled, and nothing is left to accept.
+    expect(pod(1).getAttribute('aria-label')).toBe('Pod 1: not labelled')
+    expect(calls.setLabel).toHaveBeenCalledTimes(1)
+    expect(screen.getByText(/4 of 15 pods labelled/)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /Accept the rest/ })).toBeNull()
+  })
+
+  it('puts the suggestions back when the unit refuses Accept the rest, and says why', () => {
+    mutation.acceptFail = true
+    mutation.acceptError = { message: 'no capture upper-0' }
+    render(<LabelPods boxes={boxes} />)
+    fireEvent.click(accept())
+    expect(pod(2).getAttribute('aria-label')).toBe('Pod 2: suggested sprouted')
+    expect(screen.getByText('no capture upper-0')).toBeTruthy()
+  })
+
+  it('counts labels by how they were saved, and how often each suggester was right', () => {
+    data.set('stats', { ...stats, sources: { picked: 3, accepted: 7, corrected: 2 }, suggesters: [{ by: 'carry', accepted: 6, corrected: 1, right: 0.857 }, { by: 'pod-state@1', accepted: 1, corrected: 1, right: 0.5 }] })
+    render(<LabelPods boxes={boxes} />)
+    expect(screen.getByTestId('label-sources').textContent).toBe('3 picked · 7 accepted · 2 corrected · carry 86% right · pod-state@1 50% right')
+    cleanup()
+    data.set('stats', stats)
+    render(<LabelPods boxes={boxes} />)
+    expect(screen.queryByTestId('label-sources')).toBeNull()
   })
 })

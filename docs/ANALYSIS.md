@@ -126,14 +126,22 @@ pod shows. **Analysis → Label pods** is where you give them.
    at most one still per camera, taken within 5 minutes of the round's newest
    still. A camera that took none in a round shows an empty slot there, not an
    older still.
-2. Pick a label:
+2. Check the suggestions. A pod with a [suggested label](#suggested-labels)
+   shows it dashed with a question mark, for example `6 · sprouted?`; its
+   tooltip says where it came from (*last labelled sprouted on 13 Nov*,
+   *pod-state 86%*). With no label picked, tap a pod to accept its
+   suggestion. **Accept the rest** under each photo accepts every remaining
+   suggestion on it; pods without one stay unlabelled.
+3. For the pods that changed, or that have no suggestion, pick a label (tap
+   the picked one again to put it down):
    - **Empty**: a capped pod, no yCube.
    - **Seeded**: a yCube is in, but nothing is visible yet.
-   - **Sprouted**: the first leaves are showing.
-   - **Growing**, **Ready** (to harvest) or **Unhealthy**.
-3. Tap each pod that shows it. A tap sets the label. To remove a label, tap
-   the pod again with the same label, or pick **Clear** and tap it. To change
-   a label, pick the other one and tap the pod again.
+   - **Sprouted**: only seed leaves, the first pair of small, rounded leaves.
+   - **Growing**: true leaves showing (the plant's own leaf shape).
+   - **Ready** (to harvest) or **Unhealthy**.
+4. Tap each pod that shows it. A tap sets the label, over any suggestion. To
+   remove a label, tap the pod again with the same label, or pick **Clear**
+   and tap it. To change a label, pick the other one and tap the pod again.
 
 When a pod is labelled, its plant and sowing date go with the label, so a
 season of labels keeps the right species and age after pods are replanted.
@@ -141,10 +149,11 @@ Only a sown pod counts: one that is only planned (no sowing date, or still
 empty), or sown after the photo's day, records no plant.
 Changing a label later keeps the plant it was first given.
 
-The counts above the photo show how many pods carry each label, across every
-photo. **All labels** shows every labelled pod as its crop, newest photo
-first, with its pod, plant, age and when the photo was taken. Filter by label
-with the chips (each shows its count), **Change** a label with the same chips,
+Each label chip shows how many pods carry that label, across every photo.
+The line under the chips says how many labels were picked, accepted or
+corrected, and how often each suggester was right. **All labels** shows
+every labelled pod as its crop, newest photo first, with its pod, plant, age
+and when the photo was taken. Filter by label with the chips (each shows its count), **Change** a label with the same chips,
 **Remove** it, or tap the crop to open its photo in the tagger. Labels are
 kept per photo and pod, and they stay after the unit prunes the photo; a
 pruned photo's labels can still be changed or removed.
