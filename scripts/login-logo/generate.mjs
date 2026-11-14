@@ -19,10 +19,10 @@ const ICON = fileURLToPath(new URL('../../web/public/brand/icon-192.png', import
 const OUT = fileURLToPath(new URL('logo.frames', import.meta.url))
 
 // Two pixels per cell. The crop is in 1024-px icon units, picked so the
-// scattered squares land on the pixel grid instead of blurring across it.
+// plant fills the grid and the pixelated left leaf lands on cell boundaries.
 const WIDTH = 40
 const HEIGHT = 40
-const CROP = { x: 64, y: 50, cell: 22.75 }
+const CROP = { x: 102.5, y: 102, cell: 20.475 }
 const ROWS = HEIGHT / 2
 const INDENT = 2
 const TEXT_COL = INDENT + WIDTH + 4
@@ -41,11 +41,12 @@ const WORD_START = 13
 const SHEEN_FRAMES = [20, 29]
 
 // Everything below this row is the pot; left of the V between the leaves is the
-// left leaf and its pixels; the rest is the right leaf, growing from STEM to TIP.
-const RIM = 23
-const STEM = [23, 23]
-const TIP = [39, 1]
-const inLeftLeaf = (x, y) => y < RIM && x < 21.5 + Math.max(0, y - 12) * 0.15
+// pixelated left leaf and its drifting squares; the rest is the right leaves,
+// growing from STEM to TIP.
+const RIM = 29
+const STEM = [23, 29]
+const TIP = [25, 0]
+const inLeftLeaf = (x, y) => y < RIM && x < 17.0 + Math.max(0, y - 10) * 0.12
 
 const WHITE = [255, 255, 255]
 const SHEEN = [215, 255, 230]
@@ -129,13 +130,17 @@ function sample({ width, height, rgba }) {
           alpha += a
         }
       }
-      pixels.push(alpha / cell ** 2 >= 0.5 ? liftShadow(sum.map(v => v / alpha)) : null)
+      const rgb = alpha / cell ** 2 >= 0.5 ? sum.map(v => v / alpha) : null
+      const luma = rgb ? 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2] : 0
+      // Official icon is on opaque black; the terminal already has its own
+      // background, so near-black cells stay off.
+      pixels.push(rgb && luma >= 16 ? liftShadow(rgb) : null)
     }
   }
   return pixels
 }
 
-/** The icon is drawn for white; its near-black greens vanish on a dark terminal. */
+/** Dark leaf stripes and the pot's deep blue would vanish on a dark terminal. */
 function liftShadow(rgb) {
   const luma = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]
   return mix(rgb, [20, 110, 80], clamp((90 - luma) / 90) * 0.55)
