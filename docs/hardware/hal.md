@@ -391,7 +391,8 @@ PWM overlay (`dtoverlay=pwm,pin=18,func=2`, reboot required once), installs
 (`/etc/udev/rules.d/70-seedypod-cameras.rules`, see [Camera names](#camera-names)), installs Mosquitto with a listener on
 `127.0.0.1:1883` and no password (`/etc/mosquitto/conf.d/seedypod.conf`,
 written once), and installs/enables `hald.service` (`Restart=always`,
-`After=mosquitto.service`, hardened). `--binary ./hald` installs a local
+`After=mosquitto.service`, hardened, with a [watchdog](#watchdog) and the pump
+pin driven low after every stop). `--binary ./hald` installs a local
 build; `--version vX.Y.Z` pins a release; `--no-enable` skips starting it.
 `--mqtt-lan` adds a password-protected listener on port 1884 for Home
 Assistant on another machine and prints the `homeassistant` password once;
@@ -455,6 +456,64 @@ A rerun only touches what changed: apt runs for a package that's missing,
 unit or group. A rerun with the same binary leaves a running pump alone. A restart
 that's owed is recorded in `/var/lib/seedypod/.restart-hald` first, so an install
 that dies part way still restarts hald on the rerun.
+
+## Watchdog
+
+`hald.service` is `Type=notify` with `WatchdogSec=10`. hald sends `READY=1` once
+the engine has booted (the light restored, the fader running), and `WATCHDOG=1`
+from the engine loop itself, once per tick, so pings stop when the loop hangs.
+There's no side thread to keep pinging a stuck loop. 10 s without one and systemd
+kills hald (`SIGABRT`) and starts it again 3 s later, as for a crash.
+
+The loop ticks once a second, and a tick takes longer on a telemetry round, every
+10 s. The stock sensors take well under a second (the ultrasonic median is about
+0.3 s, at most 0.6 s), but an EZO probe blocks 0.9 s per read, 1.8 s when it asks
+for more time, so three of them make a round of about 7 s. `WatchdogSec=3` would
+kill a unit with EZO probes on every round; 10 s leaves room for them and still
+catches a hang. The watchdog arms at `READY=1`, so a slow start isn't counted
+against it. `TimeoutStartSec=120` covers the 30 s hardware wait and a slow Pi Zero
+start.
+
+`ExecStopPost=-/usr/local/lib/seedypod/pump-off` runs after every stop: `systemctl
+stop` or `restart`, a crash, a watchdog kill. The pump is software PWM, so a hald
+that dies mid-run can leave its pin high. The script drives the pump pin low with
+`pinctrl set <pin> op dl`, or `raspi-gpio`, sysfs GPIO, then libgpiod's `gpioset`,
+whichever the OS has, and logs which in `journalctl -u hald`. It never touches the
+light, which stays as it is across a restart. The `-` means it never fails the unit.
+
+The script asks `hald --config /etc/seedypod/hal.toml --pump-pin` for the pin, so
+hal.toml (`pump_pwm` under `[pins]`, or an `[[actuator]]` with `id = "pump"`) stays
+the only place it's set, and an edit since the install is followed. If hald can't
+answer (a hal.toml it can't parse), the script uses the pin hald gave at install,
+which is written into the script. `--pump-pin` prints nothing for a pump that low
+doesn't turn off (not `pwm_pump`) or one on a light's pin, and then nothing is
+driven.
+
+A hald from before the watchdog never pings, so `install-hal` only adds
+`Type=notify` and `WatchdogSec` when the binary it installs has `--pump-pin`, which
+came with it. An older hald under the watchdog unit (say, after going back to an
+older release by hand) would be killed every 10 s: rerun `install-hal`, which writes
+the unit for the hald it finds.
+
+The web updater swaps the binary but doesn't install units, so this needs
+`sudo scripts/install-hal` run once on the unit.
+
+### Hardware watchdog (off)
+
+The Pi's BCM2835 watchdog can reboot the board when systemd itself stops
+responding, through `RuntimeWatchdogSec=` in `/etc/systemd/system.conf.d/`. It's
+**not** enabled. The chip allows at most about 15 s, and a Pi Zero 2 W in memory
+pressure can stall PID 1 that long; a reboot there takes the light and cameras with
+it, and a slow boot that stalls again would loop. It would also spend the USB hub's
+reboot budget on reboots that aren't for the hub. hald's own watchdog covers the
+common case, a hung or crashed hald. To try it on a unit anyway:
+
+```sh
+sudo mkdir -p /etc/systemd/system.conf.d
+printf '[Manager]\nRuntimeWatchdogSec=15\n' | sudo tee /etc/systemd/system.conf.d/50-seedypod-watchdog.conf
+sudo systemctl daemon-reexec      # dmesg shows bcm2835-wdt in use
+# to undo: sudo rm /etc/systemd/system.conf.d/50-seedypod-watchdog.conf && sudo systemctl daemon-reexec
+```
 
 ## USB recovery
 
@@ -533,6 +592,8 @@ matched the commanded duty, fades ran smoothly, and the level held across
 `hald` restarts and reboots; both UVC cameras took stills. Still **unverified
 on a unit**, because its tank is empty: the pump driver, the INA219 pump-power
 calibration and dry-run detection, and the ultrasonic level against water. The
+[watchdog](#watchdog) and the pump-off script are tested against a fake notify
+socket and stub GPIO tools, not yet on a unit. The
 button is unverified too, and the cameras' USB hub comes up on only some boots
 ([handoff](../HANDOFF.md#the-usb-hub-the-one-open-fault)). The
 [hardware map](pin-map.md) has the per-row status.

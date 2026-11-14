@@ -53,7 +53,8 @@ jobs:
       - name: Install Dependencies
         run: pnpm install --frozen-lockfile
 
-      # The podvision tests run the real binary against core's forward pass (#191).
+      # The podvision tests run the real binary against core's forward pass (#191), and
+      # install-hal's pump-off tests ask the real hald for the pump pin.
       - name: Set up Rust
         if: matrix.task.name == 'Unit Tests'
         uses: dtolnay/rust-toolchain@stable
@@ -64,9 +65,9 @@ jobs:
         with:
           workspaces: hal
 
-      - name: Build podvision
+      - name: Build podvision and hald
         if: matrix.task.name == 'Unit Tests'
-        run: cargo build -p podvision
+        run: cargo build -p podvision -p hald
         working-directory: hal
 
       - name: Install browser

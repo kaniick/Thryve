@@ -19,7 +19,9 @@ mod identity;
 mod kinds;
 mod mdns;
 mod mqtt;
+mod notify;
 mod overlay;
+mod pump_pin;
 mod pump_trace;
 mod recording;
 mod state;
@@ -85,6 +87,10 @@ struct Cli {
     /// pins already made, and exit. Needs root. Runs when a camera appears.
     #[arg(long)]
     sync_camera_rules: bool,
+    /// Print the pump's GPIO and exit; nothing if low doesn't turn it off. The
+    /// pump-off script hald.service runs after every stop drives it low.
+    #[arg(long)]
+    pump_pin: bool,
 }
 
 const DEFAULT_MQTT_URL: &str = "mqtt://127.0.0.1:1883";
@@ -144,6 +150,12 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let mut cfg = config::Config::load(cli.config.as_deref())?;
+    if cli.pump_pin {
+        if let Some(pin) = pump_pin::pump_off_pin(&cfg) {
+            println!("{pin}");
+        }
+        return Ok(());
+    }
     if cli.usb_recover {
         let boot = usb::Boot {
             sysfs: Path::new("/sys"),
@@ -420,6 +432,7 @@ async fn main() -> anyhow::Result<()> {
         world: built.world,
         stop: built.stop,
         trace,
+        notify: notify::Notifier::from_env(),
     };
     let engine_task = tokio::task::spawn_blocking(move || run_engine(engine, loop_cfg, inbound_rx, out_tx));
     engine_task.await?;
@@ -437,6 +450,7 @@ struct LoopConfig {
     world: Option<hal_sim::Shared>,
     stop: Arc<AtomicBool>,
     trace: Option<pump_trace::PumpTrace<std::fs::File>>,
+    notify: notify::Notifier,
 }
 
 /// `--pump-trace`: reads the pump monitor when a read is due.
@@ -465,6 +479,7 @@ fn run_engine(mut engine: Engine, mut cfg: LoopConfig, rx: Receiver<Inbound>, tx
     send(&tx, engine.boot(now));
     // After boot, which restores the light on this thread; from here on only the fader writes.
     engine.start_light_fades();
+    cfg.notify.ready();
     let mut ticks = 0u64;
     loop {
         let deadline = Instant::now() + real_tick;
@@ -497,6 +512,7 @@ fn run_engine(mut engine: Engine, mut cfg: LoopConfig, rx: Receiver<Inbound>, tx
             now = Now::real();
         }
         send(&tx, engine.tick(now));
+        cfg.notify.watchdog();
         trace_pump(&mut cfg.trace, &mut engine, now);
         ticks += 1;
         if cfg.ticks.is_some_and(|n| ticks >= n) {
@@ -539,5 +555,79 @@ async fn wait_for_signal() {
     #[cfg(not(unix))]
     {
         let _ = tokio::signal::ctrl_c().await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::notify::tests::FakeSystemd;
+    use hal_core::registry::Registry;
+    use hal_core::{DoseLimits, PumpLimits};
+
+    fn engine() -> Engine {
+        let system = SystemInfo {
+            contract: CONTRACT_VERSION,
+            unit_id: "u1".into(),
+            model: "sim".into(),
+            board: None,
+            hal_version: "0.1.0".into(),
+            caps: Caps {
+                sensors: vec![],
+                actuators: vec![],
+                cameras: vec![],
+            },
+            limits: Limits {
+                pump_max_run_s: 900,
+                pump_max_duty: 100.0,
+                water_low_cm: None,
+            },
+        };
+        let cfg = EngineConfig {
+            telemetry_interval: Duration::from_secs(10),
+            light_fade: Duration::ZERO,
+            pump: PumpLimits::default(),
+            dosing: DoseLimits::default(),
+            button_pump_run_s: 300,
+            ha_prefix: None,
+        };
+        Engine::new(system, cfg, Registry::default(), None, None, Arc::default())
+    }
+
+    fn run(systemd: &FakeSystemd, ticks: u64, rx: Receiver<Inbound>) {
+        let (tx, _out) = tokio::sync::mpsc::unbounded_channel();
+        let cfg = LoopConfig {
+            sim: true,
+            time_scale: 1.0,
+            ticks: Some(ticks),
+            interval: Duration::from_secs(10),
+            world: None,
+            stop: Arc::default(),
+            trace: None,
+            notify: systemd.notifier(),
+        };
+        run_engine(engine(), cfg, rx, tx);
+    }
+
+    /// The watchdog's pings come from the loop's own tick, one each, after READY=1:
+    /// a loop that stops ticking stops pinging.
+    #[test]
+    fn the_engine_loop_pings_systemd_once_a_tick() {
+        let systemd = FakeSystemd::new();
+        let (_keep, rx) = std::sync::mpsc::channel();
+        run(&systemd, 3, rx);
+        assert_eq!(
+            systemd.received(),
+            ["READY=1", "WATCHDOG=1", "WATCHDOG=1", "WATCHDOG=1"]
+        );
+    }
+
+    #[test]
+    fn a_loop_that_never_ticks_never_pings() {
+        let systemd = FakeSystemd::new();
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(Inbound::Shutdown).unwrap();
+        run(&systemd, 3, rx);
+        assert_eq!(systemd.received(), ["READY=1"]);
     }
 }

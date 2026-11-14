@@ -461,6 +461,99 @@ restart_core_if_owed() {
   $SUDO rm -f "$CORE_RESTART_OWED"
 }
 
+# ---- the pump off whenever hald stops -------------------------------------------
+# hald runs the pump on software PWM, so a crash or a kill (the watchdog's too) can
+# leave its pin high. hald.service runs this after every stop. It asks hald for the
+# pin, so hal.toml stays the one place it's set, and falls back to the pin hald gave
+# at install. Never the light: that stays as it is across a restart.
+# tests/scripts/install-hal.watchdog.test.ts covers it.
+PUMP_OFF="$ROOT/usr/local/lib/seedypod/pump-off"
+HALD_UNIT="$ROOT/etc/systemd/system/hald.service"
+
+pump_off_script() {
+  printf '#!/bin/sh\n# Written by seedypod scripts/install-hal: hald.service runs this after every stop.\n'
+  printf 'HALD=%s\nCONF=%s\nFALLBACK=%s\n' "$1" "$2" "$3"
+  cat <<'SCRIPT'
+PIN="$("$HALD" --config "$CONF" --pump-pin 2>/dev/null)" || PIN="$FALLBACK"
+case "$PIN" in
+  ''|*[!0-9]*) echo "pump-off: no pump pin to drive low"; exit 0 ;;
+esac
+SYSFS="${PUMP_OFF_SYSFS:-/sys/class/gpio}"
+# Exported once, the sysfs line stays an output low after this exits.
+sysfs_low() {
+  for chip in "$SYSFS"/gpiochip*; do
+    case "$(cat "$chip/label" 2>/dev/null)" in pinctrl-bcm2*|pinctrl-rp1) ;; *) continue ;; esac
+    n=$(($(cat "$chip/base") + PIN))
+    [ -e "$SYSFS/gpio$n" ] || echo "$n" >"$SYSFS/export" || return 1
+    echo low >"$SYSFS/gpio$n/direction" && return 0
+  done
+  return 1
+}
+if command -v pinctrl >/dev/null 2>&1 && pinctrl set "$PIN" op dl >&2; then how=pinctrl
+elif command -v raspi-gpio >/dev/null 2>&1 && raspi-gpio set "$PIN" op dl >&2; then how=raspi-gpio
+elif sysfs_low 2>/dev/null; then how=sysfs
+elif command -v gpioset >/dev/null 2>&1 && timeout 5 gpioset -t0 "GPIO$PIN=0" >&2; then how=gpioset
+else
+  echo "pump-off: couldn't drive GPIO$PIN low: no pinctrl, raspi-gpio, sysfs GPIO or gpioset" >&2
+  exit 1
+fi
+echo "pump-off: GPIO$PIN driven low ($how)"
+SCRIPT
+}
+
+install_pump_off() {
+  local hald="$1" conf="$2" fallback
+  fallback="$("$hald" --config "$conf" --pump-pin 2>/dev/null || "$hald" --pump-pin 2>/dev/null || true)"
+  $SUDO mkdir -p "$(dirname "$PUMP_OFF")"
+  put_unit "$PUMP_OFF" < <(pump_off_script "$hald" "$conf" "$fallback")
+  $SUDO chmod 0755 "$PUMP_OFF"
+}
+
+# hald pings from its engine loop; systemd kills and restarts a hald that stops (#220).
+# The stock loop ticks every 1-2 s, an EZO read blocks up to 1.8 s per probe, and a
+# telemetry round with three of them about 7 s: 10 s leaves room. Only a hald that has
+# --pump-pin pings (they came together); the watchdog would kill an older one every 10 s.
+write_hald_unit() {
+  local hald="$1" conf="$2" notify=0
+  if "$hald" --pump-pin >/dev/null 2>&1; then notify=1; fi
+  $SUDO mkdir -p "$(dirname "$HALD_UNIT")"
+  put_unit "$HALD_UNIT" <<UNIT
+[Unit]
+Description=seedypod hardware daemon (hald)
+Documentation=https://github.com/$REPO/blob/main/docs/hardware/hal.md
+# Not network-online.target: the pump and lights must run without Wi-Fi, and hald's
+# broker is on this Pi. mDNS picks an address up whenever one arrives.
+After=mosquitto.service
+
+[Service]
+$(if [ "$notify" -eq 1 ]; then printf '%s\n' "Type=notify" "WatchdogSec=10" "# The wait below plus a slow Pi Zero's start, before READY=1." "TimeoutStartSec=120"; fi)
+# hald opens its hardware once, and starts before Wi-Fi now, so it can beat the PWM overlay
+# and udev's group ownership. Bounded, then on regardless: the pump's interlocks fail safe.
+ExecStartPre=-/usr/bin/timeout 30 /bin/sh -c 'until [ -w /sys/class/pwm/pwmchip0/export ] && [ -r /dev/i2c-${I2C_BUS:-1} ]; do sleep 1; done'
+ExecStart=$hald --config $conf
+# After every stop, a crash or a watchdog kill included: the pump pin low, the light as it is.
+ExecStopPost=-${PUMP_OFF#"$ROOT"}
+Environment=RUST_LOG=info SEEDYPOD_RECORDING_POLICY_FILE=/opt/seedypod/data/recording-policy.json
+User=$SERVICE_USER
+Group=$SERVICE_USER
+SupplementaryGroups=gpio i2c video
+StateDirectory=seedypod
+Restart=always
+RestartSec=3
+KillSignal=SIGTERM
+TimeoutStopSec=10
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=$STATE_DIR /tmp
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+  if [ "$notify" -eq 0 ]; then warn "   this hald doesn't ping systemd, so hald.service has no watchdog; rerun install-hal with a newer hald"; fi
+}
+
 if [ "${SEEDYPOD_LIB_ONLY:-}" = 1 ]; then return 0; fi
 
 REPO="${SEEDYPOD_REPO:-seedypod/core}"
@@ -665,38 +758,9 @@ fi
 
 # ---- systemd ---------------------------------------------------------------
 I2C_BUS="$(sed -n 's/^bus *= *\([0-9]*\).*/\1/p' "$CONF_DIR/hal.toml" | head -1)"
+install_pump_off "$PREFIX/hald" "$CONF_DIR/hal.toml"
 UNIT_CHANGED=0
-put_unit /etc/systemd/system/hald.service <<UNIT
-[Unit]
-Description=seedypod hardware daemon (hald)
-Documentation=https://github.com/$REPO/blob/main/docs/hardware/hal.md
-# Not network-online.target: the pump and lights must run without Wi-Fi, and hald's
-# broker is on this Pi. mDNS picks an address up whenever one arrives.
-After=mosquitto.service
-
-[Service]
-# hald opens its hardware once, and starts before Wi-Fi now, so it can beat the PWM overlay
-# and udev's group ownership. Bounded, then on regardless: the pump's interlocks fail safe.
-ExecStartPre=-/usr/bin/timeout 30 /bin/sh -c 'until [ -w /sys/class/pwm/pwmchip0/export ] && [ -r /dev/i2c-${I2C_BUS:-1} ]; do sleep 1; done'
-ExecStart=$PREFIX/hald --config $CONF_DIR/hal.toml
-Environment=RUST_LOG=info SEEDYPOD_RECORDING_POLICY_FILE=/opt/seedypod/data/recording-policy.json
-User=$SERVICE_USER
-Group=$SERVICE_USER
-SupplementaryGroups=gpio i2c video
-StateDirectory=seedypod
-Restart=always
-RestartSec=3
-KillSignal=SIGTERM
-TimeoutStopSec=10
-NoNewPrivileges=true
-ProtectSystem=strict
-ProtectHome=true
-ReadWritePaths=$STATE_DIR /tmp
-PrivateTmp=true
-
-[Install]
-WantedBy=multi-user.target
-UNIT
+write_hald_unit "$PREFIX/hald" "$CONF_DIR/hal.toml"
 
 if [ "$UNIT_CHANGED" -eq 1 ]; then owe_restart "$HALD_RESTART_OWED"; fi
 if [ "$UNIT_CHANGED" -eq 1 ] || needs_reload hald.service; then $SUDO systemctl daemon-reload; fi
