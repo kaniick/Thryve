@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createCallerFactory } from '../../server/trpc'
 import { appRouter } from '../../server/routers/app'
 import { createCore } from '../../server/bootstrap'
@@ -38,7 +38,14 @@ describe('pump power', () => {
     const sim = new SimHal({ tickMs: 0, limits: { waterLowCm: 0 } })
     const hal = withPumpPower(sim, () => drive({ power: 60 }))
     expect(withPumpPower(hal, () => drive({ power: 1 }))).toBe(hal)
-    expect(hal.snapshot()).toEqual(sim.snapshot())
+    // Date frozen: the two snapshots' reading times could otherwise straddle a millisecond.
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-11-14T12:00:00Z') })
+    try {
+      expect(hal.snapshot()).toEqual(sim.snapshot())
+    }
+    finally {
+      vi.useRealTimers()
+    }
     expect((await hal.setActuator('light', { on: true, level: 80 })).level).toBe(80)
     // waterLowCm 0: the tank always reads dry, and a wrapped start is refused all the same.
     await expect(hal.setActuator('pump', { on: true, durationS: 10 })).rejects.toBeInstanceOf(HalRefused)

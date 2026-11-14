@@ -28,18 +28,41 @@ jobs:
       github.event_name != 'pull_request'
       || github.event.label.name == 'mutation-test'
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    # A shard runs well under an hour; this bound only catches a hung one,
+    # and stays far below GitHub's 6 h job limit.
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
+        # Keep the union in sync with stryker.config.mjs `mutate`.
+        # The server code was one shard of ~4,900 mutants, projected at ~6 h on a
+        # hosted runner: it hit the job timeout at 23 %. It's split five ways, and
+        # its shards skip static mutants (`--ignoreStatic`): code run once at
+        # import, like tRPC procedure and MCP tool definitions. Stryker found
+        # ~1,900 of them (39 %) taking ~99 % of the time, since each reruns the
+        # whole suite. They're reported as ignored rather than scored.
         shard:
-          # Keep in sync with stryker.config.mjs `mutate`.
-          - name: server
-            mutate: "src/server/**/*.ts,src/mcp/**/*.ts,!src/**/tests/**,!src/**/*.test.ts"
+          - name: server-core
+            mutate: "src/server/*.ts,!src/**/*.test.ts"
+            args: "--ignoreStatic"
+          - name: server-routers-a-g
+            mutate: "src/server/routers/[a-g]*.ts,!src/**/*.test.ts"
+            args: "--ignoreStatic"
+          - name: server-routers-h-r
+            mutate: "src/server/routers/[h-r]*.ts,!src/**/*.test.ts"
+            args: "--ignoreStatic"
+          - name: server-routers-s-z
+            mutate: "src/server/routers/[s-z]*.ts,!src/**/*.test.ts"
+            args: "--ignoreStatic"
+          - name: mcp
+            mutate: "src/mcp/**/*.ts,!src/**/tests/**,!src/**/*.test.ts"
+            args: "--ignoreStatic"
           - name: hardware
             mutate: "src/hardware/**/*.ts,src/lib/**/*.ts,!src/**/tests/**,!src/**/*.test.ts"
+            args: ""
           - name: scheduler-grow-alerts
             mutate: "src/scheduler/**/*.ts,src/grow/**/*.ts,src/alerts/**/*.ts,!src/**/tests/**,!src/**/*.test.ts"
+            args: ""
     name: mutate (${{ matrix.shard.name }})
     steps:
       - uses: actions/checkout@v6
@@ -62,7 +85,10 @@ jobs:
       - name: Run Stryker
         env:
           SCOPE: ${{ github.event.inputs.scope || matrix.shard.mutate }}
-        run: pnpm exec stryker run --mutate "$SCOPE" --incremental
+          ARGS: ${{ matrix.shard.args }}
+        timeout-minutes: 170
+        # $ARGS is unquoted on purpose: it's empty or one flag.
+        run: pnpm exec stryker run --mutate "$SCOPE" --incremental $ARGS
       - uses: actions/upload-artifact@v6
         if: ${{ !cancelled() }}
         with:
