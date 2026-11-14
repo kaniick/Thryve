@@ -2,7 +2,7 @@
 
 ## 2026-11-14
 
-- **Update**: [Pump safety limits](operations/pump-safety-limits.md) and the [Gardyn hardware map](hardware/gardyn-hardware-map.md): the pump's duty cap defaults to 100 %, as the stock firmware drives it, with a 1.5 s soft start; 30 % didn't lift water to the top of a Gardyn 3.0's tower.
+- **Update**: [Pump safety limits](operations/pump-safety-limits.md) and the [Gardyn hardware map](hardware/gardyn-hardware-map.md): the pump still starts at 30 %, but its cap is 100 % so an owner can choose the stock firmware's level (plain on), with a 1.5 s soft start that can be turned off; 30 % didn't lift water to the top of a Gardyn 3.0's tower.
 
 ## 2026-11-11
 

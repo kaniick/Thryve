@@ -456,6 +456,7 @@ impl Engine {
                                 on: Some(target > 0.0),
                                 level: Some(target),
                                 duration_s: None,
+                                soft_start_ms: None,
                             },
                             now,
                         ));
@@ -468,6 +469,7 @@ impl Engine {
                                 on: Some(want_on),
                                 level: None,
                                 duration_s: Some(self.cfg.button_pump_run_s),
+                                soft_start_ms: None,
                             },
                             now,
                         ));
@@ -1302,6 +1304,7 @@ mod tests {
             on: Some(true),
             level,
             duration_s,
+            soft_start_ms: None,
         }
     }
     fn off() -> ActuatorCommand {
@@ -1443,16 +1446,14 @@ mod tests {
     }
 
     #[test]
-    fn a_start_ramps_the_driver_up_to_full_power_while_reporting_its_target() {
+    fn a_start_ramps_the_driver_up_to_its_level_while_reporting_its_target() {
         let mut r = ramp_rig("ramp");
-        let out = r
-            .engine
-            .handle(Inbound::ActuatorSet(ActuatorId::Pump, on(None, Some(60))), r.now);
-        let st = payload(&out, "thryve/u1/actuator/pump/state");
-        assert_eq!(
-            st["level"], 100.0,
-            "a run without a speed goes to the cap, full power"
+        let out = r.engine.handle(
+            Inbound::ActuatorSet(ActuatorId::Pump, on(Some(100.0), Some(60))),
+            r.now,
         );
+        let st = payload(&out, "thryve/u1/actuator/pump/state");
+        assert_eq!(st["level"], 100.0, "full power when asked for: the cap is 100");
         let pump = |r: &Rig| r.world.lock().unwrap().pump_level;
         let first = pump(&r);
         assert!(first > 0.0 && first < 30.0, "starts gently, at {first}");
@@ -1477,6 +1478,30 @@ mod tests {
     }
 
     #[test]
+    fn a_start_without_a_level_keeps_30_and_one_may_turn_its_ramp_off() {
+        let mut r = ramp_rig("ramp-default");
+        let out = r
+            .engine
+            .handle(Inbound::ActuatorSet(ActuatorId::Pump, on(None, Some(60))), r.now);
+        assert_eq!(payload(&out, "thryve/u1/actuator/pump/state")["level"], 30.0);
+        let off = ActuatorCommand {
+            on: Some(false),
+            ..ActuatorCommand::default()
+        };
+        r.engine
+            .handle(Inbound::ActuatorSet(ActuatorId::Pump, off), r.now);
+        let straight = ActuatorCommand {
+            soft_start_ms: Some(0),
+            ..on(Some(80.0), Some(60))
+        };
+        r.engine
+            .handle(Inbound::ActuatorSet(ActuatorId::Pump, straight), r.now);
+        assert_eq!(r.world.lock().unwrap().pump_level, 80.0, "no ramp: straight on");
+        assert_eq!(r.engine.pump_ramp_due(r.now), None);
+        let _ = std::fs::remove_dir_all(&r.dir);
+    }
+
+    #[test]
     fn a_stop_mid_ramp_lands_at_once_and_the_ramp_never_restarts_it() {
         let mut r = ramp_rig("ramp-stop");
         r.engine
@@ -1488,6 +1513,7 @@ mod tests {
             on: Some(false),
             level: None,
             duration_s: None,
+            soft_start_ms: None,
         };
         r.engine
             .handle(Inbound::ActuatorSet(ActuatorId::Pump, off), r.now);

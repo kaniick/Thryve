@@ -14,7 +14,7 @@ import { MirroredSink } from '../src/camera/mirrorSink'
 import { NodeDatabaseInspector } from '../src/db/inspector'
 import { seedIfFresh } from '../src/demo/seed'
 import { createHal } from '../src/hardware/factory'
-import { withPumpPower } from '../src/hardware/pumpPower'
+import { driveOf, withPumpPower } from '../src/hardware/pumpPower'
 import { HomeKitService } from '../src/homekit/service'
 import { createEventBus } from '../src/lib/eventBus'
 import { installRecordingPolicy, policyPath, RecordingPolicy } from '../src/logging/policy'
@@ -53,7 +53,7 @@ if (process.env.NODE_ENV === 'production') installRecordingPolicy(logging)
 const events = createEventBus()
 const store = new SqliteStore({ url: dbPath })
 // HomeKit, the Home Assistant bridge and the rest share core's pump power (Settings › Pump).
-const hal = withPumpPower(await createHal({ events }), () => store.settings.get().pumpPower)
+const hal = withPumpPower(await createHal({ events }), () => driveOf(store.settings.get()))
 // SEED_DEMO=1 fills a new database with the browser demo's story, for testing on the simulator.
 if (process.env.SEED_DEMO === '1' && seedIfFresh(store, hal)) console.log('seeded the demo data (SEED_DEMO=1)')
 // Capture analysis runs on a worker thread when the bundled worker sits next to this file (a build);

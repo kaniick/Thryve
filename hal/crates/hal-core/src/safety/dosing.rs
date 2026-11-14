@@ -241,6 +241,7 @@ mod tests {
             on: Some(true),
             level: None,
             duration_s,
+            soft_start_ms: None,
         }
     }
     const T0: u64 = 1_793_419_043; // 2026-10-31T03:57:23Z
@@ -385,6 +386,7 @@ mod tests {
             on: None,
             level: Some(100.0),
             duration_s: None,
+            soft_start_ms: None,
         };
         assert!(matches!(g.request(&by_level, T0), Ok(Decision::Run { .. })));
         g.tick(T0 + 10);
@@ -394,6 +396,7 @@ mod tests {
             on: Some(true),
             level: None,
             duration_s: Some(0),
+            soft_start_ms: None,
         };
         assert_eq!(g.request(&zero, T0 + 10), Ok(Decision::Stop));
     }

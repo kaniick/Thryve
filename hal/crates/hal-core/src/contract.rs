@@ -86,6 +86,10 @@ pub struct ActuatorCommand {
     pub level: Option<f64>,
     /// Bounded run; the HAL clamps to its own max.
     pub duration_s: Option<u64>,
+    /// Pump only: this start's soft-start ramp (ms), 0 for none. Unset: hal.toml's
+    /// `limits.pump_soft_start_ms`. The HAL clamps it to its own max.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub soft_start_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

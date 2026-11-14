@@ -82,6 +82,8 @@ pub struct I2c {
 pub struct Limits {
     pub pump_max_run_s: u64,
     pub pump_max_duty: f64,
+    /// The level of a start that names none (the button, HA without a speed); core names its own.
+    pub pump_default_duty: f64,
     pub water_low_cm: Option<f64>,
     pub over_temp_c: Option<f64>,
     /// Below this pump current (A) the running pump is pulling air. Unset (the
@@ -379,8 +381,9 @@ impl Default for Limits {
     fn default() -> Self {
         Self {
             pump_max_run_s: 900,
-            // Stock Gardyn firmware switches the pump plain on: 30 % can't lift water to the top.
+            // Room for an owner to choose full power, as the stock Gardyn firmware runs it.
             pump_max_duty: hal_core::safety::DEFAULT_MAX_DUTY,
+            pump_default_duty: hal_core::safety::DEFAULT_DUTY,
             water_low_cm: Some(16.0),
             // The board runs ~47 °C with the lights at 100 %; stock sets the
             // PCT2075 alert at 70 °C.
@@ -462,6 +465,7 @@ impl From<&Limits> for PumpLimits {
         PumpLimits {
             max_run_s: l.pump_max_run_s,
             max_duty: l.pump_max_duty,
+            default_duty: l.pump_default_duty,
             water_low_cm: l.water_low_cm,
             over_temp_c: l.over_temp_c,
             dry_current_a: l.pump_dry_current_a,
@@ -605,6 +609,9 @@ impl Config {
         if !(0.0..=100.0).contains(&self.limits.pump_max_duty) {
             errs.push("limits.pump_max_duty must be 0–100".into());
         }
+        if !(0.0..=100.0).contains(&self.limits.pump_default_duty) {
+            errs.push("limits.pump_default_duty must be 0–100".into());
+        }
         if self.limits.pump_soft_start_ms > hal_core::safety::MAX_SOFT_START_MS {
             errs.push(format!(
                 "limits.pump_soft_start_ms must be 0–{}",
@@ -739,8 +746,10 @@ pub const DEFAULT_CONFIG_TOML: &str = r##"# thryve hald configuration. Every pin
 
 [limits]
 # pump_max_run_s = 900    # every pump run is bounded (ADR-0009)
-# pump_max_duty = 100.0   # the most any run may drive; stock Gardyn runs the pump fully on.
-#                          # If the Pi reboots when the pump starts, lower it or lengthen the ramp
+# pump_max_duty = 100.0   # the most any run may drive (Settings › Pump can go up to it);
+#                          # stock Gardyn runs the pump fully on. If the Pi reboots when the
+#                          # pump starts, lower the power or lengthen the ramp
+# pump_default_duty = 30.0 # a start that names no level (the button, HA); core sends its own
 # pump_soft_start_ms = 1500 # ramp a start up over this long (0–10000); 0 switches it straight on
 # water_low_cm = 16.0     # dry-run interlock; comment out to disable
 # over_temp_c = 65.0      # PCB cutoff; comment out to disable
@@ -1074,12 +1083,15 @@ kind = "pwm_pump"
     }
 
     #[test]
-    fn the_pump_runs_full_power_with_a_tunable_soft_start() {
+    fn the_pump_starts_at_30_may_go_to_full_power_with_a_tunable_soft_start() {
         let c = Config::default();
         assert_eq!(
             (c.limits.pump_max_duty, c.limits.pump_soft_start_ms),
             (100.0, 1500)
         );
+        assert_eq!(c.limits.pump_default_duty, 30.0);
+        let bad: Config = toml::from_str("[limits]\npump_default_duty = 120\n").unwrap();
+        assert!(bad.validate().iter().any(|e| e.contains("pump_default_duty")));
         let tuned: Config =
             toml::from_str("[limits]\npump_max_duty = 60\npump_soft_start_ms = 3000\n").unwrap();
         assert!(tuned.validate().is_empty());

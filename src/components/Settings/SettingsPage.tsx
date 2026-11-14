@@ -176,8 +176,10 @@ function SettingsForm({ s, coreVersion, coreHost, system, onSave, saving }: {
     delete rest.hasAnalysisIngestToken
     delete rest.hasMirrorSecret
     delete rest.updatedAt
-    // The Pump card saves its own power as the slider lets go; a stale copy here mustn't undo it.
+    // The Pump card saves its own settings as they're set; a stale copy here mustn't undo them.
     delete rest.pumpPower
+    delete rest.pumpSoftStart
+    delete rest.pumpSoftStartMs
     onSave(rest)
   }
   const original = s as Record<string, unknown>

@@ -305,7 +305,8 @@ mod tests {
                 ActuatorCommand {
                     on: Some(true),
                     level: Some(100.0),
-                    duration_s: Some(300)
+                    duration_s: Some(300),
+                    soft_start_ms: None,
                 }
             )
         );

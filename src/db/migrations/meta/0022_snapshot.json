@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "8e3b6fbc-3215-4e1e-9954-f103a9c2f8df",
+  "id": "89489976-f2eb-4e5b-8458-fc096aeb3d3b",
   "prevId": "678c28a4-3abe-405a-9e42-d4b9639b69dc",
   "tables": {
     "alerts": {
@@ -870,7 +870,23 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false,
-          "default": 100
+          "default": 30
+        },
+        "pumpSoftStart": {
+          "name": "pumpSoftStart",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": true
+        },
+        "pumpSoftStartMs": {
+          "name": "pumpSoftStartMs",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 1500
         },
         "homekitEnabled": {
           "name": "homekitEnabled",

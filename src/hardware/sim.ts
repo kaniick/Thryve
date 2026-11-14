@@ -23,7 +23,8 @@ export interface SimHalOptions {
   limits?: Partial<SystemInfo['limits']>
 }
 
-// As hald ships: the pump runs fully on, as the stock Gardyn firmware drives it.
+// As hald ships: a cap of 100, so an owner may choose full power; a start that names no level runs at 30.
+const SIM_DEFAULT_DUTY = 30
 const DEFAULT_LIMITS: SystemInfo['limits'] = { pumpMaxRunS: 900, pumpMaxDuty: 100, waterLowCm: 16 }
 
 /** What hald can add at runtime: the same descriptors hald publishes (the fixture is checked against hald's `SensorKind`s). */
@@ -123,7 +124,8 @@ export class SimHal implements HalClient {
       }
       if (cmd.level !== undefined) this.pumpLevel = clamp(cmd.level, 0, this.limits.pumpMaxDuty)
       if (wantOn && !this.pumpOn) {
-        if (this.pumpLevel === 0) this.pumpLevel = this.limits.pumpMaxDuty
+        // As hald: a start that names no level runs at its default duty, 30 %, under the cap.
+        if (this.pumpLevel === 0) this.pumpLevel = Math.min(SIM_DEFAULT_DUTY, this.limits.pumpMaxDuty)
       }
       this.pumpOn = wantOn
       this.pumpRunRemainingS = wantOn ? Math.min(cmd.durationS ?? this.limits.pumpMaxRunS, this.limits.pumpMaxRunS) : null

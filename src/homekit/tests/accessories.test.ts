@@ -121,7 +121,7 @@ describe('pump → Switch', () => {
     const { deps, hal, writes } = setup()
     const { char } = build(buildPump, deps)
     await char(0, Characteristic.On).handleSetRequest(true)
-    expect(writes).toEqual([{ id: 'pump', cmd: { on: true, durationS: HOMEKIT_PUMP_RUN_S, level: 100 } }])
+    expect(writes).toEqual([{ id: 'pump', cmd: { on: true, durationS: HOMEKIT_PUMP_RUN_S, level: 30, softStartMs: 1500 } }])
     expect(hal.snapshot().actuators.pump).toMatchObject({ on: true, remainingS: HOMEKIT_PUMP_RUN_S })
     expect(await char(0, Characteristic.On).handleGetRequest()).toBe(true)
     await char(0, Characteristic.On).handleSetRequest(false)

@@ -54,6 +54,8 @@ export const ActuatorCommand = z.object({
   level: z.number().min(0).max(100).optional(),
   /** Bounded run; the HAL clamps to its own max and turns the actuator off after. */
   durationS: z.number().int().positive().optional(),
+  /** Pump only: this start's soft-start ramp in ms, 0 for none; unset, hal.toml's. The HAL clamps it. */
+  softStartMs: z.number().int().min(0).max(10_000).optional(),
 })
 export type ActuatorCommand = z.infer<typeof ActuatorCommand>
 

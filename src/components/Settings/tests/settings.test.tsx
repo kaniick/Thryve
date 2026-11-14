@@ -313,13 +313,13 @@ describe('Settings: header and section nav', () => {
   })
 
   it('leaves the pump power to its own card, so Save never undoes it', () => {
-    data.set('settings', { ...settings, pumpPower: 60 })
+    data.set('settings', { ...settings, pumpPower: 60, pumpSoftStart: false, pumpSoftStartMs: 3000 })
     render(<SettingsPage />)
     fireEvent.change(field('Name'), { target: { value: 'Kitchen' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     const patch = calls.update.mock.calls[0]?.[0] as Record<string, unknown>
     expect(patch.unitName).toBe('Kitchen')
-    expect('pumpPower' in patch).toBe(false)
+    expect(['pumpPower', 'pumpSoftStart', 'pumpSoftStartMs'].filter(k => k in patch)).toEqual([])
   })
 
   it('keeps a timezone the browser does not list', () => {

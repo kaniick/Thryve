@@ -223,7 +223,7 @@ async fn main() -> anyhow::Result<()> {
                 "sensors": sensors,
                 "actuators": actuators,
                 "cameras": cfg.camera.iter().map(|c| c.name.clone()).collect::<Vec<_>>(),
-                "limits": { "pump_max_run_s": cfg.limits.pump_max_run_s, "pump_max_duty": cfg.limits.pump_max_duty,
+                "limits": { "pump_max_run_s": cfg.limits.pump_max_run_s, "pump_max_duty": cfg.limits.pump_max_duty, "pump_default_duty": cfg.limits.pump_default_duty,
                             "water_low_cm": cfg.limits.water_low_cm, "over_temp_c": cfg.limits.over_temp_c,
                             "pump_dry_current_a": cfg.limits.pump_dry_current_a, "pump_dry_after_s": cfg.limits.pump_dry_after_s,
                             "pump_dry_grace_s": cfg.limits.pump_dry_grace_s, "pump_soft_start_ms": cfg.limits.pump_soft_start_ms },

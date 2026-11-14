@@ -38,6 +38,8 @@ export const SettingsSchema = z.object({
   autopilotEnabled: z.boolean(),
   /** % duty for runs without their own speed, and the most any run from core may use; hald's pump_max_duty caps it too. */
   pumpPower: z.number().int().min(1).max(100),
+  pumpSoftStart: z.boolean(),
+  pumpSoftStartMs: z.number().int().min(100).max(10_000),
   setupComplete: z.boolean(),
   updatedAt: z.string(),
 })

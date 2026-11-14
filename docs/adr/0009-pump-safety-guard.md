@@ -27,12 +27,15 @@ only as an explicit opt-in.
 
 `hal_core::safety::PumpGuard` is the only path to the pump driver.
 
-1. **Duty clamp** to `limits.pump_max_duty` (default 100 %, raised from 30 %
-   on 2026-11-14: the stock firmware runs the pump fully on, and a unit's
-   pump reached the top of the tower on stock but not at 30 %). Each start
-   ramps up over `limits.pump_soft_start_ms` (default 1.5 s) so its inrush
-   can't brown the Pi out; the ramp is the guard's (`PumpGuard::output`), and a
-   stop or a trip cuts the pump at once, mid-ramp or not.
+1. **Duty clamp** to `limits.pump_max_duty` (default 100 % since 2026-11-14, so
+   an owner may choose the stock firmware's level; a unit's pump reached the
+   top of the tower on stock but not at 30 %). A start that names no level runs
+   at `limits.pump_default_duty` (30 %, unchanged), and core's duty cycle
+   (Settings → Pump) defaults to 30 % too. Each start ramps up over its soft
+   start (the command's `softStartMs`, else `limits.pump_soft_start_ms`, default
+   1.5 s; 0 for none) so its inrush can't brown the Pi out. The ramp is the
+   guard's (`PumpGuard::output`), and a stop or a trip cuts the pump at once,
+   mid-ramp or not.
 2. **Bounded runs** — every start has a deadline ≤ `pump_max_run_s` (default
    900 s). There is no unbounded "on".
 3. **Dry-run interlock** — refuse to start when the median of N ultrasonic
