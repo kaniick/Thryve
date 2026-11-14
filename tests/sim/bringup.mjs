@@ -345,7 +345,8 @@ try {
     assert(pump.on === false && /pulling air/.test(pump.fault), `pump ${JSON.stringify(pump)}`)
     assert(!(await get('/alerts')).some(a => a.kind === 'water_low' && a.active), 'water_low raised with a full tank')
     const trace = readFileSync(pumpTrace, 'utf8')
-    assert(/^# run /m.test(trace) && trace.includes('t_s,duty,pump_v,pump_a,pump_w\n0.00,30,'), `pump trace ${trace.slice(0, 200)}`)
+    // A start soft-starts: the trace opens at 15 % of the run's 30 % and climbs to all of it.
+    assert(/^# run /m.test(trace) && trace.includes('t_s,duty,pump_v,pump_a,pump_w\n0.00,4.5,') && /^[\d.]+,30,/m.test(trace), `pump trace ${trace.slice(0, 200)}`)
     assert((await intake(false)).status === 200, 'sim intake back')
     // Like a level dry-run, it clears itself once the water has read good for a window.
     await until('the dry-run to clear', async () => (await get('/pump')).fault === null && !(await get('/alerts')).some(a => a.kind === 'pump_fault' && a.active), 30_000)
