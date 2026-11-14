@@ -11,6 +11,7 @@ sources: [{"resource": "https://github.com/iot-root/garden-of-eden", "title": "i
 
 - `ssh <your-login>@seedypod.local`, with the username you gave Raspberry Pi Imager: there's no default `pi` ([Installation → The login](INSTALLATION.md#the-login)).
 - `hald --check` validates `hal.toml`; `journalctl -u hald -f` streams the daemon.
+- **A watchdog kill.** hald pings systemd from its engine loop; if the loop hangs for 10 s, systemd kills it and restarts it ([hal.md → Watchdog](hardware/hal.md#watchdog)). In `journalctl -u hald` that reads `hald.service: Watchdog timeout (limit 10s)!`, then `Killing process … with signal SIGABRT`, `Failed with result 'watchdog'`, the `pump-off: GPIO24 driven low (pinctrl)` line from the pump-off script, and `Scheduled restart job`. `systemctl show hald -p NRestarts -p WatchdogUSec` counts restarts and shows the limit (`0` means the unit has no watchdog: rerun `sudo scripts/install-hal`). The lines before the timeout show what the loop was last doing. `pump-off: couldn't drive GPIO24 low` means none of `pinctrl`, `raspi-gpio`, sysfs GPIO or `gpioset` worked for hald's user.
 - `journalctl -u seedypod-core -f` for core; `curl localhost:3000/api/system`.
 - **Logs only last until reboot.** `install-hal` keeps the journal in RAM to spare the SD card (ADR-0021). Alerts and faults are still in the database (**Alerts**, `GET /api/alerts`). To chase a crash that needs logs from before a reboot, keep the journal on the card for a while, then turn it back off:
 
