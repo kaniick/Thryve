@@ -1,7 +1,8 @@
 //! PWM actuators: the grow light (hardware PWM, 8 kHz on GPIO18) and the pump
-//! (software PWM, 50 Hz on GPIO24). Both are the same dumb mapping — level %
-//! → duty — over a [`PwmOut`]; the pump's duty cap lives in `PumpGuard`, not
-//! here (ADR-0009).
+//! (GPIO24: held high at 100 %, as the stock firmware drives it, and software
+//! PWM at 50 Hz below that). Both are the same dumb mapping — level % → duty —
+//! over a [`PwmOut`]; the pump's duty cap lives in `PumpGuard`, not here
+//! (ADR-0009).
 
 use std::path::Path;
 use std::time::Duration;
@@ -42,6 +43,29 @@ pub fn level_to_duty(level: f64) -> f64 {
         return 0.0;
     }
     (level / 100.0).clamp(0.0, 1.0)
+}
+
+/// How a software-PWM pin is driven for a duty.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PinDrive {
+    /// Off: no PWM, the pin low.
+    Low,
+    /// Full on: no PWM, the pin held high. The pump's own driver (a brushless
+    /// TD40A) gets a steady 12 V, as on stock, not 50 Hz pulses at 100 %.
+    High,
+    /// Pulses at this duty, 0–1 exclusive.
+    Pwm(f64),
+}
+
+/// The drive for a duty: low at 0 or less (or NaN), high at 1 or more, PWM between.
+pub fn pin_drive(duty: f64) -> PinDrive {
+    if duty.is_nan() || duty <= 0.0 {
+        PinDrive::Low
+    } else if duty >= 1.0 {
+        PinDrive::High
+    } else {
+        PinDrive::Pwm(duty)
+    }
 }
 
 pub struct PwmActuator<P: PwmOut> {
@@ -178,6 +202,24 @@ mod tests {
         a.probe().unwrap();
         a.set_level(0.0).unwrap();
         assert_eq!(a.out.duties, vec![0.75, 0.75, 0.0]);
+    }
+
+    #[test]
+    fn full_duty_holds_the_pin_high_and_only_a_part_duty_pulses() {
+        assert_eq!(pin_drive(0.0), PinDrive::Low);
+        assert_eq!(pin_drive(-0.1), PinDrive::Low);
+        assert_eq!(pin_drive(f64::NAN), PinDrive::Low);
+        assert_eq!(pin_drive(0.3), PinDrive::Pwm(0.3));
+        assert_eq!(pin_drive(0.999), PinDrive::Pwm(0.999));
+        assert_eq!(pin_drive(1.0), PinDrive::High);
+        assert_eq!(pin_drive(1.5), PinDrive::High);
+        // The pump at its default cap drives the pin at duty 1: held high.
+        let mut p = PwmPump::new(ActuatorId::Pump, FakePwm::default());
+        p.set_level(100.0).unwrap();
+        p.set_level(30.0).unwrap();
+        p.set_level(0.0).unwrap();
+        let drives: Vec<_> = p.out.duties.iter().map(|d| pin_drive(*d)).collect();
+        assert_eq!(drives, [PinDrive::High, PinDrive::Pwm(0.3), PinDrive::Low]);
     }
 
     #[test]

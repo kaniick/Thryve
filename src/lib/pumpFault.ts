@@ -1,8 +1,10 @@
 /**
  * A pump fault as hald words it, split into what tripped and why. The level
  * guard says `dry-run`; the current guard (#220) says what the pump drew:
- * `dry-run: pump drew 0.4 A, below 1.2 A for 0.3 s: it's pulling air`. Alerts
- * carry it as `pump: <fault>`, and the sim's as `pump stopped: <why>`.
+ * `dry-run: pump drew 0.4 A, below 1.2 A for 0.3 s: it's pulling air`; the
+ * brown-out guard, what the supply fell to: `brown-out: supply fell to 10.2 V
+ * for 0.3 s`. Alerts carry it as `pump: <fault>`, and the sim's as
+ * `pump stopped: <why>`.
  */
 export function pumpFault(text: string): { reason: string, detail: string | null } {
   const fault = text.replace(/^pump(?: stopped)?:\s*/i, '').trim()

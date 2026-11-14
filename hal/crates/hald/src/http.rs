@@ -1,5 +1,5 @@
 //! HTTP (axum): health, system info, the state snapshot and camera stills
-//! (and, in `--sim` only, a switch for the simulated pump's intake).
+//! (and, in `--sim` only, switches for the simulated pump's intake and supply).
 //! Stills go through one mutex per camera (upstream #117) and the capture
 //! runs on a blocking thread; every result is reported to the engine so
 //! `camera_missing` reflects reality. That alert covers all the cameras, so
@@ -89,6 +89,7 @@ pub fn router(state: AppState) -> Router {
         .route("/camera/full/{file}", get(camera_full));
     let r = if state.sim.is_some() {
         r.route("/sim/intake", post(sim_intake))
+            .route("/sim/supply", post(sim_supply))
     } else {
         r
     };
@@ -109,6 +110,23 @@ async fn sim_intake(State(s): State<AppState>, Json(body): Json<Intake>) -> Resp
     world.lock().unwrap_or_else(|e| e.into_inner()).intake_dry = body.dry;
     info!(dry = body.dry, "sim: pump intake set");
     Json(json!({ "dry": body.dry })).into_response()
+}
+
+#[derive(Deserialize)]
+struct Supply {
+    /// What the supply sags to while the pump runs; `null` for a healthy one.
+    v: Option<f64>,
+}
+
+/// `--sim` only: `{"v": 10.2}` sags the simulated pump supply to 10.2 V while
+/// the pump runs, so the next run trips the brown-out guard; `{"v": null}` mends it.
+async fn sim_supply(State(s): State<AppState>, Json(body): Json<Supply>) -> Response {
+    let Some(world) = &s.sim else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    world.lock().unwrap_or_else(|e| e.into_inner()).supply_sag_v = body.v;
+    info!(v = ?body.v, "sim: pump supply set");
+    Json(json!({ "v": body.v })).into_response()
 }
 
 async fn health(State(s): State<AppState>) -> Json<serde_json::Value> {
@@ -356,6 +374,29 @@ mod tests {
         assert!(world.lock().unwrap().intake_dry);
         assert_eq!(post_intake(&sim, false).await, StatusCode::OK);
         assert!(!world.lock().unwrap().intake_dry);
+    }
+
+    #[tokio::test]
+    async fn the_sim_supply_switch_sags_the_supply_and_mends_it_only_in_the_sim() {
+        let post_supply = |app: Router, body: &'static str| async move {
+            let req = Request::post("/sim/supply")
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body))
+                .unwrap();
+            app.oneshot(req).await.unwrap().status()
+        };
+        let (app, _rx, _) = app();
+        assert_eq!(post_supply(app, r#"{"v":10.2}"#).await, StatusCode::NOT_FOUND);
+        let world = hal_sim::world();
+        let (state, _rx, _) = app_state();
+        let sim = router(AppState {
+            sim: Some(world.clone()),
+            ..state
+        });
+        assert_eq!(post_supply(sim.clone(), r#"{"v":10.2}"#).await, StatusCode::OK);
+        assert_eq!(world.lock().unwrap().supply_sag_v, Some(10.2));
+        assert_eq!(post_supply(sim, r#"{"v":null}"#).await, StatusCode::OK);
+        assert_eq!(world.lock().unwrap().supply_sag_v, None);
     }
 
     #[tokio::test]

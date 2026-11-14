@@ -122,6 +122,31 @@ fn check_prints_the_dry_run_guard_in_effect_and_why() {
         v["warnings"][0],
         "pump_dry_guard = \"current\" needs a pump monitor (ina219): falling back to the tank level"
     );
+    // The brown-out guard: on by default against the INA219's bus voltage.
+    let v = check("");
+    assert_eq!(v["limits"]["pump_max_duty"], 100.0);
+    assert_eq!(v["limits"]["pump_brownout_v"], 10.8);
+    assert_eq!(v["limits"]["pump_brownout_ms"], 300);
+    assert_eq!(v["limits"]["pump_brownout_pi"], true);
+    // Off a Pi there's no get_throttled to read.
+    let guard = v["limits"]["pump_brownout_guard"].as_str().unwrap();
+    assert!(guard.starts_with("supply below 10.8 V for 0.3 s"), "{guard}");
+    assert_eq!(
+        v["limits"]["pump_brownout_pi_readable"],
+        std::path::Path::new("/sys/devices/platform/soc/soc:firmware/get_throttled").exists()
+    );
+    let v = check("[limits]\npump_brownout_v = 0\npump_brownout_pi = false\n");
+    assert!(v["limits"]["pump_brownout_v"].is_null());
+    assert!(v["warnings"]
+        .as_array()
+        .unwrap()
+        .contains(&serde_json::json!("off: pump_brownout_v = 0")));
+    let v = check("[limits]\npump_brownout_v = 13\n");
+    assert_eq!(v["ok"], false);
+    assert!(v["errors"][0]
+        .as_str()
+        .unwrap()
+        .contains("pump_brownout_v must be 6–12 V"));
     // Bounds the default sits outside of are refused.
     let v = check("[limits]\npump_dry_grace_ms = 6000\n");
     assert_eq!(v["ok"], false);

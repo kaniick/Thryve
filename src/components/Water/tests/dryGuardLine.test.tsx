@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { DryGuardLine, dryGuardLine, fmtSeconds } from '../DryGuardLine'
+import { brownoutLine, DryGuardLine, dryGuardLine, fmtSeconds } from '../DryGuardLine'
 
 const { calls, state } = vi.hoisted(() => ({
   calls: { setDryGrace: vi.fn(), invalidate: vi.fn() },
@@ -45,7 +45,24 @@ describe('dry-run guard words', () => {
   })
 })
 
+describe('brown-out guard words', () => {
+  it('says what the guard watches, or that it is off, and nothing from an older hald', () => {
+    expect(brownoutLine({ pumpBrownoutV: 10.8, pumpBrownoutMs: 300, pumpBrownoutPi: true })).toBe('Brown-out guard: stops below 10.8 V for 0.3 s or on the Pi\'s under-voltage flag (set on the unit)')
+    expect(brownoutLine({ pumpBrownoutV: 10.8, pumpBrownoutMs: 300, pumpBrownoutPi: false })).toBe('Brown-out guard: stops below 10.8 V for 0.3 s (set on the unit)')
+    expect(brownoutLine({ pumpBrownoutMs: 300, pumpBrownoutPi: true })).toBe('Brown-out guard: stops on the Pi\'s under-voltage flag for 0.3 s (set on the unit)')
+    expect(brownoutLine({ pumpBrownoutMs: 300, pumpBrownoutPi: false })).toBe('Brown-out guard: off (set on the unit)')
+    expect(brownoutLine({})).toBeNull()
+  })
+})
+
 describe('DryGuardLine', () => {
+  it('shows the brown-out guard read-only beside the dry-run guard', () => {
+    render(<DryGuardLine limits={{ ...limits, pumpBrownoutV: 10.8, pumpBrownoutMs: 300, pumpBrownoutPi: false }} />)
+    expect(screen.getByTestId('brownout-guard').textContent).toBe('Brown-out guard: stops below 10.8 V for 0.3 s (set on the unit)')
+    render(<DryGuardLine limits={limits} />)
+    expect(screen.getAllByTestId('brownout-guard')).toHaveLength(1)
+  })
+
   it('shows the guard read-only and the grace with its bounds', () => {
     render(<DryGuardLine limits={limits} />)
     expect(screen.getByText('Dry-run guard: tank level + pump current (set on the unit)')).toBeTruthy()

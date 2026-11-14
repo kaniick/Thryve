@@ -11,6 +11,19 @@ export function dryGuardLine(mode: DryGuard): string {
   return `Dry-run guard: ${GUARD_WORDS[mode]} (set on the unit)`
 }
 
+/**
+ * "Brown-out guard: stops below 10.8 V for 0.3 s (set on the unit)", or what it
+ * watches instead; `null` from a hald too old to have it.
+ */
+export function brownoutLine(limits: Pick<Limits, 'pumpBrownoutV' | 'pumpBrownoutMs' | 'pumpBrownoutPi'>): string | null {
+  const { pumpBrownoutV: v, pumpBrownoutMs: ms, pumpBrownoutPi: pi } = limits
+  if (ms === undefined) return null
+  const watch = v !== undefined
+    ? `stops below ${v} V for ${fmtSeconds(ms)}${pi ? ' or on the Pi\'s under-voltage flag' : ''}`
+    : pi ? `stops on the Pi's under-voltage flag for ${fmtSeconds(ms)}` : 'off'
+  return `Brown-out guard: ${watch} (set on the unit)`
+}
+
 /** Milliseconds as seconds: 1200 → "1.2 s", 5000 → "5 s". */
 export function fmtSeconds(ms: number): string {
   return `${Number((ms / 1000).toFixed(1))} s`
@@ -28,9 +41,13 @@ export function DryGuardLine({ limits }: { limits: Limits | undefined }) {
   const [draft, setDraft] = useState<number | null>(null)
   if (!limits?.pumpDryGuard) return null
   const { pumpDryGraceMs: grace, pumpDryGraceMinMs: min, pumpDryGraceMaxMs: max } = limits
+  const brownout = brownoutLine(limits)
   return (
     <div data-testid="dry-guard" className="flex flex-col gap-2 border-b border-line px-[22px] py-2.5 text-[12px] text-fg-3 @min-[620px]:flex-row @min-[620px]:items-center @min-[620px]:justify-between">
-      <span>{dryGuardLine(limits.pumpDryGuard)}</span>
+      <span className="flex flex-col gap-0.5">
+        <span>{dryGuardLine(limits.pumpDryGuard)}</span>
+        {brownout && <span data-testid="brownout-guard">{brownout}</span>}
+      </span>
       {grace !== undefined && min !== undefined && max !== undefined && (
         <span className="flex flex-wrap items-center gap-2">
           <span>{`Grace before the pump-current check (${fmtSeconds(min)}–${fmtSeconds(max)})`}</span>

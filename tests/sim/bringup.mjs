@@ -74,7 +74,7 @@ telemetry_interval_s = 1
 state_dir = "${join(work, 'hal-state')}"
 mdns = false
 
-# The current guard on, against the sim's pump: 0.22 A wet at 30 %, a quarter of that pulling air.
+# The current guard on, against the sim's pump: 0.5 A wet at 100 %, a quarter of that pulling air.
 [limits]
 pump_dry_current_a = 0.15
 pump_dry_after_ms = 300
@@ -326,10 +326,10 @@ try {
     return 'level 60 echoed'
   })
 
-  await check('pump: duty clamped to the guard and run bounded', async () => {
-    const r = await post('/pump/run-once', { durationS: 2, level: 100 })
+  await check('pump: full duty as stock by default, and the run bounded', async () => {
+    const r = await post('/pump/run-once', { durationS: 2 })
     assert(r.status === 200 && r.body.on, `${r.status} ${JSON.stringify(r.body)}`)
-    assert(r.body.level <= 30, `duty ${r.body.level} > 30`)
+    assert(r.body.level === 100, `duty ${r.body.level}, not the default 100`)
     await until('pump to stop on its own', async () => (await get('/pump')).on === false, 10_000)
     return `ran at ${r.body.level} %, stopped after its bound`
   })
@@ -352,16 +352,45 @@ try {
     assert(simS <= 2, `tripped ${simS} s of hald time after it went dry (grace 1 s + 0.3 s)`)
     assert(realMs <= 1_500, `tripped ${realMs} ms after it went dry`)
     const alert = await until('pump_fault in core', async () => (await get('/alerts')).find(a => a.kind === 'pump_fault' && a.active), 20_000)
-    assert(/dry-run: pump drew 0\.05 A, below 0\.15 A for 0\.3 s: it's pulling air/.test(alert.detail), `detail ${alert.detail}`)
+    assert(/dry-run: pump drew 0\.12 A, below 0\.15 A for 0\.3 s: it's pulling air/.test(alert.detail), `detail ${alert.detail}`)
     const pump = await get('/pump')
     assert(pump.on === false && /pulling air/.test(pump.fault), `pump ${JSON.stringify(pump)}`)
     assert(!(await get('/alerts')).some(a => a.kind === 'water_low' && a.active), 'water_low raised with a full tank')
     const trace = readFileSync(pumpTrace, 'utf8')
-    assert(/^# run /m.test(trace) && trace.includes('t_s,duty,pump_v,pump_a,pump_w\n0.00,30,'), `pump trace ${trace.slice(0, 200)}`)
+    assert(/^# run /m.test(trace) && trace.includes('t_s,duty,pump_v,pump_a,pump_w\n0.00,100,'), `pump trace ${trace.slice(0, 200)}`)
     assert((await intake(false)).status === 200, 'sim intake back')
     // Like a level dry-run, it clears itself once the water has read good for a window.
     await until('the dry-run to clear', async () => (await get('/pump')).fault === null && !(await get('/alerts')).some(a => a.kind === 'pump_fault' && a.active), 30_000)
     return `"${alert.detail}" ${simS} s (hald time) / ${realMs} ms after going dry → cleared; ${trace.split('\n').length} trace lines`
+  })
+
+  await check('pump: a sagging supply trips the brown-out guard, and it waits for an acknowledge', async () => {
+    const limits = (await get('/system')).system.limits
+    assert(limits.pumpBrownoutV === 10.8 && limits.pumpBrownoutMs === 300 && limits.pumpBrownoutPi === false, `limits ${JSON.stringify(limits)}`)
+    const supply = v => fetch(`http://127.0.0.1:${halHttpPort}/sim/supply`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ v }) })
+    assert((await supply(10.2)).status === 200, 'sim supply switch')
+    const states = []
+    const onState = (t, p) => t === `seedypod/${unit}/actuator/pump/state` && states.push({ at: Date.now(), ...JSON.parse(String(p)) })
+    watcher.on('message', onState)
+    const r = await post('/pump/run-once', { durationS: 60 })
+    assert(r.status === 200 && r.body.on, `${r.status} ${JSON.stringify(r.body)}`)
+    // Past the 1 s spin-up grace, three reads 100 ms apart below 10.8 V stop it.
+    const started = await until('hald to start the pump', () => states.find(s => s.on), 5_000)
+    const tripped = await until('hald to trip the pump', () => states.find(s => /^brown-out/.test(s.fault ?? '')), 5_000)
+    watcher.off('message', onState)
+    const simS = (Date.parse(tripped.since) - Date.parse(started.since)) / 1000
+    assert(simS <= 2, `tripped ${simS} s of hald time after the start (grace 1 s + 0.3 s)`)
+    assert(tripped.fault === 'brown-out: supply fell to 10.2 V for 0.3 s', `fault ${tripped.fault}`)
+    const alert = await until('pump_fault in core', async () => (await get('/alerts')).find(a => a.kind === 'pump_fault' && a.active), 20_000)
+    assert(alert.detail === 'pump: brown-out: supply fell to 10.2 V for 0.3 s', `detail ${alert.detail}`)
+    assert((await supply(null)).status === 200, 'sim supply mended')
+    // Not a dry-run: it doesn't clear itself on a full tank.
+    await sleep(3_000)
+    assert(/^brown-out/.test((await get('/pump')).fault ?? ''), 'the brown-out cleared itself')
+    const ack = await post(`/alerts/${alert.id}/acknowledge`, {})
+    assert(ack.status === 200, `ack ${ack.status} ${JSON.stringify(ack.body)}`)
+    await until('the fault to clear on the acknowledge', async () => (await get('/pump')).fault === null, 10_000)
+    return `"${alert.detail}" ${simS} s (hald time) after the start → acknowledged`
   })
 
   await check('pump: the guard is reported read-only, and the grace set from core is held to hal.toml\'s bounds', async () => {
