@@ -223,11 +223,21 @@ async fn main() -> anyhow::Result<()> {
 
     if cli.check {
         let (sensors, actuators) = devices::planned_capabilities(&cfg);
+        // The guard the engine will run on this config, and why (before probing: an
+        // ina219 that doesn't answer at boot falls back further, and says so in the log).
+        let guard = hal_core::safety::resolve_dry_guard(
+            cfg.limits.pump_dry_guard,
+            cfg.limits.pump_dry_current_a,
+            sensors.contains(&hal_core::SensorId::PumpA),
+            cfg.limits.water_low_cm.is_some(),
+        );
+        let warnings: Vec<&str> = guard.warn.then_some(guard.why.as_str()).into_iter().collect();
         println!(
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
                 "ok": errors.is_empty(),
                 "errors": errors,
+                "warnings": warnings,
                 "unit_id": unit_id,
                 "config": cli.config,
                 "mqtt_url": cfg.mqtt_url.clone().unwrap_or_else(|| DEFAULT_MQTT_URL.into()),
@@ -238,7 +248,11 @@ async fn main() -> anyhow::Result<()> {
                 "limits": { "pump_max_run_s": cfg.limits.pump_max_run_s, "pump_max_duty": cfg.limits.pump_max_duty,
                             "water_low_cm": cfg.limits.water_low_cm, "over_temp_c": cfg.limits.over_temp_c,
                             "pump_dry_current_a": cfg.limits.pump_dry_current_a, "pump_dry_after_ms": cfg.limits.dry_after_ms(),
-                            "pump_dry_grace_ms": cfg.limits.dry_grace_ms() },
+                            "pump_dry_grace_ms": cfg.limits.dry_grace_ms(),
+                            "pump_dry_grace_min_ms": cfg.limits.pump_dry_grace_min_ms,
+                            "pump_dry_grace_max_ms": cfg.limits.pump_dry_grace_max_ms,
+                            "pump_dry_guard": guard.mode, "pump_dry_guard_asked": cfg.limits.pump_dry_guard,
+                            "pump_dry_guard_why": guard.why },
                 "dosing_enabled": cfg.dosing.enabled,
             }))?
         );
@@ -289,6 +303,8 @@ async fn main() -> anyhow::Result<()> {
             pump_max_run_s: cfg.limits.pump_max_run_s,
             pump_max_duty: cfg.limits.pump_max_duty,
             water_low_cm: cfg.limits.water_low_cm,
+            // The engine fills in the dry-run guard it runs and its grace.
+            ..Limits::default()
         },
     };
     info!(unit = %unit_id, model = %system.model, sensors = ?system.caps.sensors, actuators = ?system.caps.actuators, "hald starting");
@@ -303,6 +319,7 @@ async fn main() -> anyhow::Result<()> {
             dosing: (&cfg.dosing).into(),
             button_pump_run_s: cfg.button.pump_run_s,
             ha_prefix: cfg.ha.discovery.then(|| cfg.ha.prefix.clone()),
+            dry_grace_bounds: (cfg.limits.pump_dry_grace_min_ms, cfg.limits.pump_dry_grace_max_ms),
         },
         built.registry,
         built.over_temp,
@@ -605,6 +622,7 @@ mod tests {
                 pump_max_run_s: 900,
                 pump_max_duty: 100.0,
                 water_low_cm: None,
+                ..Limits::default()
             },
         };
         let cfg = EngineConfig {
@@ -614,6 +632,7 @@ mod tests {
             dosing: DoseLimits::default(),
             button_pump_run_s: 300,
             ha_prefix: None,
+            dry_grace_bounds: (300, 5000),
         };
         Engine::new(system, cfg, Registry::default(), None, None, Arc::default())
     }

@@ -301,6 +301,7 @@ mod tests {
                     pump_max_run_s: 900,
                     pump_max_duty: 30.0,
                     water_low_cm: Some(16.0),
+                    ..Limits::default()
                 },
             },
             snapshot,

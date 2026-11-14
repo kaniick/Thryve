@@ -9,5 +9,8 @@
     "actuators": ["light", "pump"],
     "cameras": ["upper", "lower"]
   },
-  "limits": { "pumpMaxRunS": 900, "pumpMaxDuty": 30, "waterLowCm": 16 }
+  "limits": {
+    "pumpMaxRunS": 900, "pumpMaxDuty": 30, "waterLowCm": 16,
+    "pumpDryGuard": "both", "pumpDryGraceMs": 1200, "pumpDryGraceMinMs": 300, "pumpDryGraceMaxMs": 5000
+  }
 }

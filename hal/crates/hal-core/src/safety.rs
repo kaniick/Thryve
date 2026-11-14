@@ -29,7 +29,7 @@ mod dosing;
 
 use std::time::{Duration, Instant};
 
-use crate::contract::ActuatorCommand;
+use crate::contract::{ActuatorCommand, DryGuard};
 pub use dosing::{DoseGuard, DoseLedger, DoseLimits, DoseRefusal};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -46,6 +46,10 @@ pub struct PumpLimits {
     pub dry_after_ms: u64,
     /// How long after a start the current isn't judged, while the pump spins up and primes.
     pub dry_grace_ms: u64,
+    /// Which guard watches a running pump, and whether a low tank refuses a
+    /// start: the one in effect, from [`resolve_dry_guard`]. `Current` ignores
+    /// the tank level; `Level` ignores the current.
+    pub dry_guard: DryGuard,
 }
 
 impl Default for PumpLimits {
@@ -58,8 +62,59 @@ impl Default for PumpLimits {
             dry_current_a: None,
             dry_after_ms: 300,
             dry_grace_ms: 1000,
+            dry_guard: DryGuard::Both,
         }
     }
+}
+
+/// The dry-run guard hald runs, and why.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedGuard {
+    pub mode: DryGuard,
+    pub why: String,
+    /// It isn't what hal.toml asked for, or it leaves the pump less guarded: worth a warning.
+    pub warn: bool,
+}
+
+/// From what hal.toml asks for and what the unit has, the dry-run guard to run.
+/// It never leaves the pump with none it was asked for: `current` without a
+/// cutoff or a pump monitor falls back to `level`, as does `both`.
+pub fn resolve_dry_guard(
+    asked: DryGuard,
+    cutoff: Option<f64>,
+    monitor: bool,
+    water_low: bool,
+) -> ResolvedGuard {
+    let missing = match (cutoff.is_some(), monitor) {
+        (true, true) => None,
+        (false, true) => Some("pump_dry_current_a"),
+        (true, false) => Some("a pump monitor (ina219)"),
+        (false, false) => Some("pump_dry_current_a and a pump monitor (ina219)"),
+    };
+    let (mode, why, warn) = match (asked, missing) {
+        (DryGuard::Level, _) => (DryGuard::Level, "tank level, as hal.toml sets".to_owned(), false),
+        (DryGuard::Current, None) => (
+            DryGuard::Current,
+            "pump current only, as hal.toml sets; a low tank doesn't refuse a start".to_owned(),
+            false,
+        ),
+        (DryGuard::Both, None) => (DryGuard::Both, "tank level + pump current".to_owned(), false),
+        (DryGuard::Current, Some(m)) => (
+            DryGuard::Level,
+            format!("pump_dry_guard = \"current\" needs {m}: falling back to the tank level"),
+            true,
+        ),
+        (DryGuard::Both, Some(m)) => (DryGuard::Level, format!("tank level only: no {m}"), true),
+    };
+    if mode == DryGuard::Level && !water_low {
+        let why = format!("{why}; water_low_cm is unset, so no dry-run guard is on");
+        return ResolvedGuard {
+            mode,
+            why,
+            warn: true,
+        };
+    }
+    ResolvedGuard { mode, why, warn }
 }
 
 /// Why a command was refused. Serialised into `ActuatorState.fault` / error replies.
@@ -112,6 +167,13 @@ pub const DRY_CONFIRM: Duration = Duration::from_secs(3);
 /// The fewest low current reads in a row that trip the current guard.
 pub const DRY_MIN_READS: u32 = 3;
 
+/// In `current` mode, how long the running pump may go without a reading of its
+/// current. There's no other dry-run guard then, so a silent monitor stops it.
+pub const CURRENT_LOST: Duration = Duration::from_secs(2);
+
+/// The fault a silent pump monitor latches in `current` mode. It waits for a person.
+pub const MONITOR_LOST: &str = "monitor-lost";
+
 /// The fault a dry pump latches, from either guard. The current guard adds why.
 pub const DRY_RUN: &str = "dry-run";
 
@@ -143,6 +205,8 @@ pub struct PumpGuard {
     starved_since: Option<Instant>,
     /// How many reads in a row have been below `dry_current_a`.
     starved_reads: u32,
+    /// The last reading of the pump current this run, or its start.
+    current_seen: Option<Instant>,
 }
 
 impl PumpGuard {
@@ -157,11 +221,26 @@ impl PumpGuard {
             started: None,
             starved_since: None,
             starved_reads: 0,
+            current_seen: None,
         }
     }
 
     pub fn limits(&self) -> &PumpLimits {
         &self.limits
+    }
+
+    /// The spin-up grace, already clamped by the caller into hal.toml's bounds.
+    /// A run under way is judged by the new one from its next read.
+    pub fn set_dry_grace_ms(&mut self, ms: u64) {
+        self.limits.dry_grace_ms = ms;
+    }
+
+    fn level_on(&self) -> bool {
+        self.limits.dry_guard != DryGuard::Current
+    }
+
+    fn current_on(&self) -> bool {
+        self.limits.dry_guard != DryGuard::Level && self.limits.dry_current_a.is_some()
     }
 
     pub fn fault(&self) -> Option<&str> {
@@ -200,7 +279,7 @@ impl PumpGuard {
         if let Some(f) = &self.fault {
             return Err(Refusal::Latched(f.clone()));
         }
-        if self.is_dry(env) {
+        if self.level_on() && self.is_dry(env) {
             return Err(Refusal::WaterLow);
         }
         if self.is_hot(env) {
@@ -221,6 +300,7 @@ impl PumpGuard {
         // A longer run asked for mid-run keeps its spin-up and its count of low reads.
         if !self.is_running(now) {
             self.started = Some(now);
+            self.current_seen = Some(now);
             self.reset_starved();
         }
         self.level = level;
@@ -244,8 +324,11 @@ impl PumpGuard {
             }
             return None;
         }
-        if env.water_fresh && self.tank_ran_dry(env, now) {
+        if self.level_on() && env.water_fresh && self.tank_ran_dry(env, now) {
             return Some(self.trip(DRY_RUN));
+        }
+        if let Some(why) = self.monitor_lost(env, now) {
+            return Some(self.trip(&why));
         }
         if let Some(why) = self.pulling_air(env, now) {
             return Some(self.trip(&why));
@@ -288,6 +371,9 @@ impl PumpGuard {
     /// below `dry_current_a`. A lost read is no evidence of a dry pump, so it
     /// starts the count again and can't trip it.
     fn pulling_air(&mut self, env: Env, now: Instant) -> Option<String> {
+        if !self.current_on() {
+            return None;
+        }
         let (Some(min), Some(started)) = (self.limits.dry_current_a, self.started) else {
             return None;
         };
@@ -314,6 +400,23 @@ impl PumpGuard {
                 None
             }
         }
+    }
+
+    /// In `current` mode the monitor is the only dry-run guard, so going more
+    /// than [`CURRENT_LOST`] without a reading stops the pump. In `both`, a lost
+    /// read isn't a dry pump: the level guard is still watching.
+    fn monitor_lost(&mut self, env: Env, now: Instant) -> Option<String> {
+        if env.pump_current_a.is_some() {
+            self.current_seen = Some(now);
+            return None;
+        }
+        let seen = self.current_seen?;
+        (self.limits.dry_guard == DryGuard::Current && now.duration_since(seen) > CURRENT_LOST).then(|| {
+            format!(
+                "{MONITOR_LOST}: no reading of the pump current for {} s, and it's the only dry-run guard",
+                CURRENT_LOST.as_secs()
+            )
+        })
     }
 
     fn reset_starved(&mut self) {
@@ -618,6 +721,176 @@ mod tests {
         for n in 1..10 {
             assert_eq!(g.tick(env, t0 + Duration::from_secs(n)), None);
         }
+    }
+
+    // ---- which guard: pump_dry_guard ------------------------------------------
+
+    fn mode(m: DryGuard) -> PumpGuard {
+        PumpGuard::new(PumpLimits {
+            dry_current_a: Some(1.2),
+            dry_guard: m,
+            ..PumpLimits::default()
+        })
+    }
+
+    fn air() -> Env {
+        Env {
+            pump_current_a: Some(0.3),
+            ..wet()
+        }
+    }
+
+    #[test]
+    fn level_mode_watches_the_tank_and_never_the_current() {
+        let mut g = mode(DryGuard::Level);
+        let t0 = Instant::now();
+        let ms = |n| t0 + Duration::from_millis(n);
+        assert_eq!(
+            g.request(&on(None, None), at(Some(17.0)), t0),
+            Err(Refusal::WaterLow)
+        );
+        g.request(&on(None, None), wet(), t0).unwrap();
+        for n in 1..60 {
+            assert_eq!(g.tick(air(), ms(n * 100)), None, "{n}");
+        }
+        assert_eq!(g.tick(at(Some(17.0)), ms(6000)), None);
+        assert_eq!(g.tick(at(Some(17.0)), ms(6500)), Some(Decision::Stop));
+        assert_eq!(g.fault(), Some(DRY_RUN));
+    }
+
+    #[test]
+    fn current_mode_watches_the_current_and_never_the_tank() {
+        let mut g = mode(DryGuard::Current);
+        let t0 = Instant::now();
+        let ms = |n| t0 + Duration::from_millis(n);
+        // A low or silent tank neither refuses a start nor stops a run.
+        g.request(&on(None, None), at(Some(17.0)), t0).unwrap();
+        g.request(&off(), wet(), ms(10)).unwrap();
+        g.request(&on(None, None), at(None), ms(20)).unwrap();
+        for n in 1..60 {
+            assert_eq!(g.tick(at(Some(40.0)), ms(20 + n * 100)), None, "{n}");
+            assert_eq!(g.tick(at(None), ms(20 + n * 100 + 50)), None, "{n}");
+        }
+        for n in [6000, 6100, 6200] {
+            assert_eq!(g.tick(air(), ms(n)), None);
+        }
+        assert_eq!(g.tick(air(), ms(6300)), Some(Decision::Stop));
+        assert!(g.fault().unwrap().contains("pulling air"));
+    }
+
+    #[test]
+    fn both_mode_stops_on_either_guard() {
+        let t0 = Instant::now();
+        let ms = |n| t0 + Duration::from_millis(n);
+        let mut g = mode(DryGuard::Both);
+        assert_eq!(
+            g.request(&on(None, None), at(Some(17.0)), t0),
+            Err(Refusal::WaterLow)
+        );
+        g.request(&on(None, None), wet(), t0).unwrap();
+        assert_eq!(g.tick(at(Some(17.0)), ms(2000)), None);
+        assert_eq!(g.tick(at(Some(17.0)), ms(2500)), Some(Decision::Stop));
+        let mut g = mode(DryGuard::Both);
+        g.request(&on(None, None), wet(), t0).unwrap();
+        for n in [1000, 1100, 1200] {
+            assert_eq!(g.tick(air(), ms(n)), None);
+        }
+        assert_eq!(g.tick(air(), ms(1300)), Some(Decision::Stop));
+    }
+
+    #[test]
+    fn in_current_mode_a_silent_monitor_stops_the_pump_and_in_both_it_does_not() {
+        let t0 = Instant::now();
+        let ms = |n| t0 + Duration::from_millis(n);
+        let lost = Env {
+            pump_current_a: None,
+            ..wet()
+        };
+        let mut g = mode(DryGuard::Current);
+        g.request(&on(None, None), wet(), t0).unwrap();
+        assert_eq!(g.tick(lost, ms(1000)), None);
+        // A reading starts the 2 s again.
+        assert_eq!(g.tick(wet(), ms(1500)), None);
+        assert_eq!(g.tick(lost, ms(3000)), None);
+        assert_eq!(g.tick(lost, ms(3500)), None);
+        assert_eq!(g.tick(lost, ms(3600)), Some(Decision::Stop));
+        let f = g.fault().unwrap();
+        assert!(f.starts_with(MONITOR_LOST), "{f}");
+        assert!(!is_dry_run(f), "it waits for a person");
+        // A new run counts from its start, whatever the last one saw.
+        g.acknowledge();
+        g.request(&on(None, None), wet(), ms(10_000)).unwrap();
+        assert_eq!(g.tick(lost, ms(11_900)), None);
+        assert_eq!(g.tick(lost, ms(12_100)), Some(Decision::Stop));
+        // In both, the level guard still watches: lost reads are no dry pump.
+        let mut g = mode(DryGuard::Both);
+        g.request(&on(None, None), wet(), t0).unwrap();
+        for n in 1..600 {
+            assert_eq!(g.tick(lost, ms(n * 100)), None, "{n}");
+        }
+    }
+
+    #[test]
+    fn a_new_grace_judges_the_run_from_its_next_read() {
+        let mut g = current_guard();
+        let t0 = Instant::now();
+        let ms = |n| t0 + Duration::from_millis(n);
+        g.set_dry_grace_ms(2000);
+        assert_eq!(g.limits().dry_grace_ms, 2000);
+        g.request(&on(None, None), wet(), t0).unwrap();
+        for n in (1000..2000).step_by(100) {
+            assert_eq!(g.tick(air(), ms(n)), None, "{n}");
+        }
+        g.set_dry_grace_ms(500);
+        for n in [2000, 2100, 2200] {
+            assert_eq!(g.tick(air(), ms(n)), None);
+        }
+        assert_eq!(g.tick(air(), ms(2300)), Some(Decision::Stop));
+    }
+
+    #[test]
+    fn the_guard_falls_back_to_the_tank_level_and_says_why() {
+        let r = |asked, cutoff, monitor, low| resolve_dry_guard(asked, cutoff, monitor, low);
+        let ok = r(DryGuard::Both, Some(1.2), true, true);
+        assert_eq!((ok.mode, ok.warn), (DryGuard::Both, false));
+        assert_eq!(ok.why, "tank level + pump current");
+        let c = r(DryGuard::Current, Some(1.2), true, false);
+        assert_eq!(
+            (c.mode, c.warn),
+            (DryGuard::Current, false),
+            "water_low_cm doesn't matter"
+        );
+        assert!(c.why.contains("a low tank doesn't refuse a start"));
+        let l = r(DryGuard::Level, Some(1.2), true, true);
+        assert_eq!((l.mode, l.warn), (DryGuard::Level, false));
+        for (asked, cutoff, monitor, needs) in [
+            (DryGuard::Current, None, true, "pump_dry_current_a"),
+            (DryGuard::Current, Some(1.2), false, "a pump monitor (ina219)"),
+            (
+                DryGuard::Current,
+                None,
+                false,
+                "pump_dry_current_a and a pump monitor (ina219)",
+            ),
+        ] {
+            let f = r(asked, cutoff, monitor, true);
+            assert_eq!((f.mode, f.warn), (DryGuard::Level, true));
+            assert_eq!(
+                f.why,
+                format!("pump_dry_guard = \"current\" needs {needs}: falling back to the tank level")
+            );
+        }
+        // Today's unit: both asked, no cutoff yet.
+        let today = r(DryGuard::Both, None, true, true);
+        assert_eq!((today.mode, today.warn), (DryGuard::Level, true));
+        assert_eq!(today.why, "tank level only: no pump_dry_current_a");
+        let none = r(DryGuard::Level, None, true, false);
+        assert!(
+            none.warn
+                && none
+                    .why
+                    .ends_with("water_low_cm is unset, so no dry-run guard is on")
+        );
     }
 
     // ---- the current guard (#220) -------------------------------------------

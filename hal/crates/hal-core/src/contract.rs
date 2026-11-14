@@ -88,12 +88,48 @@ pub struct ActuatorCommand {
     pub duration_s: Option<u64>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// Which dry-run guard stops a running pump. Set in hal.toml (`[limits]
+/// pump_dry_guard`) and nowhere else: pump safety outranks any setting from the
+/// app, so the contract carries it only as a report.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DryGuard {
+    /// The tank level (ultrasonic) only.
+    Level,
+    /// The pump current (INA219) only.
+    Current,
+    /// Either one stops the pump.
+    #[default]
+    Both,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Limits {
     pub pump_max_run_s: u64,
     pub pump_max_duty: f64,
     pub water_low_cm: Option<f64>,
+    /// The dry-run guard in effect, after hald's fallbacks; absent from an older hald.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pump_dry_guard: Option<DryGuard>,
+    /// The current guard's spin-up grace in effect (ms), and the bounds a
+    /// [`PumpGuardCommand`] is clamped into; absent from an older hald.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pump_dry_grace_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pump_dry_grace_min_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pump_dry_grace_max_ms: Option<u64>,
+}
+
+/// `pump/guard/set`: core asks for the current guard's spin-up grace, and hald
+/// clamps it into hal.toml's bounds. It's the one guard setting core may change;
+/// the mode and the cutoff are hal.toml only, so there is no field for them, and
+/// a payload with any other field is refused.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PumpGuardCommand {
+    pub dry_grace_ms: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -324,6 +360,9 @@ pub mod topics {
     pub fn alert_ack(unit: &str, kind: AlertKind) -> String {
         format!("{}/alert/{}/ack", prefix(unit), snake(&kind))
     }
+    pub fn pump_guard_set(unit: &str) -> String {
+        format!("{}/pump/guard/set", prefix(unit))
+    }
 }
 
 #[cfg(test)]
@@ -375,6 +414,28 @@ mod tests {
             topics::sensor_calibration("u1", SensorId::Ec),
             "seedypod/u1/sensor/ec/calibration"
         );
+        assert_eq!(topics::pump_guard_set("u1"), "seedypod/u1/pump/guard/set");
+    }
+
+    /// Pump safety outranks the app: core may ask for a grace, never for a mode or a cutoff.
+    #[test]
+    fn the_pump_guard_command_carries_the_grace_and_nothing_else() {
+        let c: PumpGuardCommand = serde_json::from_str(r#"{"dryGraceMs":1500}"#).unwrap();
+        assert_eq!(c.dry_grace_ms, 1500);
+        for bad in [
+            r#"{"dryGraceMs":1500,"pumpDryGuard":"current"}"#,
+            r#"{"dryGraceMs":1500,"mode":"level"}"#,
+            r#"{"dryGraceMs":1500,"pumpDryCurrentA":0.1}"#,
+            r#"{"pumpDryGuard":"current"}"#,
+            r#"{"dryGraceMs":-1}"#,
+        ] {
+            assert!(serde_json::from_str::<PumpGuardCommand>(bad).is_err(), "{bad}");
+        }
+        assert_eq!(
+            serde_json::to_value(DryGuard::Both).unwrap(),
+            serde_json::json!("both")
+        );
+        assert_eq!(DryGuard::default(), DryGuard::Both);
     }
 
     #[test]
@@ -404,10 +465,37 @@ mod fixture_tests {
     fn fixtures_parse_on_the_rust_side() {
         let s: SystemInfo = serde_json::from_str(&fixture("system")).unwrap();
         assert_eq!(s.limits.pump_max_duty, 30.0);
+        assert_eq!(s.limits.pump_dry_guard, Some(DryGuard::Both));
+        assert_eq!(
+            (
+                s.limits.pump_dry_grace_ms,
+                s.limits.pump_dry_grace_min_ms,
+                s.limits.pump_dry_grace_max_ms
+            ),
+            (Some(1200), Some(300), Some(5000))
+        );
+        let back = serde_json::to_value(&s).unwrap();
+        let golden: serde_json::Value = serde_json::from_str(&fixture("system")).unwrap();
+        for k in [
+            "pumpDryGuard",
+            "pumpDryGraceMs",
+            "pumpDryGraceMinMs",
+            "pumpDryGraceMaxMs",
+        ] {
+            assert_eq!(back["limits"][k], golden["limits"][k], "{k} round-trips");
+        }
         assert_eq!(s.board.as_deref(), Some("Raspberry Pi Zero 2 W Rev 1.0"));
         let old: SystemInfo = serde_json::from_str(&fixture("system_without_board")).unwrap();
         assert_eq!(old.board, None);
-        assert!(!serde_json::to_string(&old).unwrap().contains("board"));
+        assert_eq!(old.limits.pump_dry_guard, None);
+        let old_json = serde_json::to_string(&old).unwrap();
+        assert!(!old_json.contains("board") && !old_json.contains("pumpDry"));
+        let pg: PumpGuardCommand = serde_json::from_str(&fixture("pump_guard_command")).unwrap();
+        assert_eq!(pg.dry_grace_ms, 1200);
+        assert_eq!(
+            serde_json::to_value(&pg).unwrap(),
+            serde_json::from_str::<serde_json::Value>(&fixture("pump_guard_command")).unwrap()
+        );
         let a: ActuatorState = serde_json::from_str(&fixture("actuator_state")).unwrap();
         assert_eq!(a.remaining_s, Some(19));
         let r: Reading = serde_json::from_str(&fixture("reading")).unwrap();

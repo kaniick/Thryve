@@ -37,6 +37,7 @@ vi.mock('../YourSchedules', () => ({
     <section id="pump-cycles" data-testid="your-schedules" data-live={live.map(c => c.id).join(',')} data-light={JSON.stringify(light)} data-limits={JSON.stringify(limits)} data-entries={entries.length} data-zone={zone} />
   ),
 }))
+vi.mock('../DryGuardLine', () => ({ DryGuardLine: ({ limits }: { limits: unknown }) => <div data-testid="dry-guard-line" data-limits={JSON.stringify(limits)} /> }))
 
 vi.mock('@/src/utils/trpc', () => {
   const query = (name: string) => ({ useQuery: () => ({ data: data.get(name) }) })
@@ -140,6 +141,8 @@ describe('WaterPage: tank and pump', () => {
     expect(screen.getByText('9.4 cm')).toBeTruthy()
     // The pump's limits are Run's tooltip.
     expect(strip.getByRole('button', { name: 'Run' }).getAttribute('title')).toBe('Up to 15 min per run at 30% duty. Won\'t start below 16 cm of water.')
+    // Under the strip, the dry-run guard line gets hald's limits.
+    expect(JSON.parse(screen.getByTestId('dry-guard-line').dataset.limits ?? 'null')).toEqual({ pumpMaxRunS: 900, pumpMaxDuty: 30, waterLowCm: 16 })
   })
 
   it('shows the due chores with the rows the sidebar\'s Needs you shares', () => {

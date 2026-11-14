@@ -19,6 +19,10 @@ pub struct Persisted {
     pub light_hours_total: f64,
     pub last_pump_run: Option<String>,
     pub doses: BTreeMap<String, DoseLedger>,
+    /// The current guard's spin-up grace the app asked for (ms), clamped at boot
+    /// into hal.toml's bounds; unset, hal.toml's default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pump_dry_grace_ms: Option<u64>,
 }
 
 pub struct StateFile {
@@ -82,6 +86,7 @@ mod tests {
             light_since: Some("2026-10-31T03:57:23Z".into()),
             light_hours_total: 12.25,
             last_pump_run: None,
+            pump_dry_grace_ms: Some(1500),
             doses: BTreeMap::new(),
         };
         s.doses.insert(
