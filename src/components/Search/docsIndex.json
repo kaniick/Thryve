@@ -115,7 +115,7 @@
       "path": "/core/debugging/",
       "title": "Debugging",
       "section": "User guide",
-      "description": "SSH, hald --check, journalctl, I²C probing, latched faults and the simulator.",
+      "description": "SSH, hald --check, journalctl, I\u00b2C probing, latched faults and the simulator.",
       "headings": [
         {
           "title": "Get a shell",
@@ -134,7 +134,7 @@
           "anchor": "check-core"
         },
         {
-          "title": "Probe the I²C bus",
+          "title": "Probe the I\u00b2C bus",
           "anchor": "probe-the-ic-bus"
         },
         {
@@ -142,7 +142,7 @@
           "anchor": "the-pump-will-not-start"
         },
         {
-          "title": "A restore that didn’t finish",
+          "title": "A restore that didn\u2019t finish",
           "anchor": "a-restore-that-didnt-finish"
         },
         {
@@ -217,7 +217,7 @@
           "anchor": "flash-raspberry-pi-os"
         },
         {
-          "title": "Enable I²C and install the hardware daemon",
+          "title": "Enable I\u00b2C and install the hardware daemon",
           "anchor": "enable-ic-and-install-the-hardware-daemon"
         },
         {
@@ -501,7 +501,7 @@
           "anchor": "consequences"
         },
         {
-          "title": "Amendment (2026-10-31): leafypod → thryve",
+          "title": "Amendment (2026-10-31): leafypod \u2192 thryve",
           "anchor": "amendment-2026-10-31-leafypod--thryve"
         }
       ],
@@ -563,7 +563,7 @@
     },
     {
       "path": "/developers/adr/0004-two-tier-hal-core/",
-      "title": "ADR 0004: Two tiers — a hardware daemon and a core",
+      "title": "ADR 0004: Two tiers \u2014 a hardware daemon and a core",
       "section": "Developers",
       "description": "One hardware daemon (hald) and one core, joined by a versioned contract; deployment topologies.",
       "headings": [
@@ -650,7 +650,7 @@
     },
     {
       "path": "/developers/adr/0007-hal-contract/",
-      "title": "ADR 0007: HAL contract v1 — MQTT + HTTP, versioned JSON, HA discovery from the HAL",
+      "title": "ADR 0007: HAL contract v1 \u2014 MQTT + HTTP, versioned JSON, HA discovery from the HAL",
       "section": "Developers",
       "description": "MQTT topic tree, payload schemas, HTTP endpoints and HA discovery published by hald.",
       "headings": [
@@ -819,7 +819,7 @@
     },
     {
       "path": "/developers/adr/0017-ios-client/",
-      "title": "ADR 0017: iOS client — reuse sleepypod's transport, not its app",
+      "title": "ADR 0017: iOS client \u2014 reuse sleepypod's transport, not its app",
       "section": "Developers",
       "description": "Evaluation of forking sleepypod/ios's networking layer against thryve's tRPC router, and what core must add first.",
       "headings": [
@@ -890,9 +890,9 @@
     },
     {
       "path": "/developers/adr/0020-autopilot-reactive-automations/",
-      "title": "ADR 0020: Autopilot — reactive automations",
+      "title": "ADR 0020: Autopilot \u2014 reactive automations",
       "section": "Developers",
-      "description": "WHEN/IF/THEN rules over live sensor and analysis signals, ported from sleepypod's Autopilot, with a light arbiter that ranks manual > Autopilot > schedule, an audit log, dry-run and backtests; hald's…",
+      "description": "WHEN/IF/THEN rules over live sensor and analysis signals, ported from sleepypod's Autopilot, with a light arbiter that ranks manual > Autopilot > schedule, an audit log, dry-run and backtests; hald's\u2026",
       "headings": [
         {
           "title": "Context",
@@ -911,7 +911,7 @@
           "anchor": "signals-a-typed-catalog"
         },
         {
-          "title": "Actions: thryve’s verbs, through the normal paths",
+          "title": "Actions: thryve\u2019s verbs, through the normal paths",
           "anchor": "actions-thryves-verbs-through-the-normal-paths"
         },
         {
@@ -1006,7 +1006,7 @@
       "path": "/developers/adr/0022-harvest-outlook/",
       "title": "ADR 0022: Harvest outlook from the camera, with optional plant profiles",
       "section": "Developers",
-      "description": "Each planted pod gets a harvest state (ready, soon, growing) led by camera leaf cover against a target and its rate of change; optional per-crop profiles add a window in days and their own target, and…",
+      "description": "Each planted pod gets a harvest state (ready, soon, growing) led by camera leaf cover against a target and its rate of change; optional per-crop profiles add a window in days and their own target, and\u2026",
       "headings": [
         {
           "title": "Context",
@@ -1027,7 +1027,7 @@
       "path": "/developers/adr/0023-homekit/",
       "title": "ADR 0023: HomeKit bridge and per-unit identity",
       "section": "Developers",
-      "description": "An embedded hap-nodejs bridge, off by default, exposes the grow light, the pump and the sensors to Apple Home through core's own tRPC caller, with a HomeKit identity derived per unit as in sleepypod…",
+      "description": "An embedded hap-nodejs bridge, off by default, exposes the grow light, the pump and the sensors to Apple Home through core's own tRPC caller, with a HomeKit identity derived per unit as in sleepypod\u2026",
       "headings": [
         {
           "title": "Context",
@@ -1042,7 +1042,7 @@
           "anchor": "an-embedded-bridge-off-by-default"
         },
         {
-          "title": "Accessories go through core’s tRPC caller",
+          "title": "Accessories go through core\u2019s tRPC caller",
           "anchor": "accessories-go-through-cores-trpc-caller"
         },
         {
@@ -1166,7 +1166,7 @@
     },
     {
       "path": "/developers/hal/",
-      "title": "hald — the hardware daemon",
+      "title": "hald \u2014 the hardware daemon",
       "section": "Developers",
       "description": "Configuring, running and talking to hald: hal.toml, MQTT topics, Home Assistant entities, HTTP endpoints, state file, install and operations.",
       "headings": [
@@ -1258,7 +1258,7 @@
       "path": "/developers/hardware/",
       "title": "Gardyn hardware map",
       "section": "Developers",
-      "description": "Pins, I²C addresses, parts and model detection as documented upstream, with the Phase 1 verification checklist.",
+      "description": "Pins, I\u00b2C addresses, parts and model detection as documented upstream, with the Phase 1 verification checklist.",
       "headings": [
         {
           "title": "Tank and pump, from two weeks of stock logs",
@@ -1269,7 +1269,7 @@
           "anchor": "model-detection"
         },
         {
-          "title": "Known failure modes (from upstream’s issue tracker — these are our test cases)",
+          "title": "Known failure modes (from upstream\u2019s issue tracker \u2014 these are our test cases)",
           "anchor": "known-failure-modes-from-upstreams-issue-tracker--these-are-our-test-cases"
         },
         {
@@ -1281,7 +1281,7 @@
     },
     {
       "path": "/developers/implementation-plan/",
-      "title": "Implementation plan (Phase 0 → 1.0)",
+      "title": "Implementation plan (Phase 0 \u2192 1.0)",
       "section": "Developers",
       "description": "Phased build plan with parallelism markers, ADR index, HAL contract draft and OKRs.",
       "headings": [
@@ -1294,7 +1294,7 @@
           "anchor": "01-hardware-map-bcm-numbering"
         },
         {
-          "title": "0.2 Safety invariants (lifted from upstream’s bug list — these are the spec, not nice-to-haves)",
+          "title": "0.2 Safety invariants (lifted from upstream\u2019s bug list \u2014 these are the spec, not nice-to-haves)",
           "anchor": "02-safety-invariants-lifted-from-upstreams-bug-list--these-are-the-spec-not-nice-to-haves"
         },
         {
@@ -1314,39 +1314,39 @@
           "anchor": "2-phases"
         },
         {
-          "title": "Phase 0 — Repo & conventions bootstrap ⏱ 1 day",
+          "title": "Phase 0 \u2014 Repo & conventions bootstrap \u23f1 1 day",
           "anchor": "phase-0--repo--conventions-bootstrap--1-day"
         },
         {
-          "title": "Phase 1 — Hardware reconnaissance & root ⏱ ½ day hands-on ∥ Phase 0 (fully independent)",
+          "title": "Phase 1 \u2014 Hardware reconnaissance & root \u23f1 \u00bd day hands-on \u2225 Phase 0 (fully independent)",
           "anchor": "phase-1--hardware-reconnaissance--root---day-hands-on--phase-0-fully-independent"
         },
         {
-          "title": "Phase 2 — HAL (Rust daemon) ⏱ 1–2 weeks ⛔ Phase 1.6 (pin map) · Phase 0.6 (CI)",
+          "title": "Phase 2 \u2014 HAL (Rust daemon) \u23f1 1\u20132 weeks \u26d4 Phase 1.6 (pin map) \u00b7 Phase 0.6 (CI)",
           "anchor": "phase-2--hal-rust-daemon--12-weeks--phase-16-pin-map--phase-06-ci"
         },
         {
-          "title": "Phase 3 — Core (tRPC / scheduler / DB / MCP) ⏱ 1–2 weeks ⛔ Phase 2.1 (contract) · ∥ Phase 2.2–2.10",
+          "title": "Phase 3 \u2014 Core (tRPC / scheduler / DB / MCP) \u23f1 1\u20132 weeks \u26d4 Phase 2.1 (contract) \u00b7 \u2225 Phase 2.2\u20132.10",
           "anchor": "phase-3--core-trpc--scheduler--db--mcp--12-weeks--phase-21-contract---phase-22210"
         },
         {
-          "title": "Phase 4 — Web UI ⏱ 1 week ⛔ 3.3 (routers) · ∥ 3.4–3.11",
+          "title": "Phase 4 \u2014 Web UI \u23f1 1 week \u26d4 3.3 (routers) \u00b7 \u2225 3.4\u20133.11",
           "anchor": "phase-4--web-ui--1-week--33-routers---34311"
         },
         {
-          "title": "Phase 5 — Integrations ⏱ 3–5 days ⛔ Phase 3 · tasks ∥ each other",
+          "title": "Phase 5 \u2014 Integrations \u23f1 3\u20135 days \u26d4 Phase 3 \u00b7 tasks \u2225 each other",
           "anchor": "phase-5--integrations--35-days--phase-3--tasks--each-other"
         },
         {
-          "title": "Phase 6 — Hardware expansion ⏱ 1–2 weekends ⛔ Phase 2 · ∥ Phases 4–5",
+          "title": "Phase 6 \u2014 Hardware expansion \u23f1 1\u20132 weekends \u26d4 Phase 2 \u00b7 \u2225 Phases 4\u20135",
           "anchor": "phase-6--hardware-expansion--12-weekends--phase-2---phases-45"
         },
         {
-          "title": "Phase 7 — Plant intelligence (CV) ⏱ open-ended ⛔ 6.1 (compute) or off-device inference · ∥ Phase 5",
+          "title": "Phase 7 \u2014 Plant intelligence (CV) \u23f1 open-ended \u26d4 6.1 (compute) or off-device inference \u00b7 \u2225 Phase 5",
           "anchor": "phase-7--plant-intelligence-cv--open-ended--61-compute-or-off-device-inference---phase-5"
         },
         {
-          "title": "Phase 8 — Hardening & 1.0 ⏱ 1 week ⛔ everything above",
+          "title": "Phase 8 \u2014 Hardening & 1.0 \u23f1 1 week \u26d4 everything above",
           "anchor": "phase-8--hardening--10--1-week--everything-above"
         },
         {
@@ -1362,7 +1362,7 @@
           "anchor": "5-hal-contract-v1-draft-for-adr-0007"
         },
         {
-          "title": "6. OKRs (first quarter) — new for this project; sleepypod has no OKR docs, only ADRs + knowledge/ (OKF)",
+          "title": "6. OKRs (first quarter) \u2014 new for this project; sleepypod has no OKR docs, only ADRs + knowledge/ (OKF)",
           "anchor": "6-okrs-first-quarter--new-for-this-project-sleepypod-has-no-okr-docs-only-adrs--knowledge-okf"
         },
         {
@@ -1405,19 +1405,15 @@
       "path": "/getting-started/",
       "title": "Get started",
       "section": null,
-      "description": "Try thryve in your browser, run it on your laptop, or install it on the Pi inside your Gardyn.",
+      "description": "Run Thryve on your laptop, or install it on the Pi inside your Gardyn.",
       "headings": [
         {
-          "title": "1. Try the live demo",
-          "anchor": "1-try-the-live-demo"
+          "title": "1. Run it on your computer",
+          "anchor": "1-run-it-on-your-computer"
         },
         {
-          "title": "2. Run it on your computer",
-          "anchor": "2-run-it-on-your-computer"
-        },
-        {
-          "title": "3. Install on a Gardyn",
-          "anchor": "3-install-on-a-gardyn"
+          "title": "2. Install on a Gardyn",
+          "anchor": "2-install-on-a-gardyn"
         },
         {
           "title": "What next",
