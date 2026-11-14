@@ -296,7 +296,7 @@ try {
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'bringup', version: '1' } } }),
     })
     const body = await res.json()
-    assert(res.ok && body.result?.serverInfo?.name === 'thryve', `initialize: ${res.status} ${JSON.stringify(body)}`)
+    assert(res.ok && body.result?.serverInfo?.name === 'Thryve', `initialize: ${res.status} ${JSON.stringify(body)}`)
     return `server ${body.result.serverInfo.name}, protocol ${body.result.protocolVersion}`
   })
 

@@ -52,22 +52,34 @@ jobs:
           merge-multiple: true
           path: assets
 
+      # PRs and workflow_dispatch reuse this repo's dev-latest assets. On a
+      # fork (or a PR opened before the first Dev Release) that release may
+      # not exist yet — skip instead of failing and mailing the owner.
       - name: Take them from dev-latest, with this branch's scripts
+        id: dev_latest
         if: inputs.tag == ''
         run: |
+          if ! gh release view dev-latest >/dev/null 2>&1; then
+            echo "::notice::No dev-latest release in ${GITHUB_REPOSITORY}; skipping the OS image until Dev Release has published one."
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           mkdir assets
           gh release download dev-latest --dir assets --pattern 'hald-arm-*' --pattern 'podvision-arm-*' --pattern 'better-sqlite3-*' --pattern thryve-core.tar.gz
           mkdir "$RUNNER_TEMP/core"
           tar xzf assets/thryve-core.tar.gz -C "$RUNNER_TEMP/core"
           cp -rf scripts/. "$RUNNER_TEMP/core/scripts/"
           tar czf assets/thryve-core.tar.gz -C "$RUNNER_TEMP/core" .
+          echo "available=true" >> "$GITHUB_OUTPUT"
 
       - name: Set up ARM emulation
+        if: inputs.tag != '' || steps.dev_latest.outputs.available == 'true'
         uses: docker/setup-qemu-action@v4
         with:
           platforms: arm
 
       - name: Build
+        if: inputs.tag != '' || steps.dev_latest.outputs.available == 'true'
         env:
           BRANCH: ${{ inputs.branch || 'dev' }}
           URL_BASE: https://github.com/${{ github.repository }}/releases/download/${{ inputs.tag || 'dev-latest' }}
@@ -78,7 +90,7 @@ jobs:
         run: gh release upload "$TAG" out/thryve-os* --clobber
 
       - uses: actions/upload-artifact@v6
-        if: inputs.tag == ''
+        if: inputs.tag == '' && steps.dev_latest.outputs.available == 'true'
         with:
           name: thryve-os
           path: out/thryve-os*

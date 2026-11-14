@@ -57,10 +57,12 @@ jobs:
           restore-keys: |
             stryker-incremental-${{ matrix.shard.name }}-${{ github.ref }}-
             stryker-incremental-${{ matrix.shard.name }}-
+      # @stryker-mutator/* are devDependencies; without them `pnpm stryker`
+      # exits 254 immediately and produces no report (the previous scheduled run).
       - name: Run Stryker
         env:
           SCOPE: ${{ github.event.inputs.scope || matrix.shard.mutate }}
-        run: pnpm stryker run --mutate "$SCOPE" --incremental
+        run: pnpm exec stryker run --mutate "$SCOPE" --incremental
       - uses: actions/upload-artifact@v6
         if: ${{ !cancelled() }}
         with:

@@ -453,7 +453,7 @@ export function createMcpServer(ctx: Context): McpServer {
   }, async i => text(await caller.schedules.library.activate(i)))
 
   server.registerTool('upload_model', {
-    description: 'Add a pod-state weights file (thryve-cnn v1, from seedypod/training) as a model revision. Give its contents as base64, or a URL on the local network (the laptop that trained it; the unit fetches nothing from the internet), and its SHA-256, which must match. Stored disabled unless enable is true; an enabled revision runs on every capture as its own analyser beside the others. Confirm with the user before enabling.',
+    description: 'Add a pod-state weights file (thryve-cnn v1, from kaniick/Thryve-training) as a model revision. Give its contents as base64, or a URL on the local network (the laptop that trained it; the unit fetches nothing from the internet), and its SHA-256, which must match. Stored disabled unless enable is true; an enabled revision runs on every capture as its own analyser beside the others. Confirm with the user before enabling.',
     inputSchema: { base64: z.string().optional(), url: z.string().optional(), sha256: z.string().length(64), enable: z.boolean().optional() },
   }, async (i) => {
     if (!i.base64 === !i.url) throw new Error('give exactly one of base64 or url')

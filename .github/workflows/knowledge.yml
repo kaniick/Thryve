@@ -6,6 +6,7 @@ on:
     paths: ['knowledge/**', 'docs/**', 'scripts/validate_knowledge.py']
   pull_request:
     paths: ['knowledge/**', 'docs/**', 'scripts/validate_knowledge.py']
+  workflow_dispatch:
 
 permissions:
   contents: read
