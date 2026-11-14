@@ -77,8 +77,8 @@ mdns = false
 # The current guard on, against the sim's pump: 0.22 A wet at 30 %, a quarter of that pulling air.
 [limits]
 pump_dry_current_a = 0.15
-pump_dry_after_s = 3
-pump_dry_grace_s = 2
+pump_dry_after_ms = 300
+pump_dry_grace_ms = 1000
 
 [dosing]
 enabled = true
@@ -337,10 +337,22 @@ try {
   await check('pump: a dry intake trips the current guard, the fault names the current, and it clears', async () => {
     const intake = dry => fetch(`http://127.0.0.1:${halHttpPort}/sim/intake`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ dry }) })
     assert((await intake(true)).status === 200, 'sim intake switch')
+    const states = []
+    const onState = (t, p) => t === `seedypod/${unit}/actuator/pump/state` && states.push({ at: Date.now(), ...JSON.parse(String(p)) })
+    watcher.on('message', onState)
     const r = await post('/pump/run-once', { durationS: 60 })
     assert(r.status === 200 && r.body.on, `${r.status} ${JSON.stringify(r.body)}`)
+    // The guard reads the current every 100 ms while the pump runs: past the 1 s grace,
+    // 0.3 s of low reads stop it. hald's clock (sim time) stamps both states.
+    const started = await until('hald to start the pump', () => states.find(s => s.on), 5_000)
+    const tripped = await until('hald to trip the pump', () => states.find(s => /pulling air/.test(s.fault ?? '')), 5_000)
+    watcher.off('message', onState)
+    const realMs = tripped.at - started.at
+    const simS = (Date.parse(tripped.since) - Date.parse(started.since)) / 1000
+    assert(simS <= 2, `tripped ${simS} s of hald time after it went dry (grace 1 s + 0.3 s)`)
+    assert(realMs <= 1_500, `tripped ${realMs} ms after it went dry`)
     const alert = await until('pump_fault in core', async () => (await get('/alerts')).find(a => a.kind === 'pump_fault' && a.active), 20_000)
-    assert(/dry-run: pump drew 0\.05 A, below 0\.15 A for 3 s: it's pulling air/.test(alert.detail), `detail ${alert.detail}`)
+    assert(/dry-run: pump drew 0\.05 A, below 0\.15 A for 0\.3 s: it's pulling air/.test(alert.detail), `detail ${alert.detail}`)
     const pump = await get('/pump')
     assert(pump.on === false && /pulling air/.test(pump.fault), `pump ${JSON.stringify(pump)}`)
     assert(!(await get('/alerts')).some(a => a.kind === 'water_low' && a.active), 'water_low raised with a full tank')
@@ -349,7 +361,7 @@ try {
     assert((await intake(false)).status === 200, 'sim intake back')
     // Like a level dry-run, it clears itself once the water has read good for a window.
     await until('the dry-run to clear', async () => (await get('/pump')).fault === null && !(await get('/alerts')).some(a => a.kind === 'pump_fault' && a.active), 30_000)
-    return `"${alert.detail}" → cleared; ${trace.split('\n').length} trace lines`
+    return `"${alert.detail}" ${simS} s (hald time) / ${realMs} ms after going dry → cleared; ${trace.split('\n').length} trace lines`
   })
 
   await check('camera: still fetched over hald HTTP and stored', async () => {

@@ -225,8 +225,8 @@ async fn main() -> anyhow::Result<()> {
                 "cameras": cfg.camera.iter().map(|c| c.name.clone()).collect::<Vec<_>>(),
                 "limits": { "pump_max_run_s": cfg.limits.pump_max_run_s, "pump_max_duty": cfg.limits.pump_max_duty,
                             "water_low_cm": cfg.limits.water_low_cm, "over_temp_c": cfg.limits.over_temp_c,
-                            "pump_dry_current_a": cfg.limits.pump_dry_current_a, "pump_dry_after_s": cfg.limits.pump_dry_after_s,
-                            "pump_dry_grace_s": cfg.limits.pump_dry_grace_s },
+                            "pump_dry_current_a": cfg.limits.pump_dry_current_a, "pump_dry_after_ms": cfg.limits.dry_after_ms(),
+                            "pump_dry_grace_ms": cfg.limits.dry_grace_ms() },
                 "dosing_enabled": cfg.dosing.enabled,
             }))?
         );
@@ -448,8 +448,10 @@ fn trace_pump(trace: &mut Option<pump_trace::PumpTrace<std::fs::File>>, engine: 
     }
 }
 
-/// The engine loop: drain commands until the next tick, tick, repeat.
-/// In `--sim`, virtual time advances one telemetry interval per tick.
+/// The engine loop: drain commands until the next tick, tick, repeat. While the
+/// pump runs it also wakes for the pump guard's fast reads (`Engine::pump_watch`).
+/// In `--sim`, virtual time advances one telemetry interval per tick, in the
+/// guard's 100 ms steps while the pump runs.
 fn run_engine(mut engine: Engine, mut cfg: LoopConfig, rx: Receiver<Inbound>, tx: UnboundedSender<Outbound>) {
     let send = |tx: &UnboundedSender<Outbound>, outs: Vec<Outbound>| {
         for o in outs {
@@ -469,30 +471,52 @@ fn run_engine(mut engine: Engine, mut cfg: LoopConfig, rx: Receiver<Inbound>, tx
     loop {
         let deadline = Instant::now() + real_tick;
         loop {
-            // A pump trace wakes the loop between ticks for its reads.
-            let wake = cfg
-                .trace
-                .as_ref()
-                .and_then(pump_trace::PumpTrace::due)
-                .map_or(deadline, |d| d.min(deadline));
+            // A pump trace, and the pump guard while the pump runs, wake the loop between ticks.
+            let watch = (!cfg.sim).then(|| engine.pump_watch_due(now)).flatten();
+            let wake = [cfg.trace.as_ref().and_then(pump_trace::PumpTrace::due), watch]
+                .into_iter()
+                .flatten()
+                .fold(deadline, Instant::min);
             match rx.recv_timeout(wake.saturating_duration_since(Instant::now())) {
                 Ok(Inbound::Shutdown) | Err(RecvTimeoutError::Disconnected) => {
                     send(&tx, engine.handle(Inbound::Shutdown, now));
                     cfg.stop.store(true, Ordering::Relaxed);
                     return;
                 }
-                Ok(msg) => send(&tx, engine.handle(msg, now)),
+                Ok(msg) => {
+                    // A pump start's spin-up grace counts from now, not the last tick.
+                    if !cfg.sim {
+                        now = Now::real();
+                    }
+                    send(&tx, engine.handle(msg, now));
+                }
                 Err(RecvTimeoutError::Timeout) if Instant::now() < deadline => {}
                 Err(RecvTimeoutError::Timeout) => break,
+            }
+            if watch.is_some_and(|t| Instant::now() >= t) {
+                now = Now::real();
+                send(&tx, engine.pump_watch(now));
             }
             trace_pump(&mut cfg.trace, &mut engine, now);
         }
         if cfg.sim {
             let dt = cfg.interval.mul_f64(cfg.time_scale.max(0.0));
-            if let Some(w) = &cfg.world {
-                w.lock().unwrap_or_else(|e| e.into_inner()).step(dt.as_secs_f64());
+            // While the guard watches the pump, virtual time goes in its steps.
+            let steps = match engine.pump_watch_due(now) {
+                Some(_) => (dt.as_millis() / engine::PUMP_SAMPLE_EVERY.as_millis()).clamp(1, 200) as u32,
+                None => 1,
+            };
+            for i in 0..steps {
+                if let Some(w) = &cfg.world {
+                    w.lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .step((dt / steps).as_secs_f64());
+                }
+                now.advance(dt / steps);
+                if i + 1 < steps {
+                    send(&tx, engine.pump_watch(now));
+                }
             }
-            now.advance(dt);
         } else {
             now = Now::real();
         }

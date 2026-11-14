@@ -9,10 +9,15 @@
 //! 2. **Bounded runs** — every start carries a deadline ≤ `max_run_s`; there is
 //!    no unbounded "on".
 //! 3. **Dry-run interlock** — a start is refused when the water distance (median
-//!    of N samples, supplied by the caller) exceeds `water_low_cm`.
-//!    A running pump also stops when its current says it is pulling air: past a
-//!    spin-up grace, every read of the pump monitor stays below `dry_current_a`
-//!    for `dry_current_s` (#220). It raises the same dry-run fault.
+//!    of N samples, supplied by the caller) exceeds `water_low_cm`. A running
+//!    pump stops when trusted readings stay low for [`LEVEL_CONFIRM`], or when
+//!    no trusted reading comes for [`DRY_CONFIRM`] (the ranger is gone).
+//!    It also stops when its current says it is pulling air: past a spin-up
+//!    grace of `dry_grace_ms`, at least [`DRY_MIN_READS`] reads of the pump
+//!    monitor in a row, covering `dry_after_ms`, came back below
+//!    `dry_current_a` (#220). It raises the same dry-run fault. hald feeds the
+//!    guard fast while the pump runs (the current every 100 ms), so the guard
+//!    counts reads as well as time.
 //! 4. **Over-temperature cutoff** — a start is refused, and a running pump is
 //!    stopped, when the PCB temperature is above `over_temp_c`.
 //! 5. **Latched faults** — a stop caused by (3) or (4) while running latches
@@ -36,10 +41,11 @@ pub struct PumpLimits {
     /// Below this pump current (A), past the spin-up grace, the pump is pulling
     /// air. `None` turns the current guard off.
     pub dry_current_a: Option<f64>,
-    /// How long every current read must stay below `dry_current_a` to trip.
-    pub dry_current_s: u64,
+    /// How long the current reads must stay below `dry_current_a` to trip; at
+    /// least [`DRY_MIN_READS`] of them, however short this is.
+    pub dry_after_ms: u64,
     /// How long after a start the current isn't judged, while the pump spins up and primes.
-    pub dry_grace_s: u64,
+    pub dry_grace_ms: u64,
 }
 
 impl Default for PumpLimits {
@@ -50,8 +56,8 @@ impl Default for PumpLimits {
             water_low_cm: Some(16.0),
             over_temp_c: Some(36.0),
             dry_current_a: None,
-            dry_current_s: 5,
-            dry_grace_s: 3,
+            dry_after_ms: 300,
+            dry_grace_ms: 1000,
         }
     }
 }
@@ -72,6 +78,11 @@ pub enum Refusal {
 pub struct Env {
     /// Median water distance (cm), `None` if the sensor is unavailable.
     pub water_distance_cm: Option<f64>,
+    /// Too few pings agreed on that distance: while running it counts as no reading.
+    pub water_suspect: bool,
+    /// The distance was read since the guard last ticked. The current is read
+    /// for every tick, the ranger less often, and one reading must count once.
+    pub water_fresh: bool,
     /// PCB temperature (°C), `None` if unavailable.
     pub pcb_temp_c: Option<f64>,
     /// The board's own over-temperature alert line (GPIO25) is asserted.
@@ -88,11 +99,18 @@ pub enum Decision {
     Stop,
 }
 
-/// How long the water must read low (or not at all) while the pump runs before
-/// it trips. The ranger drops a read now and then, most often with the pump
-/// stirring the tank; one lost read must not latch a dry-run on a full tank. A
-/// tank that is really low stays low, and a pump takes a few dry seconds.
+/// How long trusted readings must say the water is low while the pump runs
+/// before it trips. One reading is never enough: the first starts the count.
+pub const LEVEL_CONFIRM: Duration = Duration::from_millis(500);
+
+/// How long the running pump may go without a trusted reading before it trips:
+/// the ranger is gone, or hears only stray echoes. It drops a read now and then,
+/// most often with the pump stirring the tank; one lost read must not latch a
+/// dry-run on a full tank.
 pub const DRY_CONFIRM: Duration = Duration::from_secs(3);
+
+/// The fewest low current reads in a row that trip the current guard.
+pub const DRY_MIN_READS: u32 = 3;
 
 /// The fault a dry pump latches, from either guard. The current guard adds why.
 pub const DRY_RUN: &str = "dry-run";
@@ -103,7 +121,7 @@ pub fn is_dry_run(fault: &str) -> bool {
     fault == DRY_RUN || fault.starts_with("dry-run:")
 }
 
-/// Amps for a fault message: `0.4`, `1.25`, `0`.
+/// Amps (or seconds) for a fault message: `0.4`, `1.25`, `0`.
 fn amps(a: f64) -> String {
     let s = format!("{a:.2}");
     s.trim_end_matches('0').trim_end_matches('.').to_owned()
@@ -115,12 +133,16 @@ pub struct PumpGuard {
     level: f64,
     running_until: Option<Instant>,
     fault: Option<String>,
-    /// When the running pump first saw the water low or missing, in this run of such checks.
+    /// When the running pump first saw the water low, missing or suspect, in this run of such readings.
     dry_since: Option<Instant>,
+    /// When trusted readings first said the water is low, in this run of them.
+    low_since: Option<Instant>,
     /// When this run started, for the current guard's spin-up grace.
     started: Option<Instant>,
     /// When the pump current first read below `dry_current_a`, in this run of such reads.
     starved_since: Option<Instant>,
+    /// How many reads in a row have been below `dry_current_a`.
+    starved_reads: u32,
 }
 
 impl PumpGuard {
@@ -131,8 +153,10 @@ impl PumpGuard {
             running_until: None,
             fault: None,
             dry_since: None,
+            low_since: None,
             started: None,
             starved_since: None,
+            starved_reads: 0,
         }
     }
 
@@ -169,7 +193,7 @@ impl PumpGuard {
             self.running_until = None;
             self.level = 0.0;
             self.started = None;
-            self.starved_since = None;
+            self.reset_starved();
             return Ok(Decision::Stop);
         }
 
@@ -197,11 +221,12 @@ impl PumpGuard {
         // A longer run asked for mid-run keeps its spin-up and its count of low reads.
         if !self.is_running(now) {
             self.started = Some(now);
-            self.starved_since = None;
+            self.reset_starved();
         }
         self.level = level;
         self.running_until = Some(now + deadline_in);
         self.dry_since = None;
+        self.low_since = None;
         Ok(Decision::Run { level, deadline_in })
     }
 
@@ -214,14 +239,12 @@ impl PumpGuard {
                 self.running_until = None;
                 self.level = 0.0;
                 self.started = None;
-                self.starved_since = None;
+                self.reset_starved();
                 return Some(Decision::Stop);
             }
             return None;
         }
-        if !self.is_dry(env) {
-            self.dry_since = None;
-        } else if now.duration_since(*self.dry_since.get_or_insert(now)) >= DRY_CONFIRM {
+        if env.water_fresh && self.tank_ran_dry(env, now) {
             return Some(self.trip(DRY_RUN));
         }
         if let Some(why) = self.pulling_air(env, now) {
@@ -233,33 +256,75 @@ impl PumpGuard {
         None
     }
 
-    /// The current guard: past the spin-up grace, every read of the pump current
-    /// for `dry_current_s` came back below `dry_current_a`. A lost read is no
-    /// evidence of a dry pump, so it starts the count again and can't trip it.
+    /// The level guard, on a fresh reading: trusted readings at or past the limit
+    /// for [`LEVEL_CONFIRM`], or no trusted reading at all for [`DRY_CONFIRM`].
+    /// A suspect reading proves nothing either way: it neither confirms the
+    /// water low nor says it is back.
+    fn tank_ran_dry(&mut self, env: Env, now: Instant) -> bool {
+        let Some(low) = self.limits.water_low_cm else {
+            return false;
+        };
+        match env.water_distance_cm.filter(|_| !env.water_suspect) {
+            Some(d) if d < low => {
+                self.dry_since = None;
+                self.low_since = None;
+                false
+            }
+            Some(_) => {
+                self.dry_since.get_or_insert(now);
+                let since = *self.low_since.get_or_insert(now);
+                now.duration_since(since) >= LEVEL_CONFIRM
+            }
+            None => {
+                self.low_since = None;
+                let since = *self.dry_since.get_or_insert(now);
+                now.duration_since(since) >= DRY_CONFIRM
+            }
+        }
+    }
+
+    /// The current guard: past the spin-up grace, at least [`DRY_MIN_READS`]
+    /// reads of the pump current in a row, covering `dry_after_ms`, came back
+    /// below `dry_current_a`. A lost read is no evidence of a dry pump, so it
+    /// starts the count again and can't trip it.
     fn pulling_air(&mut self, env: Env, now: Instant) -> Option<String> {
         let (Some(min), Some(started)) = (self.limits.dry_current_a, self.started) else {
             return None;
         };
-        if now.duration_since(started) < Duration::from_secs(self.limits.dry_grace_s) {
+        if now.duration_since(started) < Duration::from_millis(self.limits.dry_grace_ms) {
             return None;
         }
         match env.pump_current_a {
             Some(a) if a < min => {
                 let since = *self.starved_since.get_or_insert(now);
-                let secs = self.limits.dry_current_s;
-                (now.duration_since(since) >= Duration::from_secs(secs)).then(|| {
+                self.starved_reads += 1;
+                let after = self.limits.dry_after_ms;
+                let long_enough = now.duration_since(since) >= Duration::from_millis(after);
+                (self.starved_reads >= DRY_MIN_READS && long_enough).then(|| {
                     format!(
-                        "{DRY_RUN}: pump drew {} A, below {} A for {secs} s: it's pulling air",
+                        "{DRY_RUN}: pump drew {} A, below {} A for {} s: it's pulling air",
                         amps(a),
-                        amps(min)
+                        amps(min),
+                        amps(after as f64 / 1000.0)
                     )
                 })
             }
             _ => {
-                self.starved_since = None;
+                self.reset_starved();
                 None
             }
         }
+    }
+
+    fn reset_starved(&mut self) {
+        self.starved_since = None;
+        self.starved_reads = 0;
+    }
+
+    /// Latch a fault the guard didn't see itself (the driver wouldn't stop the
+    /// pump), ending the run. It clears only via [`PumpGuard::acknowledge`].
+    pub fn latch(&mut self, reason: &str) {
+        self.trip(reason);
     }
 
     /// Clear a latched fault. The caller is responsible for having fixed the cause.
@@ -270,8 +335,9 @@ impl PumpGuard {
     fn trip(&mut self, reason: &str) -> Decision {
         self.fault = Some(reason.to_owned());
         self.dry_since = None;
+        self.low_since = None;
         self.started = None;
-        self.starved_since = None;
+        self.reset_starved();
         self.running_until = None;
         self.level = 0.0;
         Decision::Stop
@@ -322,9 +388,17 @@ mod tests {
     fn wet() -> Env {
         Env {
             water_distance_cm: Some(7.0),
+            water_suspect: false,
+            water_fresh: true,
             pcb_temp_c: Some(30.0),
             over_temp_signal: false,
             pump_current_a: Some(1.87),
+        }
+    }
+    fn at(d: Option<f64>) -> Env {
+        Env {
+            water_distance_cm: d,
+            ..wet()
         }
     }
     fn on(level: Option<f64>, duration_s: Option<u64>) -> ActuatorCommand {
@@ -332,6 +406,13 @@ mod tests {
             on: Some(true),
             level,
             duration_s,
+        }
+    }
+    fn off() -> ActuatorCommand {
+        ActuatorCommand {
+            on: Some(false),
+            level: None,
+            duration_s: None,
         }
     }
 
@@ -369,24 +450,12 @@ mod tests {
     #[test]
     fn refuses_start_when_dry_or_sensor_missing() {
         let mut g = guard();
-        let dry = Env {
-            water_distance_cm: Some(17.0),
-            pcb_temp_c: Some(30.0),
-            over_temp_signal: false,
-            pump_current_a: None,
-        };
         assert_eq!(
-            g.request(&on(None, None), dry, Instant::now()),
+            g.request(&on(None, None), at(Some(17.0)), Instant::now()),
             Err(Refusal::WaterLow)
         );
-        let missing = Env {
-            water_distance_cm: None,
-            pcb_temp_c: Some(30.0),
-            over_temp_signal: false,
-            pump_current_a: None,
-        };
         assert_eq!(
-            g.request(&on(None, None), missing, Instant::now()),
+            g.request(&on(None, None), at(None), Instant::now()),
             Err(Refusal::WaterLow)
         );
     }
@@ -395,10 +464,8 @@ mod tests {
     fn refuses_start_when_hot() {
         let mut g = guard();
         let hot = Env {
-            water_distance_cm: Some(7.0),
             pcb_temp_c: Some(36.5),
-            over_temp_signal: false,
-            pump_current_a: None,
+            ..wet()
         };
         assert_eq!(
             g.request(&on(None, None), hot, Instant::now()),
@@ -435,10 +502,7 @@ mod tests {
         let mut g = guard();
         let t0 = Instant::now();
         g.request(&on(None, None), wet(), t0).unwrap();
-        let lost = Env {
-            water_distance_cm: None,
-            ..wet()
-        };
+        let lost = at(None);
         // The unit's dry-run on a 3-gallon tank: one read lost mid-run.
         assert_eq!(g.tick(lost, t0 + Duration::from_secs(5)), None);
         assert_eq!(g.tick(wet(), t0 + Duration::from_secs(6)), None);
@@ -452,19 +516,15 @@ mod tests {
     }
 
     #[test]
-    fn running_dry_trips_and_latches_until_acknowledged() {
+    fn running_dry_trips_on_two_trusted_low_readings_and_latches_until_acknowledged() {
         let mut g = guard();
         let t0 = Instant::now();
         g.request(&on(None, None), wet(), t0).unwrap();
-        let dry = Env {
-            water_distance_cm: Some(16.0),
-            pcb_temp_c: Some(30.0),
-            over_temp_signal: false,
-            pump_current_a: None,
-        };
+        let dry = at(Some(16.0));
         let t1 = t0 + Duration::from_secs(60);
         assert_eq!(g.tick(dry, t1), None);
-        assert_eq!(g.tick(dry, t1 + DRY_CONFIRM), Some(Decision::Stop));
+        assert_eq!(g.tick(dry, t1 + Duration::from_millis(400)), None);
+        assert_eq!(g.tick(dry, t1 + LEVEL_CONFIRM), Some(Decision::Stop));
         assert_eq!(g.fault(), Some("dry-run"));
         // Even with water back, the latch holds.
         assert!(matches!(
@@ -478,26 +538,65 @@ mod tests {
     }
 
     #[test]
+    fn one_reading_counts_once_however_often_the_guard_ticks() {
+        let mut g = guard();
+        let t0 = Instant::now();
+        g.request(&on(None, None), wet(), t0).unwrap();
+        let low = at(Some(18.0));
+        let stale = Env {
+            water_fresh: false,
+            ..low
+        };
+        let ms = |n| t0 + Duration::from_millis(n);
+        assert_eq!(g.tick(low, ms(1000)), None);
+        // Ticks between ranger reads carry the same reading: they confirm nothing.
+        for n in (1100..=3900).step_by(100) {
+            assert_eq!(g.tick(stale, ms(n)), None, "{n} ms");
+        }
+        // The next reading is the second: now it trips.
+        assert_eq!(g.tick(low, ms(4000)), Some(Decision::Stop));
+    }
+
+    #[test]
+    fn suspect_readings_neither_confirm_the_water_low_nor_say_it_is_back() {
+        let mut g = guard();
+        let t0 = Instant::now();
+        g.request(&on(None, None), wet(), t0).unwrap();
+        let suspect = |d| Env {
+            water_suspect: true,
+            ..at(Some(d))
+        };
+        let s = |n| t0 + Duration::from_secs(n);
+        // Suspect lows don't trip in LEVEL_CONFIRM: a stray echo reads long.
+        assert_eq!(g.tick(suspect(40.0), s(1)), None);
+        assert_eq!(g.tick(suspect(40.0), s(2)), None);
+        // A suspect good one doesn't clear the count either.
+        assert_eq!(g.tick(suspect(7.0), s(3)), None);
+        assert_eq!(g.fault(), None);
+        // No trusted reading for DRY_CONFIRM: the ranger is as good as gone.
+        assert_eq!(g.tick(suspect(7.0), s(4)), Some(Decision::Stop));
+        assert_eq!(g.fault(), Some("dry-run"));
+        // A trusted good reading does clear it.
+        g.acknowledge();
+        g.request(&on(None, None), wet(), s(10)).unwrap();
+        assert_eq!(g.tick(suspect(40.0), s(11)), None);
+        assert_eq!(g.tick(wet(), s(12)), None);
+        assert_eq!(g.tick(suspect(40.0), s(14)), None);
+        assert_eq!(g.tick(at(Some(17.0)), s(15)), None);
+        assert_eq!(g.fault(), None);
+    }
+
+    #[test]
     fn stop_always_works_even_when_latched() {
         let mut g = guard();
         let t0 = Instant::now();
         g.request(&on(None, None), wet(), t0).unwrap();
-        g.tick(
-            Env {
-                water_distance_cm: Some(40.0),
-                pcb_temp_c: None,
-                over_temp_signal: false,
-                pump_current_a: None,
-            },
-            t0 + Duration::from_secs(1),
-        );
-        let off = ActuatorCommand {
-            on: Some(false),
-            level: None,
-            duration_s: None,
-        };
+        g.latch("stop-failed: test");
+        assert_eq!(g.fault(), Some("stop-failed: test"));
+        assert!(!g.is_running(t0));
+        assert!(!is_dry_run(g.fault().unwrap()));
         assert_eq!(
-            g.request(&off, wet(), t0 + Duration::from_secs(2)),
+            g.request(&off(), wet(), t0 + Duration::from_secs(2)),
             Ok(Decision::Stop)
         );
     }
@@ -510,18 +609,22 @@ mod tests {
             ..PumpLimits::default()
         });
         let env = Env {
-            water_distance_cm: None,
             pcb_temp_c: None,
-            over_temp_signal: false,
             pump_current_a: None,
+            ..at(None)
         };
-        assert!(g.request(&on(None, None), env, Instant::now()).is_ok());
+        let t0 = Instant::now();
+        assert!(g.request(&on(None, None), env, t0).is_ok());
+        for n in 1..10 {
+            assert_eq!(g.tick(env, t0 + Duration::from_secs(n)), None);
+        }
     }
 
     // ---- the current guard (#220) -------------------------------------------
 
-    /// Pump-current traces as `hald --pump-trace` writes them. The synthetic ones
-    /// stand in until the unit's wet and dry runs are recorded; add those here.
+    /// Pump-current traces: the 4 Hz ones as `hald --pump-trace` writes them, the
+    /// 10 Hz ones at the rate hald now feeds the guard. The synthetic ones stand
+    /// in until the unit's wet and dry runs are recorded; add those here.
     const WET_TRACES: &[(&str, &str)] = &[
         (
             "wet.synthetic",
@@ -531,11 +634,28 @@ mod tests {
             "lost_reads.synthetic",
             include_str!("../fixtures/pump_current/lost_reads.synthetic.csv"),
         ),
+        (
+            "wet.10hz.synthetic",
+            include_str!("../fixtures/pump_current/wet.10hz.synthetic.csv"),
+        ),
+        (
+            "lost_reads.10hz.synthetic",
+            include_str!("../fixtures/pump_current/lost_reads.10hz.synthetic.csv"),
+        ),
     ];
-    const DRY_TRACES: &[(&str, &str)] = &[(
-        "dry.synthetic",
-        include_str!("../fixtures/pump_current/dry.synthetic.csv"),
-    )];
+    /// Dry traces and the time between their reads (ms).
+    const DRY_TRACES: &[(&str, &str, u64)] = &[
+        (
+            "dry.synthetic",
+            include_str!("../fixtures/pump_current/dry.synthetic.csv"),
+            250,
+        ),
+        (
+            "dry.10hz.synthetic",
+            include_str!("../fixtures/pump_current/dry.10hz.synthetic.csv"),
+            100,
+        ),
+    ];
 
     /// The cutoff the traces are judged against: well under the 1.87 A seen wet at 30 % duty.
     fn current_guard() -> PumpGuard {
@@ -545,8 +665,8 @@ mod tests {
         })
     }
 
-    /// `(seconds since the start, pump_a)` per sample; an empty `pump_a` is a failed read.
-    fn trace(csv: &str) -> Vec<(f64, Option<f64>)> {
+    /// `(ms since the start, pump_a)` per sample; an empty `pump_a` is a failed read.
+    fn trace(csv: &str) -> Vec<(u64, Option<f64>)> {
         let mut rows = csv
             .lines()
             .filter(|l| !l.trim().is_empty() && !l.starts_with('#'));
@@ -555,22 +675,23 @@ mod tests {
         let (t, a) = (col("t_s"), col("pump_a"));
         rows.map(|l| {
             let f: Vec<&str> = l.split(',').collect();
-            (f[t].parse().expect("t_s"), f[a].trim().parse().ok())
+            let s: f64 = f[t].parse().expect("t_s");
+            ((s * 1000.0).round() as u64, f[a].trim().parse().ok())
         })
         .collect()
     }
 
-    /// Plays a trace through a running pump with a full tank: when it tripped and why.
-    fn replay(g: &mut PumpGuard, csv: &str) -> Option<(f64, String)> {
+    /// Plays a trace through a running pump with a full tank: when (ms) it tripped and why.
+    fn replay(g: &mut PumpGuard, csv: &str) -> Option<(u64, String)> {
         let t0 = Instant::now();
         g.request(&on(None, None), wet(), t0).unwrap();
-        trace(csv).into_iter().find_map(|(t, a)| {
+        trace(csv).into_iter().find_map(|(ms, a)| {
             let env = Env {
                 pump_current_a: a,
                 ..wet()
             };
-            let stop = g.tick(env, t0 + Duration::from_secs_f64(t));
-            stop.map(|_| (t, g.fault().unwrap_or("no fault").to_owned()))
+            let stop = g.tick(env, t0 + Duration::from_millis(ms));
+            stop.map(|_| (ms, g.fault().unwrap_or("no fault").to_owned()))
         })
     }
 
@@ -585,18 +706,25 @@ mod tests {
 
     #[test]
     fn dry_traces_trip_within_the_grace_and_the_confirm_time() {
-        for (name, csv) in DRY_TRACES {
+        for (name, csv, every) in DRY_TRACES {
             let mut g = current_guard();
             let (at, fault) = replay(&mut g, csv).unwrap_or_else(|| panic!("{name} never tripped"));
             let l = g.limits().clone();
-            assert!(at >= l.dry_current_s as f64, "{name} tripped at {at} s");
+            assert!(at >= l.dry_grace_ms + l.dry_after_ms, "{name} tripped at {at} ms");
+            // The first read judged lands within one read of the grace ending.
             assert!(
-                at <= (l.dry_grace_s + l.dry_current_s) as f64,
-                "{name} tripped late, at {at} s"
+                at <= l.dry_grace_ms + l.dry_after_ms.max(*every * (DRY_MIN_READS as u64 - 1)) + every,
+                "{name} tripped late, at {at} ms"
             );
             assert!(is_dry_run(&fault), "{fault}");
-            assert!(fault.contains("below 1.2 A for 5 s: it's pulling air"), "{fault}");
+            assert!(
+                fault.contains("below 1.2 A for 0.3 s: it's pulling air"),
+                "{fault}"
+            );
         }
+        // At 10 Hz: the grace, then 0.3 s of low reads.
+        let (at, _) = replay(&mut current_guard(), DRY_TRACES[1].1).unwrap();
+        assert_eq!(at, 1300);
     }
 
     #[test]
@@ -608,24 +736,46 @@ mod tests {
             pump_current_a: Some(0.4),
             ..wet()
         };
+        let ms = |n| t0 + Duration::from_millis(n);
         // Spin-up: nothing is judged in the grace, however low.
-        assert_eq!(g.tick(air, t0 + Duration::from_secs(2)), None);
-        assert_eq!(g.tick(air, t0 + Duration::from_secs(3)), None);
-        assert_eq!(g.tick(air, t0 + Duration::from_secs(7)), None);
-        assert_eq!(g.tick(air, t0 + Duration::from_secs(8)), Some(Decision::Stop));
+        for n in (100..1000).step_by(100) {
+            assert_eq!(g.tick(air, ms(n)), None, "{n} ms");
+        }
+        assert_eq!(g.tick(air, ms(1000)), None);
+        assert_eq!(g.tick(air, ms(1100)), None);
+        assert_eq!(g.tick(air, ms(1200)), None);
+        assert_eq!(g.tick(air, ms(1300)), Some(Decision::Stop));
         assert_eq!(
             g.fault(),
-            Some("dry-run: pump drew 0.4 A, below 1.2 A for 5 s: it's pulling air")
+            Some("dry-run: pump drew 0.4 A, below 1.2 A for 0.3 s: it's pulling air")
         );
-        assert!(!g.is_running(t0 + Duration::from_secs(8)));
+        assert!(!g.is_running(ms(1300)));
         assert!(matches!(
-            g.request(&on(None, None), wet(), t0 + Duration::from_secs(9)),
+            g.request(&on(None, None), wet(), ms(2000)),
             Err(Refusal::Latched(f)) if f.contains("pulling air")
         ));
         g.acknowledge();
-        assert!(g
-            .request(&on(None, None), wet(), t0 + Duration::from_secs(10))
-            .is_ok());
+        assert!(g.request(&on(None, None), wet(), ms(3000)).is_ok());
+    }
+
+    #[test]
+    fn it_takes_three_low_reads_in_a_row_however_slowly_they_come() {
+        let mut g = PumpGuard::new(PumpLimits {
+            dry_current_a: Some(1.2),
+            dry_after_ms: 100,
+            ..PumpLimits::default()
+        });
+        let t0 = Instant::now();
+        g.request(&on(None, None), wet(), t0).unwrap();
+        let air = Env {
+            pump_current_a: Some(0.4),
+            ..wet()
+        };
+        let s = |n| t0 + Duration::from_secs(n);
+        assert_eq!(g.tick(air, s(2)), None);
+        assert_eq!(g.tick(air, s(3)), None);
+        assert_eq!(g.tick(air, s(4)), Some(Decision::Stop));
+        assert!(g.fault().unwrap().contains("for 0.1 s"));
     }
 
     #[test]
@@ -637,68 +787,92 @@ mod tests {
             pump_current_a: a,
             ..wet()
         };
-        let s = |n| t0 + Duration::from_secs(n);
-        assert_eq!(g.tick(at(Some(0.3)), s(4)), None);
-        assert_eq!(g.tick(at(None), s(8)), None);
-        assert_eq!(g.tick(at(Some(0.3)), s(9)), None);
-        assert_eq!(g.tick(at(Some(1.5)), s(13)), None);
-        assert_eq!(g.tick(at(Some(0.3)), s(14)), None);
-        assert_eq!(g.tick(at(Some(0.3)), s(18)), None);
-        assert_eq!(g.tick(at(Some(0.3)), s(19)), Some(Decision::Stop));
+        let ms = |n| t0 + Duration::from_millis(n);
+        assert_eq!(g.tick(at(Some(0.3)), ms(1000)), None);
+        assert_eq!(g.tick(at(Some(0.3)), ms(1100)), None);
+        assert_eq!(g.tick(at(Some(0.3)), ms(1200)), None);
+        assert_eq!(g.tick(at(None), ms(1300)), None);
+        assert_eq!(g.tick(at(Some(0.3)), ms(1400)), None);
+        assert_eq!(g.tick(at(Some(0.3)), ms(1500)), None);
+        assert_eq!(g.tick(at(Some(0.3)), ms(1600)), None);
+        assert_eq!(g.tick(at(Some(1.5)), ms(1700)), None);
+        assert_eq!(g.tick(at(Some(0.3)), ms(1800)), None);
+        assert_eq!(g.tick(at(Some(0.3)), ms(1900)), None);
+        assert_eq!(g.tick(at(Some(0.3)), ms(2000)), None);
+        assert_eq!(g.tick(at(Some(0.3)), ms(2100)), Some(Decision::Stop));
         assert_eq!(
             g.fault(),
-            Some("dry-run: pump drew 0.3 A, below 1.2 A for 5 s: it's pulling air")
+            Some("dry-run: pump drew 0.3 A, below 1.2 A for 0.3 s: it's pulling air")
         );
+    }
+
+    #[test]
+    fn a_monitor_that_reads_nothing_never_trips_the_current_guard() {
+        let mut g = current_guard();
+        let t0 = Instant::now();
+        g.request(&on(None, Some(60)), wet(), t0).unwrap();
+        let lost = Env {
+            pump_current_a: None,
+            ..wet()
+        };
+        for n in (100..59_000).step_by(100) {
+            assert_eq!(g.tick(lost, t0 + Duration::from_millis(n)), None, "{n} ms");
+        }
+        assert_eq!(g.fault(), None);
     }
 
     #[test]
     fn a_longer_run_asked_for_mid_run_keeps_counting_and_a_new_run_gets_its_grace() {
         let mut g = current_guard();
         let t0 = Instant::now();
-        let s = |n| t0 + Duration::from_secs(n);
+        let ms = |n| t0 + Duration::from_millis(n);
         let air = Env {
             pump_current_a: Some(0.2),
             ..wet()
         };
         g.request(&on(None, Some(60)), wet(), t0).unwrap();
-        assert_eq!(g.tick(air, s(4)), None);
-        g.request(&on(None, Some(120)), wet(), s(6)).unwrap();
-        assert_eq!(g.tick(air, s(9)), Some(Decision::Stop));
+        assert_eq!(g.tick(air, ms(1000)), None);
+        assert_eq!(g.tick(air, ms(1100)), None);
+        g.request(&on(None, Some(120)), wet(), ms(1150)).unwrap();
+        assert_eq!(g.tick(air, ms(1200)), None);
+        assert_eq!(g.tick(air, ms(1300)), Some(Decision::Stop));
         g.acknowledge();
         // Stopped by hand mid-count, a new run spins up again before it's judged.
-        g.request(&on(None, Some(60)), wet(), s(20)).unwrap();
-        assert_eq!(g.tick(air, s(24)), None);
-        let off = ActuatorCommand {
-            on: Some(false),
-            level: None,
-            duration_s: None,
-        };
-        g.request(&off, wet(), s(25)).unwrap();
-        g.request(&on(None, Some(60)), wet(), s(26)).unwrap();
-        assert_eq!(g.tick(air, s(28)), None);
-        assert_eq!(g.tick(air, s(29)), None);
-        assert_eq!(g.tick(air, s(33)), None);
-        assert_eq!(g.tick(air, s(34)), Some(Decision::Stop));
+        g.request(&on(None, Some(60)), wet(), ms(5000)).unwrap();
+        assert_eq!(g.tick(air, ms(6000)), None);
+        assert_eq!(g.tick(air, ms(6100)), None);
+        g.request(&off(), wet(), ms(6150)).unwrap();
+        g.request(&on(None, Some(60)), wet(), ms(6200)).unwrap();
+        for n in (6300..7200).step_by(100) {
+            assert_eq!(g.tick(air, ms(n)), None, "{n} ms");
+        }
+        assert_eq!(g.tick(air, ms(7200)), None);
+        assert_eq!(g.tick(air, ms(7300)), None);
+        assert_eq!(g.tick(air, ms(7400)), None);
+        assert_eq!(g.tick(air, ms(7500)), Some(Decision::Stop));
     }
 
     #[test]
     fn a_run_ending_mid_count_leaves_the_next_one_a_fresh_grace() {
         let mut g = current_guard();
         let t0 = Instant::now();
-        let s = |n| t0 + Duration::from_secs(n);
+        let ms = |n| t0 + Duration::from_millis(n);
         let air = Env {
             pump_current_a: Some(0.2),
             ..wet()
         };
-        g.request(&on(None, Some(6)), wet(), t0).unwrap();
-        assert_eq!(g.tick(air, s(4)), None);
-        assert_eq!(g.tick(air, s(6)), Some(Decision::Stop));
+        g.request(&on(None, Some(2)), wet(), t0).unwrap();
+        assert_eq!(g.tick(air, ms(1800)), None);
+        assert_eq!(g.tick(air, ms(1900)), None);
+        assert_eq!(g.tick(air, ms(2000)), Some(Decision::Stop));
         assert_eq!(g.fault(), None);
-        g.request(&on(None, Some(60)), wet(), s(7)).unwrap();
-        assert_eq!(g.tick(air, s(9)), None);
-        assert_eq!(g.tick(air, s(10)), None);
-        assert_eq!(g.tick(air, s(14)), None);
-        assert_eq!(g.tick(air, s(15)), Some(Decision::Stop));
+        g.request(&on(None, Some(60)), wet(), ms(2100)).unwrap();
+        assert_eq!(g.tick(air, ms(2200)), None);
+        assert_eq!(g.tick(air, ms(3000)), None);
+        assert_eq!(g.tick(air, ms(3100)), None);
+        assert_eq!(g.tick(air, ms(3200)), None);
+        assert_eq!(g.tick(air, ms(3300)), None);
+        assert_eq!(g.tick(air, ms(3400)), Some(Decision::Stop));
     }
 
     #[test]
@@ -711,8 +885,8 @@ mod tests {
             pump_current_a: Some(0.0),
             ..wet()
         };
-        for n in 1..60 {
-            assert_eq!(g.tick(air, t0 + Duration::from_secs(n)), None);
+        for n in 1..600 {
+            assert_eq!(g.tick(air, t0 + Duration::from_millis(n * 100)), None);
         }
     }
 
@@ -720,7 +894,7 @@ mod tests {
     fn dry_run_faults_are_told_apart_from_the_others() {
         assert!(is_dry_run("dry-run"));
         assert!(is_dry_run(
-            "dry-run: pump drew 0 A, below 1.2 A for 5 s: it's pulling air"
+            "dry-run: pump drew 0 A, below 1.2 A for 0.3 s: it's pulling air"
         ));
         assert!(!is_dry_run("over-temp"));
         assert!(!is_dry_run("dry-runner"));

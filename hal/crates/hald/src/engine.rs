@@ -79,6 +79,8 @@ pub enum Inbound {
 pub struct Now {
     pub instant: Instant,
     pub epoch_s: u64,
+    /// What `advance` added short of a whole second, so steps of 100 ms still add up.
+    pub frac: Duration,
 }
 
 impl Now {
@@ -86,11 +88,14 @@ impl Now {
         Self {
             instant: Instant::now(),
             epoch_s: now_epoch_s(),
+            frac: Duration::ZERO,
         }
     }
     pub fn advance(&mut self, d: Duration) {
         self.instant += d;
-        self.epoch_s += d.as_secs();
+        let total = self.frac + d;
+        self.epoch_s += total.as_secs();
+        self.frac = Duration::from_nanos(u64::from(total.subsec_nanos()));
     }
     pub fn ts(&self) -> String {
         rfc3339_from_epoch(self.epoch_s)
@@ -129,6 +134,19 @@ pub struct EngineConfig {
 
 const HOURS_PERSIST_EVERY: Duration = Duration::from_secs(900);
 
+/// The fault latched when the pump driver refuses a stop. It waits for a person.
+pub const STOP_FAILED: &str = "stop-failed";
+
+/// How often the pump guard reads the pump current while the pump runs, and for
+/// [`PUMP_WATCH_TAIL`] after it stops. The reads feed the guard in memory only:
+/// telemetry keeps its own interval.
+pub const PUMP_SAMPLE_EVERY: Duration = Duration::from_millis(100);
+/// How long the fast reads go on after the pump stops.
+pub const PUMP_WATCH_TAIL: Duration = Duration::from_secs(2);
+/// How often the ranger is read for the guard while the pump runs. Its median of
+/// pings holds the engine for ~0.3 s, so it can't keep up with the current.
+const LEVEL_READ_EVERY: Duration = Duration::from_secs(1);
+
 fn key<T: Serialize>(v: &T) -> String {
     serde_json::to_value(v)
         .ok()
@@ -147,6 +165,14 @@ pub struct Engine {
     pump_was_on: bool,
     /// Until when a current-guard trip holds before it may clear like a dry-run.
     dry_hold_until: Option<Instant>,
+    /// Until when the pump guard's fast reads go on after the pump stopped.
+    watch_until: Option<Instant>,
+    /// When the guard's next fast read of the pump current is due.
+    next_pump_sample: Option<Instant>,
+    /// When the guard's next read of the ranger is due, while the pump runs.
+    next_level_read: Option<Instant>,
+    /// A stop the pump driver refused, retried until it takes.
+    stop_pending: bool,
     doses: BTreeMap<ActuatorId, DoseGuard>,
     dose_since: BTreeMap<ActuatorId, String>,
     /// Where the light is going; a fade may still be on its way there.
@@ -292,6 +318,10 @@ impl Engine {
             pump_since: String::new(),
             pump_was_on: false,
             dry_hold_until: None,
+            watch_until: None,
+            next_pump_sample: None,
+            next_level_read: None,
+            stop_pending: false,
             doses,
             dose_since: BTreeMap::new(),
             light_level: 0.0,
@@ -609,28 +639,12 @@ impl Engine {
                 info!("pump dry-run cleared: the water has read good for a minute");
                 out.extend(self.publish_actuator(ActuatorId::Pump, now));
             }
-        } else if self.pump.is_running(now.instant) {
-            self.refresh_env(now);
+        }
+        if self.watching(now.instant) {
+            self.sample_for_guard(now);
         }
 
-        let mut tripped = false;
-        if let Some(Decision::Stop) = self.pump.tick(self.env, now.instant) {
-            self.apply_pump(0.0, now);
-            match self.pump.fault() {
-                Some(f) => {
-                    warn!(fault = f, "pump stopped by guard; latched until acknowledged");
-                    tripped = true;
-                    // A full tank says nothing about a pump pulling air: the window it
-                    // clears on starts at the trip, not before it.
-                    if is_dry_run(f) && f != DRY_RUN {
-                        self.dry_hold_until =
-                            Some(now.instant + self.cfg.telemetry_interval * WATER_WINDOW as u32);
-                    }
-                }
-                None => info!("pump run complete"),
-            }
-            out.extend(self.publish_actuator(ActuatorId::Pump, now));
-        }
+        let tripped = self.guard_tick(now, &mut out);
         for id in self.doses.keys().copied().collect::<Vec<_>>() {
             let stop = self.doses.get_mut(&id).and_then(|g| g.tick(now.epoch_s));
             if let Some(Decision::Stop) = stop {
@@ -663,10 +677,12 @@ impl Engine {
         let mut out = Vec::new();
         let mut distance = None;
         let mut trusted_distance = None;
+        let mut has_ranger = false;
         let mut pcb = None;
         let mut pump_a = None;
         let mut readings = Vec::new();
         for s in self.registry.sensors_mut() {
+            has_ranger |= s.id() == SensorId::WaterDistance;
             match s.read() {
                 Ok(r) => {
                     match s.id() {
@@ -689,6 +705,11 @@ impl Engine {
             }
         }
         self.env.water_distance_cm = distance;
+        self.env.water_suspect = distance.is_some() && trusted_distance.is_none();
+        if has_ranger {
+            self.env.water_fresh = true;
+            self.next_level_read = Some(now.instant + LEVEL_READ_EVERY);
+        }
         self.env.pcb_temp_c = pcb;
         self.env.pump_current_a = pump_a;
         if let Some(low) = self.cfg.pump.water_low_cm {
@@ -712,23 +733,121 @@ impl Engine {
         out
     }
 
-    /// Just what the guard needs (before a pump decision and, while running,
-    /// between telemetry rounds).
-    fn refresh_env(&mut self, _now: Now) {
+    /// Everything the guard needs, before a pump decision.
+    fn refresh_env(&mut self, now: Now) {
+        // One more try before calling it no reading: a start shouldn't be refused on one bad read.
+        self.read_level(now, true);
+        self.read_pcb_temp();
+        self.read_pump_current();
+        self.env.over_temp_signal = self.read_over_temp_signal();
+    }
+
+    /// The ranger, for the guard: the reading, whether it's suspect, and that it's new.
+    fn read_level(&mut self, now: Now, retry: bool) {
         if let Some(s) = self.registry.sensor_mut(SensorId::WaterDistance) {
-            // One more try before calling it no reading: a start shouldn't be refused on one bad read.
-            self.env.water_distance_cm = s.read().or_else(|_| s.read()).ok().map(|r| r.value);
+            let r = if retry {
+                s.read().or_else(|_| s.read())
+            } else {
+                s.read()
+            };
+            let r = r.ok();
+            self.env.water_distance_cm = r.as_ref().map(|r| r.value);
+            self.env.water_suspect = r.is_some_and(|r| r.quality == Quality::Suspect);
+            self.env.water_fresh = true;
         }
+        self.next_level_read = Some(now.instant + LEVEL_READ_EVERY);
+    }
+
+    fn read_pcb_temp(&mut self) {
         if let Some(s) = self.registry.sensor_mut(SensorId::PcbTemp) {
             self.env.pcb_temp_c = s.read().ok().map(|r| r.value);
         }
-        // A failed read is `None`, which the current guard doesn't count as dry.
+    }
+
+    /// A fresh read of the pump monitor: the facets' cache would hand the guard
+    /// one number for 500 ms. A failed read is `None`, which the current guard
+    /// doesn't count as dry.
+    fn read_pump_current(&mut self) {
         self.env.pump_current_a = self
             .registry
             .sensor_mut(SensorId::PumpA)
-            .and_then(|s| s.read().ok())
+            .and_then(|s| s.read_fresh().ok())
             .map(|r| r.value);
+    }
+
+    /// The pump is (or may still be) driven, or stopped less than [`PUMP_WATCH_TAIL`] ago.
+    fn watching(&self, now: Instant) -> bool {
+        self.pump_was_on || self.stop_pending || self.watch_until.is_some_and(|t| now < t)
+    }
+
+    /// When the guard's next fast read is due, while the pump runs and for a
+    /// moment after it stops; `None` otherwise. The engine loop wakes for it.
+    pub fn pump_watch_due(&self, now: Now) -> Option<Instant> {
+        self.watching(now.instant)
+            .then(|| self.next_pump_sample.unwrap_or(now.instant))
+    }
+
+    /// The guard's fast path, between ticks: read the pump current (and the ranger
+    /// when its read is due) and let the guard judge them. It publishes nothing
+    /// but a stop: readings go out with telemetry, on its own interval.
+    pub fn pump_watch(&mut self, now: Now) -> Vec<Outbound> {
+        let mut out = Vec::new();
+        let due = self.next_pump_sample.map_or(true, |t| now.instant >= t);
+        if !self.watching(now.instant) || !due {
+            return out;
+        }
+        self.sample_for_guard(now);
+        if self.guard_tick(now, &mut out) {
+            self.refresh_alerts(now, false, &mut out);
+        }
+        out
+    }
+
+    fn sample_for_guard(&mut self, now: Now) {
+        self.read_pump_current();
+        let level_due = self.next_level_read.map_or(true, |t| now.instant >= t);
+        if self.pump.is_running(now.instant) && level_due {
+            self.read_level(now, false);
+            self.read_pcb_temp();
+        }
         self.env.over_temp_signal = self.read_over_temp_signal();
+        // Late reads don't bunch up: the next is a whole step from this one.
+        self.next_pump_sample = Some(now.instant + PUMP_SAMPLE_EVERY);
+    }
+
+    /// One guard decision on the readings in hand; true when it latched a fault.
+    fn guard_tick(&mut self, now: Now, out: &mut Vec<Outbound>) -> bool {
+        if self.stop_pending {
+            self.apply_pump(0.0, now);
+            if !self.stop_pending {
+                info!("pump stopped: the driver took the stop on a retry");
+                out.extend(self.publish_actuator(ActuatorId::Pump, now));
+            }
+        }
+        let env = self.env;
+        self.env.water_fresh = false;
+        let Some(Decision::Stop) = self.pump.tick(env, now.instant) else {
+            return false;
+        };
+        self.apply_pump(0.0, now);
+        let tripped = match self.pump.fault() {
+            Some(f) => {
+                warn!(fault = f, "pump stopped by guard; latched until acknowledged");
+                // A full tank says nothing about a pump pulling air: the window it
+                // clears on starts at the trip, not before it.
+                if is_dry_run(f) && f != DRY_RUN {
+                    self.dry_hold_until =
+                        Some(now.instant + self.cfg.telemetry_interval * WATER_WINDOW as u32);
+                }
+                true
+            }
+            None => {
+                info!("pump run complete");
+                false
+            }
+        };
+        out.extend(self.publish_actuator(ActuatorId::Pump, now));
+        tripped
     }
 
     /// Whether the pump is commanded on (for `--pump-trace`).
@@ -778,17 +897,43 @@ impl Engine {
 
     // ---- drivers (the only places that touch set_level) --------------------
 
-    /// The pump driver is driven from here and nowhere else.
+    /// The pump driver is driven from here and nowhere else. A stop the driver
+    /// refuses latches a fault and is retried on every guard decision until it
+    /// takes: the pump may still be running, with nothing else to stop it.
     fn apply_pump(&mut self, level: f64, now: Now) {
-        if let Some(p) = self.registry.actuator_mut(ActuatorId::Pump) {
-            if let Err(e) = p.set_level(level) {
+        let res = self
+            .registry
+            .actuator_mut(ActuatorId::Pump)
+            .map(|p| p.set_level(level));
+        if let Some(Err(e)) = res {
+            if level > 0.0 {
                 error!(%e, "pump driver write failed");
+            } else {
+                if !self.stop_pending {
+                    error!(%e, "pump driver refused a stop; retrying until it takes");
+                }
+                self.stop_pending = true;
+                // It outranks a dry-run, which would clear itself with the pump still on.
+                if !self.pump.fault().is_some_and(|f| f.starts_with(STOP_FAILED)) {
+                    self.pump
+                        .latch(&format!("{STOP_FAILED}: the pump driver refused a stop: {e}"));
+                }
+                return;
             }
+        }
+        if level == 0.0 {
+            self.stop_pending = false;
         }
         let on = level > 0.0;
         if on != self.pump_was_on {
             self.pump_since = now.ts();
             self.pump_was_on = on;
+            if !on {
+                self.watch_until = Some(now.instant + PUMP_WATCH_TAIL);
+            }
+        }
+        if on {
+            self.next_pump_sample = Some(now.instant + PUMP_SAMPLE_EVERY);
         }
     }
 
@@ -1211,6 +1356,19 @@ mod tests {
         now: Now,
         snapshot: SharedSnapshot,
         dir: std::path::PathBuf,
+        /// 100 ms steps taken by [`step`].
+        steps: u64,
+    }
+
+    /// 100 ms as main.rs runs it: the guard's fast read, and a tick every second.
+    fn step(r: &mut Rig) -> Vec<Outbound> {
+        r.now.advance(PUMP_SAMPLE_EVERY);
+        r.steps += 1;
+        if r.steps % 10 == 0 {
+            r.engine.tick(r.now)
+        } else {
+            r.engine.pump_watch(r.now)
+        }
     }
 
     fn rig(actuators: Vec<ActuatorId>, ha: bool, tag: &str) -> Rig {
@@ -1244,9 +1402,11 @@ mod tests {
             now: Now {
                 instant: Instant::now(),
                 epoch_s: 1_793_419_043,
+                frac: Duration::ZERO,
             },
             snapshot,
             dir,
+            steps: 0,
         }
     }
 
@@ -1522,26 +1682,24 @@ mod tests {
         r.engine
             .handle(Inbound::ActuatorSet(ActuatorId::Pump, on(None, None)), r.now);
         // Wet, it runs on.
-        for _ in 0..12 {
-            r.now.advance(Duration::from_secs(1));
-            r.engine.tick(r.now);
+        for _ in 0..120 {
+            assert!(!topics_of(&step(&mut r)).contains(&"seedypod/u1/actuator/pump/state"));
         }
         assert_eq!(r.world.lock().unwrap().pump_level, 30.0);
         // The intake comes out of the water: the tank still reads full, the current falls.
         r.world.lock().unwrap().intake_dry = true;
         let mut tripped = None;
-        for s in 1..=10 {
-            r.now.advance(Duration::from_secs(1));
-            let out = r.engine.tick(r.now);
+        for n in 1..=50 {
+            let out = step(&mut r);
             if r.world.lock().unwrap().pump_level == 0.0 {
-                tripped = Some((s, out));
+                tripped = Some((n * 100, out));
                 break;
             }
         }
         let (after, out) = tripped.expect("the current guard never tripped");
-        // The first low read comes a second in, then 5 s of them.
-        assert!(after <= 6, "tripped {after} s after the intake went dry");
-        let why = "dry-run: pump drew 0.05 A, below 0.15 A for 5 s: it's pulling air";
+        // The first low read comes 100 ms in, then 0.3 s of them.
+        assert_eq!(after, 400, "tripped {after} ms after the intake went dry");
+        let why = "dry-run: pump drew 0.05 A, below 0.15 A for 0.3 s: it's pulling air";
         assert_eq!(payload(&out, "seedypod/u1/actuator/pump/state")["fault"], why);
         let alert = payload(&out, "seedypod/u1/alert/pump_fault");
         assert_eq!(alert["active"], true);
@@ -1633,6 +1791,195 @@ mod tests {
         let _ = std::fs::remove_dir_all(&bare.dir);
     }
 
+    #[test]
+    fn fast_reads_open_on_a_start_and_close_two_seconds_after_the_stop() {
+        let mut r = current_rig("watch", true);
+        r.engine.boot(r.now);
+        assert_eq!(r.engine.pump_watch_due(r.now), None);
+        assert!(r.engine.pump_watch(r.now).is_empty());
+        r.engine
+            .handle(Inbound::ActuatorSet(ActuatorId::Pump, on(None, Some(3))), r.now);
+        assert_eq!(
+            r.engine.pump_watch_due(r.now),
+            Some(r.now.instant + PUMP_SAMPLE_EVERY)
+        );
+        // Not due yet: nothing happens.
+        assert!(r.engine.pump_watch(r.now).is_empty());
+        let mut stopped = None;
+        for _ in 0..40 {
+            let out = step(&mut r);
+            if out
+                .iter()
+                .any(|o| o.topic == "seedypod/u1/actuator/pump/state" && o.payload.contains(r#""on":false"#))
+            {
+                stopped = Some(r.steps);
+                break;
+            }
+            assert_eq!(r.engine.env.pump_current_a, Some(0.22));
+        }
+        // The 3 s run ends on its deadline, not up to a tick late.
+        assert_eq!(stopped, Some(30));
+        // The current goes on being read for 2 s, then the reads stop.
+        for _ in 31..50 {
+            step(&mut r);
+            assert!(r.engine.pump_watch_due(r.now).is_some(), "{} steps", r.steps);
+        }
+        assert_eq!(r.engine.env.pump_current_a, Some(0.0));
+        step(&mut r);
+        assert_eq!(r.engine.pump_watch_due(r.now), None);
+        r.world.lock().unwrap().pump_level = 30.0;
+        step(&mut r);
+        assert_eq!(r.engine.env.pump_current_a, Some(0.0), "no reads past the tail");
+        let _ = std::fs::remove_dir_all(&r.dir);
+    }
+
+    #[test]
+    fn telemetry_goes_out_on_its_interval_whether_or_not_the_pump_runs() {
+        let mut r = current_rig("cadence", true);
+        r.engine.boot(r.now);
+        // (telemetry rounds, readings the fast reads published) over 30 s.
+        let rounds = |r: &mut Rig| {
+            let (mut rounds, mut fast) = (0, 0);
+            for _ in 0..300 {
+                let out = step(r);
+                let readings = out
+                    .iter()
+                    .filter(|o| o.topic.starts_with("seedypod/u1/sensor/"))
+                    .count();
+                if r.steps % 10 != 0 {
+                    fast += readings;
+                } else if readings > 0 {
+                    rounds += 1;
+                }
+            }
+            (rounds, fast)
+        };
+        assert_eq!(rounds(&mut r), (3, 0));
+        r.engine
+            .handle(Inbound::ActuatorSet(ActuatorId::Pump, on(None, Some(60))), r.now);
+        assert_eq!(rounds(&mut r), (3, 0));
+        assert_eq!(r.world.lock().unwrap().pump_level, 30.0);
+        let _ = std::fs::remove_dir_all(&r.dir);
+    }
+
+    #[test]
+    fn a_tank_running_low_stops_the_pump_on_its_second_trusted_reading() {
+        let mut r = rig(vec![ActuatorId::Pump], false, "level-fast");
+        r.engine.boot(r.now);
+        r.engine
+            .handle(Inbound::ActuatorSet(ActuatorId::Pump, on(None, None)), r.now);
+        for _ in 0..25 {
+            step(&mut r);
+        }
+        r.world.lock().unwrap().water_distance_cm = 17.0;
+        let mut tripped = None;
+        for n in 1..=40 {
+            let out = step(&mut r);
+            if r.world.lock().unwrap().pump_level == 0.0 {
+                tripped = Some((n, out));
+                break;
+            }
+        }
+        let (n, out) = tripped.expect("never tripped");
+        // The ranger is read once a second: the first low reading at 0.5 s, the second a second on.
+        assert_eq!(n, 15, "tripped {n} steps after the tank went low");
+        assert_eq!(
+            payload(&out, "seedypod/u1/actuator/pump/state")["fault"],
+            "dry-run"
+        );
+        assert_eq!(payload(&out, "seedypod/u1/alert/pump_fault")["active"], true);
+        let _ = std::fs::remove_dir_all(&r.dir);
+    }
+
+    /// The sim pump, but a stop can be made to fail.
+    struct StuckPump {
+        inner: hal_sim::SimActuator,
+        stuck: Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    impl hal_core::device::Actuator for StuckPump {
+        fn id(&self) -> ActuatorId {
+            ActuatorId::Pump
+        }
+        fn probe(&mut self) -> Result<(), hal_core::device::DeviceError> {
+            self.inner.probe()
+        }
+        fn set_level(&mut self, level: f64) -> Result<(), hal_core::device::DeviceError> {
+            if level == 0.0 && self.stuck.load(std::sync::atomic::Ordering::Relaxed) {
+                return Err(hal_core::device::DeviceError::Bus("stuck".into()));
+            }
+            self.inner.set_level(level)
+        }
+        fn level(&self) -> f64 {
+            self.inner.level()
+        }
+    }
+
+    #[test]
+    fn a_stop_the_driver_refuses_latches_a_fault_and_is_retried_until_it_takes() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let mut r = rig(vec![ActuatorId::Pump], false, "stuck");
+        let stuck = Arc::new(AtomicBool::new(false));
+        let mut registry = Registry::default();
+        for id in [
+            SensorId::AirTemp,
+            SensorId::PcbTemp,
+            SensorId::WaterDistance,
+            SensorId::WaterLevelPct,
+        ] {
+            registry.add_sensor(Box::new(hal_sim::SimSensor::new(id, r.world.clone())));
+        }
+        registry.add_actuator(Box::new(StuckPump {
+            inner: hal_sim::SimActuator::new(ActuatorId::Pump, r.world.clone()),
+            stuck: stuck.clone(),
+        }));
+        r.engine = Engine::new(
+            system(vec![ActuatorId::Pump]),
+            cfg(false),
+            registry,
+            None,
+            Some(StateFile::new(&r.dir)),
+            r.snapshot.clone(),
+        );
+        r.engine.boot(r.now);
+        r.engine
+            .handle(Inbound::ActuatorSet(ActuatorId::Pump, on(None, Some(60))), r.now);
+        assert_eq!(r.world.lock().unwrap().pump_level, 30.0);
+        stuck.store(true, Ordering::Relaxed);
+        let out = r
+            .engine
+            .handle(Inbound::ActuatorSet(ActuatorId::Pump, off()), r.now);
+        let why = "stop-failed: the pump driver refused a stop: bus error: stuck";
+        assert_eq!(payload(&out, "seedypod/u1/actuator/pump/state")["fault"], why);
+        let alert = payload(&out, "seedypod/u1/alert/pump_fault");
+        assert_eq!(alert["active"], true);
+        // Retried on every read while it won't take; the pump is still on.
+        for _ in 0..15 {
+            step(&mut r);
+            assert!(r.engine.pump_watch_due(r.now).is_some());
+        }
+        assert_eq!(r.world.lock().unwrap().pump_level, 30.0);
+        // Acknowledged too soon: the next refused stop latches it again.
+        r.engine.handle(Inbound::AlertAck(AlertKind::PumpFault), r.now);
+        step(&mut r);
+        assert_eq!(r.engine.pump.fault(), Some(why));
+        stuck.store(false, Ordering::Relaxed);
+        let out = step(&mut r);
+        assert_eq!(r.world.lock().unwrap().pump_level, 0.0);
+        assert_eq!(payload(&out, "seedypod/u1/actuator/pump/state")["fault"], why);
+        // Stopped, but still latched for a person: no restart until acknowledged.
+        let out = r
+            .engine
+            .handle(Inbound::ActuatorSet(ActuatorId::Pump, on(None, Some(5))), r.now);
+        assert_eq!(payload(&out, "seedypod/u1/actuator/pump/state")["on"], false);
+        r.engine.handle(Inbound::AlertAck(AlertKind::PumpFault), r.now);
+        let out = r
+            .engine
+            .handle(Inbound::ActuatorSet(ActuatorId::Pump, on(None, Some(5))), r.now);
+        assert_eq!(payload(&out, "seedypod/u1/actuator/pump/state")["on"], true);
+        let _ = std::fs::remove_dir_all(&r.dir);
+    }
+
     fn water_rounds(a: &mut WaterAlert, rounds: &[Option<f64>]) -> Vec<bool> {
         rounds
             .iter()
@@ -1722,6 +2069,7 @@ mod tests {
         let mut now = Now {
             instant: Instant::now(),
             epoch_s: 1_793_419_043,
+            frac: Duration::ZERO,
         };
         e.boot(now);
         for _ in 0..WATER_WINDOW * 3 {
@@ -2056,6 +2404,7 @@ mod tests {
         let mut now = Now {
             instant: Instant::now(),
             epoch_s: 1_793_419_043,
+            frac: Duration::ZERO,
         };
         e.boot(now);
         broken.store(true, Ordering::Relaxed);
@@ -2286,6 +2635,7 @@ mod tests {
             now,
             snapshot,
             dir,
+            ..
         } = r;
         let engine = engine.with_devices(Devices {
             entries: Devices::from_boot(&[(stock, None)], &[]),
@@ -2299,6 +2649,7 @@ mod tests {
             now,
             snapshot,
             dir,
+            steps: 0,
         }
     }
 
@@ -2605,6 +2956,7 @@ mod tests {
         let mut n = Now {
             instant: Instant::now(),
             epoch_s: 0,
+            frac: Duration::ZERO,
         };
         n.advance(Duration::from_secs(90));
         assert_eq!(n.epoch_s, 90);
