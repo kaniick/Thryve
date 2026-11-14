@@ -31,8 +31,8 @@ export function CodeGlyphs({ code }: { code: string }) {
 /** One pod's code: what it reads as, the plant it would be, and confirm or correct. */
 function CodeRow({ pod, suggestions, onSave, saving }: { pod: View, suggestions: string[], onSave: (plant: string) => void, saving: boolean }) {
   const [fixing, setFixing] = useState(false)
-  const [plant, setPlant] = useState(pod.confirmed ?? pod.recorded ?? '')
-  const guess = pod.confirmed ?? pod.recorded
+  const [plant, setPlant] = useState(pod.guess ?? '')
+  const guess = pod.guess
   return (
     <li className="flex flex-col gap-2 border-t border-line py-2.5 first:border-t-0" data-testid={`pod-code-${pod.slot}`}>
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-[13px]">
@@ -47,12 +47,15 @@ function CodeRow({ pod, suggestions, onSave, saving }: { pod: View, suggestions:
                 <Check size={13} className="text-ok" aria-label="confirmed" />
               </span>
             )
-          : <span>{guess ? `${guess}?` : 'which plant?'}</span>}
+          : pod.from === 'shared'
+            ? <span title="Other units confirmed this code; confirm it is right here too">{`${guess} · known code`}</span>
+            : <span>{guess ? `${guess}?` : 'which plant?'}</span>}
         <span className="ml-auto flex gap-1.5">
           {!pod.confirmed && guess && <Button size="sm" variant="primary" disabled={saving} onClick={() => onSave(guess)}>Confirm</Button>}
           <Button size="sm" disabled={saving} onClick={() => setFixing(f => !f)}>{pod.confirmed || guess ? 'Correct' : 'Say which'}</Button>
         </span>
       </div>
+      {pod.disagrees && <span className="text-xs text-pod-attention">{`Other units say this code is ${pod.shared}. Yours is kept.`}</span>}
       {fixing && (
         <form
           className="flex items-end gap-2"
@@ -76,8 +79,9 @@ function CodeRow({ pod, suggestions, onSave, saving }: { pod: View, suggestions:
 
 /**
  * yCube dot codes (#224), in Label pods: only pods a code was read under,
- * each with the plant its code is (once the owner has said) or the pod
- * record's plant as a guess. Confirm or correct saves the code → plant pair;
+ * each with the plant its code is (once the owner has said), else the shared
+ * table's plant as a known code (#259), else the pod record's plant as a
+ * guess. Confirm or correct saves the owner's own code → plant pair;
  * it never changes a pod's record or a plan. Read codes takes a full-size
  * still on each camera, which is slow on a Pi Zero.
  */
@@ -89,7 +93,7 @@ export function PodCodes() {
   const confirm = trpc.vision.confirmPodCode.useMutation({ onSuccess: refresh })
   const data = codes.data
   if (!data || (!data.available && data.pods.length === 0)) return null
-  const suggestions = [...new Set([...data.pods.flatMap(p => (p.recorded ? [p.recorded] : [])), ...data.pairs.map(p => p.plant)])].sort()
+  const suggestions = [...new Set([...data.pods.flatMap(p => [p.recorded, p.shared].filter(x => x !== null)), ...data.pairs.map(p => p.plant)])].sort()
   const newest = data.pods.reduce<string | null>((a, p) => (a && a > p.ts ? a : p.ts), null)
   const failed = read.data?.filter(r => r.error)
   return (

@@ -257,7 +257,8 @@ describe('pod codes (#224)', () => {
     ])
     expect(events).toContain('podCodes')
     const got = await c.vision.podCodes()
-    expect(got.pods).toEqual([{ slot: 6, camera: 'upper', code: 'oo||', confidence: 0.9, ts: '2026-11-11T21:00:00.000Z', confirmed: null, recorded: 'Green Bok Choy' }])
+    // Whether or not the shipped table knows the code, the guess is the same here.
+    expect(got.pods).toMatchObject([{ slot: 6, camera: 'upper', code: 'oo||', confidence: 0.9, ts: '2026-11-11T21:00:00.000Z', confirmed: null, recorded: 'Green Bok Choy', guess: 'Green Bok Choy', disagrees: false }])
     // No capture was added, and nothing was confirmed by reading.
     expect(await c.camera.list({ limit: 10 })).toEqual([])
     expect(ctx.store.podCodes.pairs()).toEqual([])

@@ -18,12 +18,16 @@ const CodeView = z.object({
   ts: z.string(),
   confirmed: z.string().nullable(),
   recorded: z.string().nullable(),
+  shared: z.string().nullable(),
+  guess: z.string().nullable(),
+  from: z.enum(['own', 'shared', 'record']).nullable(),
+  disagrees: z.boolean(),
 })
 const CodePair = z.object({ code: z.string(), plant: z.string(), confirmedAt: z.string() })
 const CodesOut = z.object({ available: z.boolean(), pods: z.array(CodeView), pairs: z.array(CodePair) })
 const Swap = z.tuple([z.number(), z.number()])
 const OrderOut = z.object({
-  slots: z.array(z.object({ slot: z.number(), code: z.string(), tower: z.string(), record: z.string().nullable(), plan: z.string().nullable() })),
+  slots: z.array(z.object({ slot: z.number(), code: z.string(), tower: z.string(), from: z.enum(['own', 'shared']), record: z.string().nullable(), plan: z.string().nullable() })),
   recordSwaps: z.array(Swap),
   recordsUnresolved: z.array(z.number()),
   moves: z.array(Swap),
@@ -232,7 +236,7 @@ export const visionRouter = router({
       return { captureId: input.captureId, slot: input.slot, label: input.label }
     }),
   podCodes: publicProcedure
-    .meta({ openapi: { method: 'GET', path: '/vision/pod-codes', tags: ['vision'], summary: 'yCube dot codes (#224): each pod a code was read under, with the plant the owner confirmed for it (or null) and its record\'s plant; and every confirmed code → plant pair' } })
+    .meta({ openapi: { method: 'GET', path: '/vision/pod-codes', tags: ['vision'], summary: 'yCube dot codes (#224): each pod a code was read under, with the plant the owner confirmed for it (or null), the shared table\'s confirmed plant (#259), its record\'s plant, and the guess in that order; and every confirmed code → plant pair' } })
     .output(CodesOut)
     .query(({ ctx }) => ({ available: ctx.podCodes.available, pods: podCodeViews(ctx.store) as Array<z.infer<typeof CodeView>>, pairs: ctx.store.podCodes.pairs() })),
   readPodCodes: publicProcedure
@@ -261,7 +265,7 @@ export const visionRouter = router({
       return { forgotten }
     }),
   podOrder: publicProcedure
-    .meta({ openapi: { method: 'GET', path: '/vision/pod-order', tags: ['vision'], summary: 'Pods out of order (#224): where a confirmed dot code disagrees with the pod record or the active plan, with the record swaps that match the tower and the physical swaps that match the plan; null when all agree' } })
+    .meta({ openapi: { method: 'GET', path: '/vision/pod-order', tags: ['vision'], summary: 'Pods out of order (#224): where a known dot code (the owner\'s pair, else the shared table\'s) disagrees with the pod record or the active plan, with the record swaps that match the tower and the physical swaps that match the plan; null when all agree' } })
     .output(OrderOut.nullable())
     .query(({ ctx }) => podOrder(ctx.store)),
   fixPodOrder: publicProcedure

@@ -9,19 +9,24 @@
  *   date, status, notes and last cut).
  * - Move the pods to match the plan: physical swaps for the owner to make.
  *
- * Only pods whose code was read and confirmed take part. An unread pod, or one
- * whose code has no confirmed plant, is never moved or corrected, and a
- * mismatch that needs one is left unresolved rather than guessed.
+ * Only pods whose code was read and is known take part: the owner's confirmed
+ * pair, else a confirmed entry in the shared table (#259). An unread pod, or
+ * one whose code is neither, is never moved or corrected, and a mismatch that
+ * needs one is left unresolved rather than guessed. Either fix still waits for
+ * the owner.
  */
 import type { Pod, Store } from '../store/types'
 import { profileKey } from '../store/types'
+import { lookupCode, sharedPairs } from './sharedPodCodes'
 
-/** One pod whose confirmed code disagrees with its record or the plan. */
+/** One pod whose known code disagrees with its record or the plan. */
 export interface OrderSlot {
   slot: number
   code: string
-  /** What the tower holds there, from the confirmed code. */
+  /** What the tower holds there, from the code. */
   tower: string
+  /** Whose code says so: the owner's confirmed pair, or the shared table's (#259). */
+  from: 'own' | 'shared'
   record: string | null
   /** What the active plan puts there, or null with no plan or nothing planned there. */
   plan: string | null
@@ -38,7 +43,7 @@ export interface PodOrder {
   /** Pods whose planned plant isn't on any other mismatched pod. */
   movesUnresolved: number[]
   plan: { id: string, name: string } | null
-  /** Pods with no confirmed code, which this never touches. */
+  /** Pods with no known code, which this never touches. */
   unknown: number
   /** Changes whenever what's out of order does, so a fix is only applied to what was shown. */
   key: string
@@ -77,13 +82,16 @@ function swapsToMatch(slots: number[], want: Map<number, string | null>, have: M
   return { swaps, unresolved: unresolved.filter(wrong) }
 }
 
-/** What's out of order, or null when every pod with a confirmed code matches its record and the plan. */
-export function podOrder(store: Pick<Store, 'podCodes' | 'pods' | 'plans'>): PodOrder | null {
+/** What's out of order, or null when every pod with a known code matches its record and the plan. */
+export function podOrder(store: Pick<Store, 'podCodes' | 'pods' | 'plans'>, shared: Map<string, string> = sharedPairs()): PodOrder | null {
   const pairs = new Map(store.podCodes.pairs().map(p => [p.code, p.plant]))
   const pods = new Map(store.pods.list().map(p => [p.slot, p]))
   const plan = activePlan(store)
   const planned = new Map((plan?.layout.assignments ?? []).map(a => [a.slot, a.plantName]))
-  const known = store.podCodes.reads().flatMap(r => (r.code && pairs.has(r.code) ? [{ slot: r.slot, code: r.code, tower: pairs.get(r.code) as string }] : []))
+  const known = store.podCodes.reads().flatMap((r) => {
+    const l = r.code ? lookupCode(pairs.get(r.code) ?? null, shared.get(r.code) ?? null, null) : null
+    return r.code && l?.plant ? [{ slot: r.slot, code: r.code, tower: l.plant, from: l.from as 'own' | 'shared' }] : []
+  })
   const all: OrderSlot[] = known.map(k => ({ ...k, record: pods.get(k.slot)?.plant ?? null, plan: plan ? planned.get(k.slot) ?? null : null }))
   const slots = all.filter(s => !same(s.tower, s.record) || (plan && !same(s.tower, s.plan)))
   if (!slots.length) return null

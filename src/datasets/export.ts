@@ -4,7 +4,8 @@
  * as a tar of JSON/JSONL files. It is the thing you pull to a laptop to
  * measure, recalibrate or train — seedypod's counterpart of sleepypod's
  * sleep-stage dataset script. The grower's pod labels (#184) ride along with
- * each pod's crop, so a trainer sees exactly what the analysers see.
+ * each pod's crop, so a trainer sees exactly what the analysers see, and the
+ * owner's confirmed dot code → plant pairs (#259) go with the archive whole.
  */
 import { SensorId } from '../hardware/contract'
 import { daysSinceSowing } from '../scheduler/pumpPlan'
@@ -130,6 +131,7 @@ export async function* datasetEntries(ctx: Context, w: ExportWindow): AsyncGener
   const telemetry = telemetryIn(ctx, w)
   const labels = ctx.store.podLabels.range(w.from, w.to)
   const regions = regionsOf(ctx)
+  const podCodes = ctx.store.podCodes.pairs()
   const system = ctx.hal.snapshot().system
 
   yield file('manifest.json', json({
@@ -140,7 +142,7 @@ export async function* datasetEntries(ctx: Context, w: ExportWindow): AsyncGener
     core: ctx.version,
     primaryAnalyzer: settings.primaryAnalyzer,
     analyzers: ctx.analysis.list().map(({ primary, ...a }) => ({ ...a, primary })),
-    counts: { captures: captures.length, analyses: analyses.length, telemetry: telemetry.length, labels: labels.length },
+    counts: { captures: captures.length, analyses: analyses.length, telemetry: telemetry.length, labels: labels.length, podCodes: podCodes.length },
     images: w.images,
   }))
   yield file('README.md', enc.encode(README))
@@ -152,6 +154,7 @@ export async function* datasetEntries(ctx: Context, w: ExportWindow): AsyncGener
   yield file('regions.json', json(regions))
   yield file('pods.json', json(ctx.store.pods.list()))
   yield file('grow_cycles.json', json(ctx.store.grow.history()))
+  yield file('pod_codes.json', json(podCodes))
 
   if (!w.images) return
   for (const c of captures) {
@@ -176,6 +179,7 @@ Exported from a seedypod unit (ADR-0019). Every file covers the window in
 | \`telemetry.jsonl\` | One reading per line, thinned to one per 15 minutes past 90 days: \`ts\`, \`sensor\`, \`value\` (canonical units, see the HAL contract) |
 | \`pods.json\` | The 30 pods: plant, planted date, status, notes |
 | \`grow_cycles.json\` | Grow cycles with start/end and stage |
+| \`pod_codes.json\` | The yCube dot codes the owner confirmed: \`code\`, \`plant\`, \`confirmedAt\`, whenever they were confirmed |
 | \`images/<id>.jpg\` | The stills, when exported with images |
 
 Labels are \`empty\` (capped, no yCube), \`seeded\` (a yCube in, nothing
