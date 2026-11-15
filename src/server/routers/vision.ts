@@ -73,7 +73,7 @@ const Result = z.object({
   artifact: z.string().nullable(),
 })
 const CameraName = z.enum(['upper', 'lower'])
-const Region = z.object({ slot: z.number().int(), x: z.number().min(0).max(1), y: z.number().min(0).max(1), w: z.number().gt(0).max(1), h: z.number().gt(0).max(1) })
+const Region = z.object({ slot: z.number().int(), x: z.number().min(0).max(1), y: z.number().min(0).max(1), w: z.number().gt(0).max(1), h: z.number().gt(0).max(1), coreX: z.number().min(0).max(1).optional(), coreY: z.number().min(0).max(1).optional() })
 const CameraRegions = z.object({ camera: CameraName, calibrated: z.boolean(), regions: z.array(Region.extend({ moved: z.boolean() })) })
 
 /** One camera's boxes as rows, each marked moved when it isn't the measured default. */
@@ -285,7 +285,7 @@ export const visionRouter = router({
         const r = clampRegion(box)
         const d = DEFAULT_REGIONS[input.camera][slot] as PodRegions[number]
         // A box put back where it started is a default again, not a calibration.
-        if (r.x !== d.x || r.y !== d.y || r.w !== d.w || r.h !== d.h) own[slot] = r
+        if (r.x !== d.x || r.y !== d.y || r.w !== d.w || r.h !== d.h || r.coreX !== d.coreX || r.coreY !== d.coreY) own[slot] = r
       }
       const others = Object.entries(ctx.store.settings.get().podRegions ?? {}).filter(([c]) => c !== input.camera)
       const all = Object.fromEntries(Object.keys(own).length > 0 ? [...others, [input.camera, own]] : others)

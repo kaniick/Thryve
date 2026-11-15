@@ -202,7 +202,7 @@ describe('AnalysisPage', () => {
     const labels = [...(upper?.querySelectorAll('[data-slot]') ?? [])].map(s => s.textContent)
     expect(labels.slice(0, 3)).toEqual(['1 · 40%', '2', '3'])
     expect(lower?.querySelector('[data-slot]')?.textContent).toBe('16 · 20%')
-    expect(screen.getByText(/dashed middle/)).toBeTruthy()
+    expect(screen.getByText(/dashed cup area/)).toBeTruthy()
     fireEvent.change(screen.getByLabelText('Analyser'), { target: { value: 'exg-otsu@1' } })
     expect(screen.getAllByTestId('pod-bounds')[0]?.querySelector('[data-slot]')?.textContent).toBe('1 · 45%')
   })
@@ -264,6 +264,27 @@ describe('AnalysisPage', () => {
     fireEvent.click(screen.getByText('Cancel'))
     expect(screen.queryByRole('button', { name: 'Pod 2 box' })).toBeNull()
     expect(calls.setRegions).not.toHaveBeenCalled()
+  })
+
+  it('repositions the dashed cup area without moving Pod 2’s outer box', async () => {
+    render(<AnalysisPage />)
+    fireEvent.click(screen.getByRole('tab', { name: 'Pod bounds' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Edit boxes' }))
+    const overlay = screen.getAllByTestId('pod-bounds')[0] as HTMLElement
+    overlay.getBoundingClientRect = () => ({ width: 400, height: 300, x: 0, y: 0, top: 0, left: 0, right: 400, bottom: 300, toJSON: () => ({}) })
+    const box = screen.getByRole('button', { name: 'Pod 2 box' })
+    const outer = box.style.cssText
+    const cup = box.querySelector<HTMLElement>('[data-cup-area]')
+    if (!cup) throw new Error('Pod 2 cup area missing')
+    fireEvent.pointerDown(cup, { clientX: 100, clientY: 100, pointerId: 1 })
+    fireEvent.pointerMove(overlay, { clientX: 110, clientY: 100, pointerId: 1 })
+    fireEvent.pointerUp(overlay, { pointerId: 1 })
+    expect(parseFloat(cup.style.left)).toBeGreaterThan(33.333)
+    fireEvent.keyDown(box, { key: 'ArrowDown', altKey: true })
+    expect(parseFloat(cup.style.top)).toBeGreaterThan(33.333)
+    expect(box.style.cssText).toBe(outer)
+    await act(async () => fireEvent.click(screen.getByText('Save boxes')))
+    expect(calls.setRegions.mock.calls[0]?.[0].regions[1]).toMatchObject({ slot: 2, coreX: expect.any(Number), coreY: expect.any(Number) })
   })
 
   it('shows why the boxes could not be saved', async () => {

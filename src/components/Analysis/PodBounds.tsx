@@ -1,6 +1,6 @@
 import { useRef, type KeyboardEvent, type PointerEvent } from 'react'
 import { cn } from '@/lib/utils'
-import type { Rect } from '@/src/vision/greenArea'
+import { CORE_SIZE, coreOffset, type PodRect } from '@/src/vision/greenArea'
 import { clampRegion, type PodRegions } from '@/src/vision/regions'
 
 /** How far an arrow key moves or resizes a box, as a fraction of the frame. */
@@ -9,20 +9,21 @@ const at = (n: number) => `${n * 100}%`
 const ARROWS: Record<string, [number, number]> = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }
 
 /** Move a box, or resize it from its bottom-right corner, by a fraction of the frame, keeping it inside. */
-export function nudge(r: Rect, mode: 'move' | 'size', dx: number, dy: number): Rect {
+export function nudge(r: PodRect, mode: 'move' | 'size' | 'core', dx: number, dy: number): PodRect {
+  if (mode === 'core') return clampRegion({ ...r, coreX: coreOffset(r.coreX) + dx / r.w, coreY: coreOffset(r.coreY) + dy / r.h })
   if (mode === 'move') return clampRegion({ ...r, x: r.x + dx, y: r.y + dy })
   return clampRegion({ ...r, w: Math.min(1 - r.x, r.w + dx), h: Math.min(1 - r.y, r.h + dy) })
 }
 
-interface Drag { slot: number, mode: 'move' | 'size', x0: number, y0: number, start: Rect, width: number, height: number }
+interface Drag { slot: number, mode: 'move' | 'size' | 'core', x0: number, y0: number, start: PodRect, width: number, height: number }
 
 /**
- * The box each pod is scored on, and the dashed middle third a plant must grow
- * from (#132), drawn over a still as the analysers use them. With `onChange`
+ * The scoring box and dashed cup area, drawn over a still as the analysers use them. With `onChange`
  * the boxes can be calibrated (#143): drag one to move it, its corner to resize
- * it, or focus one and use the arrow keys (Shift resizes).
+ * it, or drag the dashed cup area independently. Arrows move the focused box,
+ * Shift resizes it and Alt moves the cup area.
  */
-export function PodBounds({ boxes, label, onChange }: { boxes: PodRegions, label?: (slot: number) => string | undefined, onChange?: (slot: number, r: Rect) => void }) {
+export function PodBounds({ boxes, label, onChange }: { boxes: PodRegions, label?: (slot: number) => string | undefined, onChange?: (slot: number, r: PodRect) => void }) {
   const ref = useRef<HTMLDivElement>(null)
   const drag = useRef<Drag | null>(null)
   const editing = !!onChange
@@ -49,7 +50,7 @@ export function PodBounds({ boxes, label, onChange }: { boxes: PodRegions, label
     const box = boxes[slot]
     if (!arrow || !box) return
     e.preventDefault()
-    onChange?.(slot, nudge(box, e.shiftKey ? 'size' : 'move', arrow[0] * STEP, arrow[1] * STEP))
+    onChange?.(slot, nudge(box, e.altKey ? 'core' : e.shiftKey ? 'size' : 'move', arrow[0] * STEP, arrow[1] * STEP))
   }
 
   return (
@@ -59,7 +60,14 @@ export function PodBounds({ boxes, label, onChange }: { boxes: PodRegions, label
         const v = label?.(s)
         const place = { left: at(r.x), top: at(r.y), width: at(r.w), height: at(r.h) }
         const tag = <span className="absolute left-0 top-0 rounded-br-[4px] bg-pod-ready px-1 font-mono text-[10px] leading-[14px] text-inverse">{v ? `${slot} · ${v}` : slot}</span>
-        const core = <span className="absolute inset-[33.333%] border border-dashed border-pod-ready/80" />
+        const core = (
+          <span
+            data-cup-area={slot}
+            className={cn('absolute border border-dashed border-pod-ready/80', editing && 'z-10 cursor-grab bg-pod-ready/10 hover:bg-pod-ready/25 active:cursor-grabbing')}
+            style={{ left: at(coreOffset(r.coreX)), top: at(coreOffset(r.coreY)), width: at(CORE_SIZE), height: at(CORE_SIZE) }}
+            onPointerDown={editing ? start(s, 'core') : undefined}
+          />
+        )
         return editing
           ? (
               <div
@@ -68,6 +76,7 @@ export function PodBounds({ boxes, label, onChange }: { boxes: PodRegions, label
                 role="button"
                 tabIndex={0}
                 aria-label={`Pod ${slot} box`}
+                aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight Alt+ArrowUp Alt+ArrowDown"
                 className="absolute cursor-move border-[1.5px] border-pod-ready bg-pod-ready/10 outline-none focus-visible:border-fg"
                 style={place}
                 onPointerDown={start(s, 'move')}

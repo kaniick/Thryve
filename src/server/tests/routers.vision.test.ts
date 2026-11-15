@@ -128,6 +128,15 @@ describe('vision router (ADR-0019)', () => {
     expect((await c.vision.regions()).every(r => !r.calibrated)).toBe(true)
   })
 
+  it('persists a cup-only adjustment and keeps the dashed area within the box', async () => {
+    const { c } = await scored(0)
+    const box = DEFAULT_REGIONS.upper[2]
+    if (!box) throw new Error('Pod 2 default box missing')
+    const saved = await c.vision.setRegions({ camera: 'upper', regions: [{ slot: 2, ...box, coreX: 0.45, coreY: 0.9 }] })
+    expect(saved.regions[1]).toEqual({ slot: 2, ...box, coreX: 0.45, coreY: 0.6667, moved: true })
+    expect((await c.vision.regions())[0]).toEqual(saved)
+  })
+
   it('labels pods in a capture for training, relabels, clears and counts them', async () => {
     const now = new Date('2026-03-01T00:00:00Z')
     const { c, ctx } = await scored(2)

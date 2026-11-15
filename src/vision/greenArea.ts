@@ -8,6 +8,11 @@
 
 export interface Rgba { width: number, height: number, data: Uint8ClampedArray | Uint8Array }
 export interface Rect { x: number, y: number, w: number, h: number }
+/** Optional top-left of the cup area, relative to the outer box. */
+export interface PodRect extends Rect { coreX?: number, coreY?: number }
+
+export const CORE_SIZE = 1 / 3
+export const coreOffset = (offset = CORE_SIZE) => Math.min(1 - CORE_SIZE, Math.max(0, offset))
 
 /** Excess-green index threshold, a standard vegetation heuristic: 2G − R − B. */
 export function isGreen(r: number, g: number, b: number, threshold = 20): boolean {
@@ -48,13 +53,13 @@ const MIN_BLOB = 1 / 40_000
  * Leaf cover per pod from a plant mask (non-zero = plant). A pod counts a
  * connected blob of plant pixels inside its region only when the blob grows
  * from that pod: its centre lies in the region (else nearest the region's
- * centre), or it reaches the region's core, the middle third each way where the
+ * centre), or it reaches the region's core, the inner third positioned where the
  * cup is. So the leaves of a large plant that spill over the edge of an empty
  * neighbour's region don't read as cover there, while a tower of plants whose
  * leaves have grown together still counts for every pod they grow from. Specks
  * too small to be a seedling count for no one.
  */
-export function coverByPod(mask: Uint8Array, width: number, height: number, pods: Record<number, Rect>): Record<number, number> {
+export function coverByPod(mask: Uint8Array, width: number, height: number, pods: Record<number, PodRect>): Record<number, number> {
   const n = width * height
   const label = new Int32Array(n)
   const stack = new Int32Array(n)
@@ -114,7 +119,7 @@ export function coverByPod(mask: Uint8Array, width: number, height: number, pods
   const out: Record<number, number> = {}
   for (const { slot, rect } of slots) {
     const rooted = new Set<number>()
-    const core = bounds({ x: rect.x + rect.w / 3, y: rect.y + rect.h / 3, w: rect.w / 3, h: rect.h / 3 }, width, height)
+    const core = bounds({ x: rect.x + rect.w * coreOffset(rect.coreX), y: rect.y + rect.h * coreOffset(rect.coreY), w: rect.w * CORE_SIZE, h: rect.h * CORE_SIZE }, width, height)
     for (let y = core.y0; y < core.y1; y++) {
       for (let x = core.x0; x < core.x1; x++) rooted.add(label[y * width + x] as number)
     }
