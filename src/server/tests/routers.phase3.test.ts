@@ -29,6 +29,24 @@ describe('phase 3 routers', () => {
     expect((await c.schedules.remove({ id: 'l' })).removed).toBe(true)
   })
 
+  it('removes only unused light curves from the light page, including a disabled Auto curve', async () => {
+    const { c } = caller()
+    const curve = { kind: 'light' as const, name: 'Day', days: 127, spec: { setpoints: [] } }
+    await c.schedules.upsert({ ...curve, id: 'day', enabled: true })
+    await c.schedules.upsert({ ...curve, id: 'spare', enabled: false })
+    const remove = (id: string) => c.schedules.remove({ id, onlyUnusedLight: true })
+    await expect(remove('day')).rejects.toThrow(/Only unused light curves/)
+
+    await c.schedules.setAuto({ on: true })
+    expect((await c.schedules.list()).find(s => s.id === 'day')).toMatchObject({ enabled: false, pausedByAuto: true })
+    await expect(remove('day')).rejects.toThrow(/Only unused light curves/)
+    expect(await remove('spare')).toEqual({ removed: true })
+
+    await c.schedules.setAuto({ on: false })
+    expect(await remove('auto')).toEqual({ removed: true })
+    expect((await c.schedules.list()).map(s => [s.id, s.enabled])).toEqual([['day', true]])
+  })
+
   it('grow cycle and pods round-trip', async () => {
     const { c } = caller()
     expect((await c.grow.current()).cycle).toBeNull()

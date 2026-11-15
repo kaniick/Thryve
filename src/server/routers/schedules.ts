@@ -120,8 +120,11 @@ export const schedulesRouter = router({
   library: libraryRouter,
   list: publicProcedure
     .meta({ openapi: { method: 'GET', path: '/schedules', tags: ['schedules'] } })
-    .output(z.array(ScheduleOut))
-    .query(({ ctx }) => ctx.store.schedules.list()),
+    .output(z.array(ScheduleOut.extend({ pausedByAuto: z.literal(true).optional() })))
+    .query(({ ctx }) => {
+      const paused = new Set(ctx.store.settings.get().autoLightsOff ?? [])
+      return ctx.store.schedules.list().map(s => s.kind === 'light' && !s.enabled && paused.has(s.id) ? { ...s, pausedByAuto: true as const } : s)
+    }),
   upsert: publicProcedure
     .meta({ openapi: { method: 'PUT', path: '/schedules/{id}', tags: ['schedules'], summary: 'Create or replace a light curve or pump cycle' } })
     .input(ScheduleSchema)
@@ -136,9 +139,15 @@ export const schedulesRouter = router({
     }),
   remove: publicProcedure
     .meta({ openapi: { method: 'DELETE', path: '/schedules/{id}', tags: ['schedules'] } })
-    .input(z.object({ id: z.string() }))
+    .input(z.object({ id: z.string(), onlyUnusedLight: z.boolean().optional() }))
     .output(z.object({ removed: z.boolean() }))
     .mutation(({ ctx, input }) => {
+      if (input.onlyUnusedLight) {
+        const curve = ctx.store.schedules.get(input.id)
+        if (curve && (curve.kind !== 'light' || curve.enabled || ctx.store.settings.get().autoLightsOff?.includes(curve.id))) {
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Only unused light curves can be removed.' })
+        }
+      }
       const removed = ctx.store.schedules.remove(input.id)
       ctx.events.emit({ kind: 'schedule', action: 'changed', id: input.id })
       return { removed }
