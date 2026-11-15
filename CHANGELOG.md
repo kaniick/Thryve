@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.1 — 2026-11-14
+
+- Analysis → Pod bounds → Edit boxes: the outer box can be moved or resized,
+  and the dashed cup area can be dragged on its own (or nudged with Alt+arrows).
+  Per-camera calibration now stores the cup position so leaf-cover analysis
+  attributes plants correctly. Existing boxes keep a centred cup by default.
+
 ## 2.0.0 — 2026-11-14
 
 Thryve 2.0 is the first stable release of this fork. It is a rebranded, modified
