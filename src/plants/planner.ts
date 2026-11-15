@@ -15,7 +15,8 @@
  *     penalty when choosing among equally good slots.
  *
  * The caller can override 1–2 per plant (pin a pod to a slot, or allow other
- * zones). What does not fit comes back with the zones it could use, the pods
+ * zones). The web planner also allows overflow into other empty zones after
+ * recommended placements. What does not fit comes back with the zones it could use, the pods
  * in them, and moves that would make room.
  *
  * Pure and deterministic; no clock, no I/O.
@@ -42,6 +43,8 @@ export interface PlanOverrides {
   allowedZones?: Record<string, Zone[]>
   /** Lay out the whole tower afresh, as if nothing were planted; applying it moves the planted pods. */
   replant?: boolean
+  /** After recommended placements, fill other free zones with light warnings. */
+  allowLightMismatch?: boolean
 }
 
 export interface PlanRequest {
@@ -63,7 +66,7 @@ export interface Assignment {
   wantZone: Zone
   /** Zones away from the ideal (0 = ideal). */
   fallback: number
-  /** Which way it sits from its ideal zone: lower (less light), higher (more, only ever by the caller's say-so), or null in its ideal zone. */
+  /** Which way it sits from its ideal zone: lower (less light), higher (more light), or null in its ideal zone. */
   shift: 'lower' | 'higher' | null
   reason: string
 }
@@ -268,15 +271,34 @@ export function planLayout(req: PlanRequest, catalog: Catalog = BUILTIN): PlanRe
     if (best && best.pref === 0) assign(best.slot, plant, best.fallback, best.reason)
     else deferred.push(plant)
   }
-  const noSpace: Plant[] = []
+  const unmatched: Plant[] = []
   for (const plant of deferred) {
     const best = rankSlots(model, plant, taken, placed, overrides)[0]
     if (best) assign(best.slot, plant, best.fallback, best.reason)
-    else noSpace.push(plant)
+    else unmatched.push(plant)
+  }
+
+  // 4. Overflow only after every plant has had a chance at recommended slots.
+  const noSpace: Plant[] = []
+  for (const plant of unmatched) {
+    if (overrides?.allowLightMismatch && !overrides.allowedZones?.[plant.id]?.length) {
+      const recommended = toleratedZones(plant, overrides)
+      const remaining = ZONES.filter(zone => !recommended.includes(zone))
+      if (remaining.length) {
+        const best = rankSlots(model, plant, taken, placed, { allowedZones: { [plant.id]: remaining } })[0]
+        if (best && best.slot.zone) {
+          const light = ZONE_RANK[best.slot.zone] < ZONE_RANK[plant.zone] ? 'more' : 'less'
+          assign(best.slot, plant, best.fallback, `Light warning: ${best.slot.zone} light is ${light} than the preferred ${plant.zone} zone`)
+          continue
+        }
+      }
+    }
+    noSpace.push(plant)
   }
   assignments.sort((a, b) => a.slot - b.slot)
 
   const zones = summariseZones(model, occupied, assignments)
+  const free = all.filter(s => !taken.has(s.slot)).map(s => s.slot)
   for (const plant of noSpace) {
     if (model === 'nursery') {
       unplaced.push({ plantId: plant.id, plantName: plant.name, reason: 'no free pod in the nursery', code: 'no_space', wantZone: plant.zone, zones: [], blocking: [] })
@@ -290,7 +312,9 @@ export function planLayout(req: PlanRequest, catalog: Catalog = BUILTIN): PlanRe
     unplaced.push({
       plantId: plant.id,
       plantName: plant.name,
-      reason: `no free slot in the ${tol.join(' or ')} zone${tol.length > 1 ? 's' : ''} (${counts} taken)`,
+      reason: overrides?.allowLightMismatch && free.length === 0
+        ? 'no empty pods left on the tower'
+        : `no free slot in the ${tol.join(' or ')} zone${tol.length > 1 ? 's' : ''} (${counts} taken)`,
       code: 'no_space',
       wantZone: plant.zone,
       zones: tol,
@@ -299,8 +323,8 @@ export function planLayout(req: PlanRequest, catalog: Catalog = BUILTIN): PlanRe
   }
 
   const suggestions = model === 'nursery' ? [] : suggest(model, noSpace, { taken, placed, occupied, pinned, overrides })
-  const out: PlanResult = { model, assignments, unplaced, free: all.filter(s => !taken.has(s.slot)).map(s => s.slot), zones, suggestions }
-  if (overrides && (overrides.pins?.length || Object.keys(overrides.allowedZones ?? {}).length)) out.overrides = overrides
+  const out: PlanResult = { model, assignments, unplaced, free, zones, suggestions }
+  if (overrides && (overrides.allowLightMismatch !== undefined || overrides.pins?.length || Object.keys(overrides.allowedZones ?? {}).length)) out.overrides = overrides
   return out
 }
 

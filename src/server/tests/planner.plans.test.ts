@@ -5,6 +5,7 @@ import { SimHal } from '../../hardware/sim'
 import { createMcpServer } from '../../mcp/server'
 import type { OrderResult } from '../../plants/match'
 import type { PlanResult, SowingWave } from '../../plants/planner'
+import { slots } from '../../plants/zones'
 import { MemoryStore } from '../../store/memory'
 import { createCore } from '../bootstrap'
 import { appRouter } from '../routers/app'
@@ -66,6 +67,24 @@ describe('plan mode over MCP', () => {
     expect(layout).toEqual(saved.layout)
     expect(await c.planner.sowing({ plants: opened.request, mode: opened.mode, start: opened.start ?? undefined })).toEqual(saved.sowing)
     await client.close()
+  })
+
+  it('saves and applies a light mismatch in a vacant slot', async () => {
+    const { c } = setup()
+    for (const pod of slots('home').filter(s => s.zone !== 'high')) {
+      await c.grow.updatePod({ slot: pod.slot, plant: 'Mint', status: 'growing' })
+    }
+    const plants = [{ plantId: 'basil', count: 1 }]
+    const overrides = { allowLightMismatch: true }
+    const preview = await c.planner.layout({ model: 'home', plants, overrides })
+    expect(preview.assignments).toEqual([expect.objectContaining({ plantId: 'basil', slotZone: 'high', shift: 'higher' })])
+
+    const saved = await c.planner.savePlan({ id: 'overflow', name: 'Overflow', model: 'home', mode: 'batch', plants, overrides })
+    expect(saved.layout).toEqual(preview)
+    expect((await c.planner.plan({ id: saved.id })).layout.overrides).toEqual(overrides)
+    const applied = await c.planner.applyPlan({ id: saved.id })
+    expect(applied.seeded).toEqual(preview.assignments.map(a => a.slot))
+    expect((await c.grow.pods()).filter(p => p.plant === 'Mint')).toHaveLength(18)
   })
 
   it('updates only the fields given, keeping the start date and overrides, and removes plans', async () => {

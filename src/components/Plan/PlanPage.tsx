@@ -1,4 +1,4 @@
-import { Box, LayoutGrid, Minus, Pencil, Plus, Sprout } from 'lucide-react'
+import { Box, LayoutGrid, Minus, Pencil, Plus, Sprout, TriangleAlert } from 'lucide-react'
 import { useMemo, useState, type ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 import { ZONE_COLOR } from '@/src/components/Grow/lightZones'
@@ -14,8 +14,11 @@ import { CustomPlantDialog, type EditablePlant } from '@/src/components/Plan/Cus
 import { SavedPlans } from '@/src/components/Plan/SavedPlans'
 import { Unplaced } from '@/src/components/Plan/Unplaced'
 
+import type { PlanOverrides } from '@/src/plants/planner'
+
 type Model = 'home' | 'studio'
-interface Overrides { pins?: { slot: number, plantId: string }[], allowedZones?: Record<string, Zone[]>, replant?: boolean }
+type Overrides = PlanOverrides
+const DEFAULT_OVERRIDES: Overrides = { allowLightMismatch: true }
 type Zone = 'high' | 'medium' | 'low'
 type Category = 'fruiting' | 'vegetable' | 'legume' | 'flower' | 'herb' | 'green' | 'lettuce'
 
@@ -189,9 +192,9 @@ export function PlanPage() {
   const request = useMemo(() => Object.entries(picks).filter(([, n]) => n > 0).map(([plantId, count]) => ({ plantId, count })), [picks])
   // Swaps on the grid pin pods; until a plan is saved or another opened they live here.
   const [edited, setEdited] = useState<Overrides | undefined>(undefined)
-  const overrides = edited ?? opened?.overrides
+  const overrides = edited ?? opened?.overrides ?? DEFAULT_OVERRIDES
   const start = opened?.start ?? undefined
-  const layout = trpc.planner.layout.useQuery({ model, plants: request, respectExisting: true, ...(overrides && { overrides }) }, { enabled: true })
+  const layout = trpc.planner.layout.useQuery({ model, plants: request, respectExisting: true, overrides }, { enabled: true })
   const sowing = trpc.planner.sowing.useQuery({ plants: request, mode, ...(start && { start }) }, { enabled: request.length > 0 })
   const pods = trpc.grow.pods.useQuery()
   const plans = trpc.planner.plans.useQuery()
@@ -207,6 +210,7 @@ export function PlanPage() {
   const total = request.reduce((s, r) => s + r.count, 0)
   // Pods the plan leaves empty: neither planted now nor planned.
   const empty = layout.data?.free.length ?? (zones.data ? zones.data.slots.length - (pods.data ?? []).filter(p => p.status !== 'empty' && p.slot <= zones.data.slots.length).length : 0)
+  const lightWarnings = (layout.data?.assignments ?? []).filter(a => a.fallback > 0 && a.shift)
   const bySlot = new Map((layout.data?.assignments ?? []).map(a => [a.slot, a]))
   // A replant lays out the whole tower, so nothing planted now holds a pod.
   const planted = new Map(overrides?.replant ? [] : (pods.data ?? []).filter(p => p.status !== 'empty').map(p => [p.slot, { slot: p.slot, status: p.status, plant: p.plant }]))
@@ -278,6 +282,19 @@ export function PlanPage() {
             </div>
           )}
           {noWebGL && <p className="mt-2 text-xs text-fg-3">The 3D tower needs WebGL, which this browser doesn&apos;t offer, so the plan is shown as a grid.</p>}
+          {lightWarnings.length > 0 && (
+            <div className="mt-3 text-xs text-fg-2">
+              <p className="flex items-center gap-2 font-medium text-fg">
+                <TriangleAlert size={15} aria-hidden="true" className="text-pod-attention" />
+                Light placement warnings
+              </p>
+              <ul className="mt-1 list-disc pl-5">
+                {lightWarnings.map(a => (
+                  <li key={a.slot}>{`Pod ${a.slot}: ${a.plantName} is in ${a.slotZone} light (prefers ${a.wantZone}).`}</li>
+                ))}
+              </ul>
+            </div>
+          )}
           <Unplaced unplaced={layout.data?.unplaced ?? []} suggestions={layout.data?.suggestions ?? []} />
           <p className="mt-2 text-[12px] text-fg-3">
             {shown === '2d'
@@ -332,7 +349,7 @@ export function PlanPage() {
           </Card>
           <div className="flex flex-wrap items-end gap-2">
             <TextField label="Plan name" mono={false} value={name} onChange={setName} className="min-w-[220px]" />
-            <Button variant="primary" disabled={save.isPending} onClick={() => save.mutate({ id: opened?.id ?? `plan-${Date.now().toString(36)}`, name, model, mode, plants: request, ...(start && { start }), ...(overrides && { overrides }) })}>{opened ? 'Update plan' : 'Save plan'}</Button>
+            <Button variant="primary" disabled={save.isPending} onClick={() => save.mutate({ id: opened?.id ?? `plan-${Date.now().toString(36)}`, name, model, mode, plants: request, ...(start && { start }), overrides })}>{opened ? 'Update plan' : 'Save plan'}</Button>
             <Button
               onClick={() => {
                 setPicks({})
@@ -356,7 +373,7 @@ export function PlanPage() {
           setPicks(Object.fromEntries(p.request.map(r => [r.plantId, r.count])))
           setMode(p.mode)
           setName(p.name)
-          setOpened({ id: p.id, start: p.start, overrides: p.layout.overrides })
+          setOpened({ id: p.id, start: p.start, overrides: { ...DEFAULT_OVERRIDES, ...p.layout.overrides } })
           setEdited(undefined)
           setSelected(null)
           document.getElementById('plan-layout')?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
