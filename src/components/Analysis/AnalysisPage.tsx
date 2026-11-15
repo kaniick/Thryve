@@ -11,7 +11,7 @@ import { isDemo } from '@/src/demo/mode'
 import { fmtStamp } from '@/src/lib/timeAgo'
 import type { AppRouter } from '@/src/server/routers/app'
 import { apiBase, trpc } from '@/src/utils/trpc'
-import type { Rect } from '@/src/vision/greenArea'
+import type { PodRect } from '@/src/vision/greenArea'
 import { POD_STATES } from '@/src/vision/podState'
 import { podRegions, type PodRegions } from '@/src/vision/regions'
 import { LabelPods } from './LabelPods'
@@ -109,6 +109,7 @@ export function AnalysisPage() {
           )}
           <SegmentedControl ariaLabel="Camera" size="sm" options={SHOWN} value={shown} onChange={setShown} />
           <SegmentedControl ariaLabel="View" size="sm" options={VIEWS} value={view} onChange={setView} />
+          {view === 'bounds' && !calibration.draft && <Button size="sm" onClick={calibration.edit}>Edit boxes</Button>}
         </div>
         <div className={cn('grid grid-cols-1 gap-3', cameras.length > 1 && 'sm:grid-cols-2')}>
           {cameras.map(l => (
@@ -150,7 +151,7 @@ function Still({ latest, view, analyzer, empty, boxes, calibrated, onChange }: {
   empty: (slot: number) => boolean
   boxes: PodRegions
   calibrated: boolean
-  onChange?: (slot: number, r: Rect) => void
+  onChange?: (slot: number, r: PodRect) => void
 }) {
   const { camera, frame, rows, states } = latest
   // The box takes the still's own shape once it loads, so the bounds sit where the analysers put them.
@@ -362,7 +363,7 @@ function useCalibration() {
   const [done, setDone] = useState(false)
   const stored = (camera: Camera): PodRegions => {
     const row = saved.data?.find(r => r.camera === camera)
-    return row ? Object.fromEntries(row.regions.map(({ slot, x, y, w, h }) => [slot, { x, y, w, h }])) : podRegions(camera)
+    return row ? Object.fromEntries(row.regions.map(({ slot, x, y, w, h, coreX, coreY }) => [slot, { x, y, w, h, coreX, coreY }])) : podRegions(camera)
   }
   const boxes = (camera: Camera) => draft?.[camera] ?? stored(camera)
   return {
@@ -376,7 +377,7 @@ function useCalibration() {
       setDone(false)
       setDraft({ upper: stored('upper'), lower: stored('lower') })
     },
-    move: (camera: Camera, slot: number, r: Rect) => setDraft(d => ({ ...d, [camera]: { ...boxes(camera), ...d?.[camera], [slot]: r } })),
+    move: (camera: Camera, slot: number, r: PodRect) => setDraft(d => ({ ...d, [camera]: { ...boxes(camera), ...d?.[camera], [slot]: r } })),
     reset: (cameras: Camera[]) => setDraft(d => ({ ...d, ...Object.fromEntries(cameras.map(c => [c, podRegions(c)])) })),
     cancel: () => setDraft(null),
     save: async () => {
@@ -397,8 +398,8 @@ function Calibrate({ c, cameras }: { c: Calibration, cameras: Camera[] }) {
     <div className="-mt-1 flex flex-col gap-2 text-xs text-fg-3">
       <p>
         {c.draft
-          ? 'Drag a box onto its pod\'s cup and its corner to fit the plant. Arrow keys move the focused box; Shift with them resizes it.'
-          : 'Each pod counts plant inside its box that grows from it: centred in the box, or reaching the dashed middle.'}
+          ? 'Drag the outer box to move it, or drag its corner to resize it. Drag the dashed area over the pod opening. Arrow keys move the focused box. Hold Shift to resize or Alt to move the dashed area.'
+          : 'The outer box sets the area scored for leaf cover. The dashed cup area helps attribute leaves to the pod they grow from.'}
       </p>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
         {c.draft
@@ -409,7 +410,7 @@ function Calibrate({ c, cameras }: { c: Calibration, cameras: Camera[] }) {
                 <button type="button" className={action} onClick={c.cancel}>Cancel</button>
               </>
             )
-          : <button type="button" className={action} onClick={c.edit}>Edit boxes</button>}
+          : null}
         {c.done && !c.draft && <span>Saved. New photos use these boxes; Re-run an analyser to rescore stored ones.</span>}
       </div>
       {c.error && <InlineError>{c.error}</InlineError>}

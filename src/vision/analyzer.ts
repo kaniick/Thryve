@@ -4,7 +4,7 @@
  * several can run on the same captures and be compared, and a remote worker
  * can post results under its own id into the same table.
  */
-import type { Rect, Rgba } from './greenArea'
+import type { PodRect, Rgba } from './greenArea'
 import { coverByPod, isGreen, isLeafColour } from './greenArea'
 import { podRegions, toPixels, type Camera, type PodRegions } from './regions'
 
@@ -56,7 +56,7 @@ export interface AnalyzerOutput {
 }
 
 export interface CaptureAnalyzer extends AnalyzerInfo {
-  run(img: Rgba, pods: Record<number, Rect>, opts: AnalyzerOptions): AnalyzerOutput
+  run(img: Rgba, pods: Record<number, PodRect>, opts: AnalyzerOptions): AnalyzerOutput
 }
 
 export function info(a: CaptureAnalyzer): AnalyzerInfo {
@@ -116,7 +116,7 @@ function plantMask(img: Rgba, test: (r: number, g: number, b: number, p: number)
   return mask
 }
 
-function perPod(mask: Uint8Array, img: Rgba, pods: Record<number, Rect>, detail?: Record<string, unknown>): PodResult[] {
+function perPod(mask: Uint8Array, img: Rgba, pods: Record<number, PodRect>, detail?: Record<string, unknown>): PodResult[] {
   const cover = coverByPod(mask, img.width, img.height, pods)
   return Object.keys(pods).map(Number).map(slot => ({ slot, metric: 'green_fraction', value: round3(cover[slot] ?? 0), ...(detail ? { detail } : {}) }))
 }

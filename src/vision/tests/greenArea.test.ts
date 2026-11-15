@@ -38,6 +38,7 @@ describe('green area', () => {
     const cover = coverByPod(mask, w, h, pods)
     expect(cover[1]).toBe(1)
     expect(cover[2]).toBe(0)
+    expect(coverByPod(mask, w, h, { ...pods, 2: { ...pods[2], coreX: 0 } })[2]).toBe(0.3)
     expect(cover[3]).toBe(0)
     // A blob centred between regions goes to the nearest pod; a region off the frame reads 0.
     expect(coverByPod(mask, w, h, { 2: { x: 10, y: 0, w: 10, h: 10 }, 9: { x: 100, y: 100, w: 5, h: 5 } })).toEqual({ 2: 0.3, 9: 0 })

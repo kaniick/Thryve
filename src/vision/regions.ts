@@ -14,11 +14,11 @@
  * (slots 16–30). Gardyn's own numbering is unverified until Phase 1
  * (docs/hardware/pin-map.md); if it differs, only this table's order changes.
  */
-import { bounds, type Rect } from './greenArea'
+import { bounds, CORE_SIZE, coreOffset, type PodRect, type Rect } from './greenArea'
 
 export type Camera = 'upper' | 'lower'
 /** Each pod's box as fractions of the frame, by slot. */
-export type PodRegions = Record<number, Rect>
+export type PodRegions = Record<number, PodRect>
 /** Boxes the owner has moved, per camera and slot; every other box keeps its default. */
 export type RegionCalibration = Partial<Record<Camera, PodRegions>>
 
@@ -74,10 +74,15 @@ export const MIN_SIDE = 0.01
 const round4 = (n: number) => Math.round(n * 10_000) / 10_000
 
 /** Keep a box inside the frame and at least MIN_SIDE across. */
-export function clampRegion(r: Rect): Rect {
+export function clampRegion(r: PodRect): PodRect {
   const w = round4(Math.min(1, Math.max(MIN_SIDE, r.w)))
   const h = round4(Math.min(1, Math.max(MIN_SIDE, r.h)))
-  return { x: round4(Math.min(1 - w, Math.max(0, r.x))), y: round4(Math.min(1 - h, Math.max(0, r.y))), w, h }
+  const box: PodRect = { x: round4(Math.min(1 - w, Math.max(0, r.x))), y: round4(Math.min(1 - h, Math.max(0, r.y))), w, h }
+  const coreX = round4(coreOffset(r.coreX))
+  const coreY = round4(coreOffset(r.coreY))
+  if (coreX !== round4(CORE_SIZE)) box.coreX = coreX
+  if (coreY !== round4(CORE_SIZE)) box.coreY = coreY
+  return box
 }
 
 /** The measured boxes, per camera. */
@@ -100,14 +105,14 @@ function fromCups(camera: Camera): PodRegions {
 export function podRegions(camera: Camera, calibration?: RegionCalibration | null): PodRegions {
   const own = calibration?.[camera] ?? {}
   const out: PodRegions = {}
-  for (const slot of cameraSlots(camera)) out[slot] = own[slot] ?? (DEFAULT_REGIONS[camera][slot] as Rect)
+  for (const slot of cameraSlots(camera)) out[slot] = own[slot] ?? (DEFAULT_REGIONS[camera][slot] as PodRect)
   return out
 }
 
 /** Boxes in pixels for a frame of this size. */
-export function toPixels(regions: PodRegions, width: number, height: number): Record<number, Rect> {
-  const out: Record<number, Rect> = {}
-  for (const [slot, r] of Object.entries(regions)) out[Number(slot)] = { x: r.x * width, y: r.y * height, w: r.w * width, h: r.h * height }
+export function toPixels(regions: PodRegions, width: number, height: number): PodRegions {
+  const out: PodRegions = {}
+  for (const [slot, r] of Object.entries(regions)) out[Number(slot)] = { ...r, x: r.x * width, y: r.y * height, w: r.w * width, h: r.h * height }
   return out
 }
 
