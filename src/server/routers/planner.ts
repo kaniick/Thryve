@@ -17,6 +17,7 @@ export const Overrides = z.object({
   pins: z.array(z.object({ slot: z.number().int().min(1).max(60), plantId: z.string() })).max(60).optional(),
   allowedZones: z.record(z.string(), z.array(Zone).min(1).max(3)).optional(),
   replant: z.boolean().optional(),
+  allowLightMismatch: z.boolean().optional(),
 })
 const ZoneSummary = z.object({ zone: Zone, rows: z.array(z.number()), slots: z.array(z.number()), total: z.number(), existing: z.number(), planned: z.number(), free: z.number() })
 const Blocker = z.object({ slot: z.number(), zone: Zone, plantId: z.string(), plantName: z.string(), existing: z.boolean() })

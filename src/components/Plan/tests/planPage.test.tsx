@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { slots } from '@/src/plants/zones'
 import type { PodState } from '@/src/components/Grow/towerScene'
 import { PlanPage, shiftNotes, VIEW_KEY } from '../PlanPage'
 import { UNDO_MS } from '../SavedPlans'
@@ -133,7 +134,7 @@ describe('PlanPage', () => {
     add('Basil')
     add('Basil')
     expect(screen.getByText(/^2 planned/)).toBeTruthy()
-    expect(calls.layout).toHaveBeenLastCalledWith({ model: 'home', plants: [{ plantId: 'basil', count: 2 }], respectExisting: true })
+    expect(calls.layout).toHaveBeenLastCalledWith({ model: 'home', plants: [{ plantId: 'basil', count: 2 }], respectExisting: true, overrides: { allowLightMismatch: true } })
     // Two waves of basil: the second one notes its wave.
     expect(screen.getByText('wave 2')).toBeTruthy()
     expect(screen.getAllByText(/sow 2026-11-02 → harvest/)).toHaveLength(1)
@@ -151,7 +152,7 @@ describe('PlanPage', () => {
     expect(screen.queryByText('Sowing schedule')).toBeNull()
   })
 
-  it('keeps planted pods, outlines fallbacks and reports what does not fit', () => {
+  it('keeps planted pods and warns when a low-light plant moves to medium', () => {
     state.pods = [{ slot: 1, plant: 'Mint', status: 'growing' }, { slot: 2, plant: null, status: 'empty' }]
     render(<PlanPage />)
     flat()
@@ -162,23 +163,18 @@ describe('PlanPage', () => {
     expect(screen.getByText(/Outlined pods sit one zone lower than ideal/)).toBeTruthy()
     search('mint')
     for (let i = 0; i < 6; i++) add('Mint')
-    expect(screen.getByText('Didn’t fit: Mint — no free slot in the low zone (low 6/6 taken)')).toBeTruthy()
-    // Medium still has room, and a herb takes the extra light.
-    expect(screen.getByRole('list', { name: 'Suggested moves' }).textContent).toBe('Allow Mint in the medium zone too (10 free) — more light than its ideal low zone, which herbs tolerate.')
-    add('Mint')
-    expect(screen.getByText('Didn’t fit: Mint ×2 — no free slot in the low zone (low 6/6 taken)')).toBeTruthy()
+    expect(screen.getByText(/Mint is in medium light \(prefers low\)/)).toBeTruthy()
+    expect(screen.queryByText(/^Didn’t fit/)).toBeNull()
   })
 
-  it('suggests moves that would make room', () => {
+  it('fills high-light pods for medium-light plants and reports only the physical overflow', () => {
+    state.pods = slots('home').filter(s => s.zone !== 'high' || s.slot !== 8).map(s => ({ slot: s.slot, plant: 'Mint', status: 'growing' }))
     render(<PlanPage />)
-    search('jalapeño')
-    for (let i = 0; i < 13; i++) add('Jalapeño')
-    search('basil')
-    for (let i = 0; i < 12; i++) add('Basil')
-    expect(screen.getByText(/^Didn’t fit: Jalapeño — no free slot in the high or medium zones/)).toBeTruthy()
-    const moves = within(screen.getByRole('list', { name: 'Suggested moves' })).getAllByRole('listitem').map(li => li.textContent)
-    expect(moves[0]).toMatch(/^Move Basil from pod \d+ to pod \d+ \(low light, which it tolerates\) so Jalapeño can take pod \d+ \(medium\)\.$/)
-    expect(moves[1]).toMatch(/^Allow Jalapeño in the low zone too/)
+    add('Basil')
+    add('Basil')
+    expect(screen.getByText('Pod 8: Basil is in high light (prefers medium).')).toBeTruthy()
+    expect(screen.getByText('Didn’t fit: Basil — no empty pods left on the tower')).toBeTruthy()
+    expect(towerPods().find(p => p.slot === 8)?.plant).toBe('Basil')
   })
 
   it('lists saved plans by plant name, applies one only after confirming, and deletes one with an undo', () => {
@@ -310,7 +306,7 @@ describe('PlanPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Remove Basil' }))
     expect(calls.layout.mock.lastCall?.[0].overrides.pins).toHaveLength(1)
     fireEvent.click(screen.getByRole('tab', { name: 'Studio · 16' }))
-    expect(calls.layout.mock.lastCall?.[0].overrides).toBeUndefined()
+    expect(calls.layout.mock.lastCall?.[0].overrides).toEqual({ allowLightMismatch: true })
   })
 
   it('counts the pods a plan leaves empty, not the pods unplanted today', () => {
@@ -318,9 +314,9 @@ describe('PlanPage', () => {
     render(<PlanPage />)
     search('basil')
     for (let i = 0; i < 20; i++) add('Basil')
-    // 17 basil fit (medium 12, then the 5 low pods mint leaves); the 12 high pods stay empty, not the 29 unplanted today.
-    expect(towerPods().filter(p => p.planned)).toHaveLength(17)
-    expect(screen.getByText(/^20 planned · 12 empty ·/)).toBeTruthy()
+    // The remaining 3 basil use high-light pods, leaving 9 pods empty.
+    expect(towerPods().filter(p => p.planned)).toHaveLength(20)
+    expect(screen.getByText(/^20 planned · 9 empty ·/)).toBeTruthy()
   })
 
   it('counts the pods unplanted today until the layout answers, with nothing to say about zones', () => {
@@ -372,7 +368,7 @@ describe('PlanPage', () => {
   })
 
   it('opens a saved plan (e.g. one an agent saved) with its layout, overrides and schedule, and updates it in place', () => {
-    const overrides = { pins: [{ slot: 4, plantId: 'basil' }] }
+    const overrides = { allowLightMismatch: true, pins: [{ slot: 4, plantId: 'basil' }] }
     state.plans = [{ id: 'mcp-1', name: 'Gardyn order', model: 'studio', mode: 'staggered', appliedAt: null, start: '2026-10-01', layout: { model: 'studio', assignments: [{ slot: 4 }, { slot: 7 }], unplaced: [], free: [], overrides }, request: [{ plantId: 'basil', count: 2 }] }]
     render(<PlanPage />)
     flat()
@@ -388,7 +384,7 @@ describe('PlanPage', () => {
     expect(calls.save).toHaveBeenCalledWith({ id: 'mcp-1', name: 'Gardyn order', model: 'studio', mode: 'staggered', plants: [{ plantId: 'basil', count: 2 }], start: '2026-10-01', overrides })
     fireEvent.click(screen.getByRole('button', { name: 'Clear' }))
     add('Basil')
-    expect(calls.layout).toHaveBeenLastCalledWith({ model: 'studio', plants: [{ plantId: 'basil', count: 1 }], respectExisting: true })
+    expect(calls.layout).toHaveBeenLastCalledWith({ model: 'studio', plants: [{ plantId: 'basil', count: 1 }], respectExisting: true, overrides: { allowLightMismatch: true } })
     expect(screen.getByRole('button', { name: 'Save plan' })).toBeTruthy()
   })
 
@@ -406,7 +402,7 @@ describe('PlanPage', () => {
     expect(screen.getByTestId('plan-grid').children).toHaveLength(16)
   })
 
-  it('shows planned, planted and empty pods on the tower, and what did not fit', () => {
+  it('shows planned, planted and empty pods on the tower, with mismatch warnings', () => {
     state.pods = [{ slot: 1, plant: 'Mint', status: 'growing' }]
     render(<PlanPage />)
     search('jalapeño')
@@ -417,16 +413,15 @@ describe('PlanPage', () => {
     expect(pods.find(p => p.slot === 1)).toEqual({ slot: 1, status: 'growing', plant: 'Mint' })
     const planned = pods.filter(p => p.status === 'seeded')
     expect(planned.filter(p => p.plant === 'Jalapeño')).toHaveLength(14)
-    // Some of the six Mint fit and the rest are reported below.
-    expect(planned.filter(p => p.plant === 'Mint').length).toBeGreaterThan(0)
-    expect(planned.length).toBeLessThan(20)
+    expect(planned.filter(p => p.plant === 'Mint')).toHaveLength(6)
+    expect(planned).toHaveLength(20)
     expect(pods.filter(p => p.status === 'empty')).toHaveLength(30 - 1 - planned.length)
     expect(planned.every(p => p.planned && p.harvest?.state === 'unknown' && /^Planned: .+\.$/.test(p.harvest.reason))).toBe(true)
     expect(planned.some(p => p.harvest?.reason.includes('one zone lower'))).toBe(true)
-    expect(screen.getByText(/^Didn’t fit: Mint/)).toBeTruthy()
+    expect(screen.getByText(/Mint is in medium light/)).toBeTruthy()
     expect(screen.getByText(/click one for why it sits there\. Some sit one zone lower than ideal/)).toBeTruthy()
     flat()
-    expect(screen.getByText(/Didn’t fit: Mint/)).toBeTruthy()
+    expect(screen.getByText(/Mint is in medium light/)).toBeTruthy()
     expect(screen.getByText(/Outlined pods sit one zone lower than ideal/)).toBeTruthy()
   })
 
