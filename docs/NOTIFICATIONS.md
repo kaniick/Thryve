@@ -59,6 +59,42 @@ optional config key (`POST /notify/{key}`), an optional API key if you locked
 the server down, and/or raw Apprise URLs (these often contain tokens and are
 stored as secrets).
 
+### Thryve iPhone app
+
+The [Thryve iOS app](https://github.com/kaniick/Thryve-ios) is a channel too.
+In the app, open Settings › Notifications and turn it on. The phone registers
+itself with the unit. Then add a channel here: Notifications → Add channel →
+**Thryve iPhone app**. Every registered iPhone gets what a rule sends to it.
+
+There are two ways it reaches the phone:
+
+- **Without an Apple key**, the unit keeps what it sent in a short feed
+  (the newest 200). The app reads it over your Wi-Fi: instantly while it's open,
+  and in the background whenever iOS wakes it (often 15 minutes to a few hours
+  apart). Nothing leaves your network.
+- **With an APNs key**, the unit pushes through Apple Push straight away, even
+  with the app closed and away from home. The unit talks to
+  `api.push.apple.com` itself, with your key; there's no Thryve server or relay.
+  This needs a paid Apple Developer account:
+  1. developer.apple.com › Certificates, Identifiers & Profiles › Keys › **+**.
+     Name it, check **Apple Push Notifications service (APNs)** (Sandbox &
+     Production), Register, and download `AuthKey_XXXXXXXXXX.p8`. You can only
+     download it once.
+  2. In the channel, enter the **Key ID** (from the key's page), your **Team
+     ID** (Account › Membership details), and the app's bundle ID if you
+     changed it (default `com.thryve.app`). Open the .p8 in a text editor and
+     paste all of it. It's write-only: the unit never shows it again.
+  3. **Send test**, or in the app tap **Send a test notification**.
+
+The channel's editor lists the registered iPhones (push or background checks)
+and can forget one. Alert notifications carry an **Acknowledge** button.
+
+With a key saved, the unit also drives the app's **watering Live Activity**:
+when the pump starts it updates activities the app already shows and starts
+one by push on phones that don't (after a 5-second pause, so an open app can
+start it first). It updates it if the run changes, and ends it when the pump
+stops. Push-to-start needs iOS 17.2 or later.
+
 ## Rules
 
 A rule is the same shape as Autopilot, minus hardware actions:

@@ -1,3 +1,4 @@
+import type { IosService } from '../ios/service'
 import type { NotificationChannel } from '../types'
 import { sendApprise } from './apprise'
 import type { HttpFetch, SendRequest, SendResult } from './http'
@@ -23,7 +24,9 @@ registerChannelProvider('pushover', sendPushover)
 registerChannelProvider('pushbullet', sendPushbullet)
 registerChannelProvider('apprise', sendApprise)
 
-export async function sendOnChannel(channel: NotificationChannel, req: SendRequest, fetchImpl: HttpFetch): Promise<SendResult> {
+export async function sendOnChannel(channel: NotificationChannel, req: SendRequest, fetchImpl: HttpFetch, ios?: IosService | null): Promise<SendResult> {
+  // The iPhone app channel is per-core (it owns the device list and APNs client), so it's passed in.
+  if (channel.kind === 'ios') return ios ? ios.send(channel, req) : { ok: false, error: 'The iPhone channel isn\'t available on this host' }
   const send = providers.get(channel.kind)
   if (!send) return { ok: false, error: `No provider registered for ${channel.kind}` }
   return send(channel, req, fetchImpl)

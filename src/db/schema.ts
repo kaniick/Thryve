@@ -375,7 +375,7 @@ export const plans = sqliteTable('plans', {
 export const notificationChannels = sqliteTable('notification_channels', {
   id: integer().primaryKey({ autoIncrement: true }),
   name: text().notNull(),
-  kind: text({ enum: ['pushover', 'pushbullet', 'apprise'] }).notNull(),
+  kind: text({ enum: ['pushover', 'pushbullet', 'apprise', 'ios'] }).notNull(),
   enabled: integer({ mode: 'boolean' }).notNull().default(true),
   /** Non-secret config JSON (device, sound, server URL, tags). */
   config: text().notNull().default('{}'),
@@ -403,6 +403,39 @@ export const notificationRules = sqliteTable('notification_rules', {
   repeatWhileTrue: integer({ mode: 'boolean' }).notNull().default(false),
   createdAt: text().notNull(),
   updatedAt: text().notNull(),
+})
+
+/** iPhones running the Thryve app, registered as the "ios" channel's recipients. */
+export const notificationIosDevices = sqliteTable('notification_ios_devices', {
+  deviceId: text().primaryKey(),
+  name: text().notNull(),
+  /** APNs device token (hex); null when the phone only checks in. */
+  token: text(),
+  environment: text({ enum: ['sandbox', 'production'] }).notNull(),
+  bundleId: text().notNull(),
+  createdAt: text().notNull(),
+  updatedAt: text().notNull(),
+})
+
+/** ActivityKit push tokens for the watering Live Activity: "start" (push-to-start) and "update". */
+export const notificationActivityTokens = sqliteTable('notification_activity_tokens', {
+  id: integer().primaryKey({ autoIncrement: true }),
+  deviceId: text().notNull(),
+  kind: text({ enum: ['start', 'update'] }).notNull(),
+  activityId: text(),
+  token: text().notNull(),
+  environment: text({ enum: ['sandbox', 'production'] }).notNull(),
+  updatedAt: text().notNull(),
+}, t => [index('notification_activity_tokens_device').on(t.deviceId, t.kind)])
+
+/** What the "ios" channel sent, for phones without push to catch up on (newest few hundred). */
+export const notificationFeed = sqliteTable('notification_feed', {
+  id: integer().primaryKey({ autoIncrement: true }),
+  title: text().notNull(),
+  body: text().notNull(),
+  level: text({ enum: ['info', 'warning', 'critical'] }).notNull(),
+  alertId: integer(),
+  createdAt: text().notNull(),
 })
 
 export const notificationRuns = sqliteTable('notification_runs', {

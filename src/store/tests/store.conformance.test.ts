@@ -325,6 +325,39 @@ for (const [name, make] of impls) {
       expect(store.settings.update({ notifyQuietStart: '22:00', notifyQuietEnd: '07:00' })).toMatchObject({ notifyQuietStart: '22:00', notifyQuietEnd: '07:00' })
     })
 
+    it('iPhone devices, Live Activity tokens and the feed', () => {
+      store = make()
+      const ios = store.notifications.ios
+      const d = ios.devices.upsert({ deviceId: 'phone-1', name: 'iPhone', token: null, environment: 'sandbox', bundleId: 'com.thryve.app' }, '2026-11-16T00:00:00Z')
+      expect(d.createdAt).toBe('2026-11-16T00:00:00Z')
+      const again = ios.devices.upsert({ deviceId: 'phone-1', name: 'My iPhone', token: 'ab', environment: 'production', bundleId: 'com.thryve.app' }, '2026-11-16T01:00:00Z')
+      expect(again).toMatchObject({ name: 'My iPhone', token: 'ab', environment: 'production', createdAt: '2026-11-16T00:00:00Z', updatedAt: '2026-11-16T01:00:00Z' })
+      ios.devices.setToken('phone-1', null, '2026-11-16T02:00:00Z')
+      expect(ios.devices.get('phone-1')?.token).toBeNull()
+      expect(ios.devices.list()).toHaveLength(1)
+
+      ios.activityTokens.upsert({ deviceId: 'phone-1', kind: 'start', activityId: null, token: 's1', environment: 'production' }, 't1')
+      ios.activityTokens.upsert({ deviceId: 'phone-1', kind: 'start', activityId: null, token: 's2', environment: 'production' }, 't2')
+      ios.activityTokens.upsert({ deviceId: 'phone-1', kind: 'update', activityId: 'a1', token: 'u1', environment: 'production' }, 't3')
+      ios.activityTokens.upsert({ deviceId: 'phone-1', kind: 'update', activityId: 'a1', token: 'u2', environment: 'production' }, 't4')
+      expect(ios.activityTokens.list().map(t => t.token).sort()).toEqual(['s2', 'u2'])
+      ios.activityTokens.removeKind('update')
+      expect(ios.activityTokens.list().map(t => t.token)).toEqual(['s2'])
+      ios.activityTokens.removeToken('s2')
+      ios.activityTokens.upsert({ deviceId: 'phone-1', kind: 'start', activityId: null, token: 's3', environment: 'production' }, 't5')
+      ios.activityTokens.removeDevice('phone-1')
+      expect(ios.activityTokens.list()).toEqual([])
+      expect(ios.devices.remove('phone-1')).toBe(true)
+
+      expect(ios.feed.latestId()).toBeNull()
+      for (let i = 1; i <= 5; i++) ios.feed.add({ title: `t${i}`, body: 'b', level: 'info', alertId: i === 2 ? 7 : null, createdAt: '2026-11-16T00:00:00Z' })
+      expect(ios.feed.latestId()).toBe(5)
+      expect(ios.feed.after(2, 2).map(f => f.title)).toEqual(['t3', 't4'])
+      expect(ios.feed.after(0, 10)[1]).toMatchObject({ id: 2, alertId: 7, level: 'info' })
+      ios.feed.prune(3)
+      expect(ios.feed.after(0, 10).map(f => f.id)).toEqual([3, 4, 5])
+    })
+
     it('plans save, update, apply, issue and remove', () => {
       store = make()
       const layout = { model: 'home' as const, assignments: [], unplaced: [], free: [1], zones: [], suggestions: [] }

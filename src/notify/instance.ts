@@ -11,6 +11,7 @@ import type { Store } from '../store/types'
 import type { UpdateClient } from '../update/client'
 import { NotifyEngine } from './engine'
 import type { EventSnapshot } from './events'
+import type { IosService } from './ios/service'
 import type { HttpFetch } from './providers'
 
 const DAYS: DayOfWeek[] = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
@@ -24,6 +25,7 @@ export function createNotifier(o: {
   update?: UpdateClient | null
   log?: (m: string) => void
   fetch?: HttpFetch
+  ios?: IosService | null
 }): NotifyEngine {
   const now = () => o.now?.() ?? new Date()
   let lastPrune = 0
@@ -56,6 +58,7 @@ export function createNotifier(o: {
     changed: () => o.events.emit({ kind: 'mutation', path: 'notifications' }),
     log: o.log,
     fetch: o.fetch,
+    ios: o.ios,
   })
 
   o.events.subscribe((e) => {

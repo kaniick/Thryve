@@ -88,3 +88,44 @@ describe('notifications router', () => {
     finally { restore() }
   })
 })
+
+describe('notifications router: the iPhone app', () => {
+  const key = '-----BEGIN PRIVATE KEY-----\nMIGTAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBHkwdwIBAQQg\n-----END PRIVATE KEY-----'
+
+  it('registers phones, keeps the APNs key write-only, and serves the feed', async () => {
+    const { c, store, restore } = unit()
+    try {
+      expect(await c.notifications.devices.register({ deviceId: 'phone-0001', name: 'iPhone', platform: 'ios', environment: 'production', bundleId: 'com.thryve.app' }))
+        .toEqual({ apnsConfigured: false })
+      await expect(c.notifications.devices.register({ deviceId: 'phone-0001', name: 'iPhone', token: 'not-hex', environment: 'production' })).rejects.toThrow()
+      await c.notifications.devices.register({ deviceId: 'phone-0001', name: 'iPhone', token: 'AB'.repeat(32), environment: 'production' })
+      expect(store.notifications.ios.devices.get('phone-0001')?.token).toBe('ab'.repeat(32))
+      expect(await c.notifications.devices.list()).toMatchObject([{ deviceId: 'phone-0001', hasToken: true }])
+      expect(JSON.stringify(await c.notifications.devices.list())).not.toContain('abab')
+
+      const ch = await c.notifications.createChannel({ name: 'iPhone', kind: 'ios', config: { keyId: 'KEY1234567', teamId: 'TEAM123456' }, secrets: { apnsKey: key } })
+      expect(ch.secrets).toMatchObject({ hasApnsKey: true, apnsKey: '••••' })
+      expect(JSON.stringify(ch)).not.toContain('MIGT')
+      expect(ch.config).toEqual({ keyId: 'KEY1234567', teamId: 'TEAM123456' })
+      await expect(c.notifications.createChannel({ name: 'Bad', kind: 'ios', secrets: { apnsKey: 'hello' } })).rejects.toThrow(/BEGIN and END/)
+
+      // This host has no APNs client, so a send lands in the feed only.
+      const sent = await c.notifications.testChannel({ id: ch.id })
+      expect(sent.ok).toBe(true)
+      expect(await c.notifications.feed({})).toEqual({ items: [], latestId: 1 })
+      const feed = await c.notifications.feed({ afterId: 0 })
+      expect(feed.items[0]).toMatchObject({ id: 1, title: 'Thryve: test (iPhone)', level: 'info', alertId: null })
+
+      expect(await c.notifications.devices.test({ deviceId: 'phone-0001' })).toEqual({ sent: false, via: 'feed' })
+      expect(await c.notifications.activities.register({ deviceId: 'phone-0001', kind: 'start', token: 'cd'.repeat(40), environment: 'production' })).toEqual({ ok: true })
+      await expect(c.notifications.activities.register({ deviceId: 'phone-0001', kind: 'update', token: 'cd'.repeat(40), environment: 'production' })).rejects.toThrow(/activityId/)
+      expect(store.notifications.ios.activityTokens.list()).toHaveLength(1)
+
+      expect(await c.notifications.devices.unregister({ deviceId: 'phone-0001' })).toEqual({ ok: true })
+      expect(store.notifications.ios.activityTokens.list()).toHaveLength(0)
+    }
+    finally {
+      restore()
+    }
+  })
+})

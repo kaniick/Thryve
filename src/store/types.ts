@@ -5,6 +5,7 @@
  */
 import type { AutomationRule, RunOutcome } from '../autopilot/types'
 import type { NotificationChannel, NotificationRule, NotificationRun } from '../notify/types'
+import type { ActivityToken, FeedItem, IosDevice } from '../notify/ios/types'
 import type { SensorId } from '../hardware/contract'
 import type { Category, Succession, Zone } from '../plants/catalog'
 import type { PlanResult, SowingWave } from '../plants/planner'
@@ -531,6 +532,32 @@ export interface Store {
       /** Newest first. */
       list(q?: { ruleId?: number, limit?: number }): NotificationRun[]
       prune(beforeTs: string): number
+    }
+    /** The iPhone app channel: registered phones, Live Activity tokens, and the feed they catch up from. */
+    ios: {
+      devices: {
+        list(): IosDevice[]
+        get(deviceId: string): IosDevice | null
+        upsert(d: Omit<IosDevice, 'createdAt' | 'updatedAt'>, ts: string): IosDevice
+        setToken(deviceId: string, token: string | null, ts: string): void
+        remove(deviceId: string): boolean
+      }
+      activityTokens: {
+        list(): ActivityToken[]
+        /** One "start" token per phone, one "update" token per activity. */
+        upsert(t: Omit<ActivityToken, 'updatedAt'>, ts: string): void
+        removeToken(token: string): void
+        removeKind(kind: ActivityToken['kind']): void
+        removeDevice(deviceId: string): void
+      }
+      feed: {
+        add(item: Omit<FeedItem, 'id'>): FeedItem
+        /** Oldest first. */
+        after(afterId: number, limit: number): FeedItem[]
+        latestId(): number | null
+        /** Keep only the newest `keep`. */
+        prune(keep: number): void
+      }
     }
   }
   automations: {
