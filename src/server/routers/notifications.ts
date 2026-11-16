@@ -16,6 +16,7 @@ import { NOTIFY_EVENTS } from '../../notify/types'
 import type { NotificationRule } from '../../notify/types'
 import type { Context } from '../context'
 import { publicProcedure, router } from '../trpc'
+import { iosActivitiesRouter, iosDevicesRouter, iosFeedProcedure } from './notificationsIos'
 
 const ts = (ctx: Context) => (ctx.now?.() ?? new Date()).toISOString()
 
@@ -68,6 +69,11 @@ const Starter = PublicRule.omit({ id: true, createdAt: true, updatedAt: true }).
 
 /** Push notification channels and IF/THEN rules. Secrets are write-only. */
 export const notificationsRouter = router({
+  // The Thryve iPhone app (the "ios" channel).
+  feed: iosFeedProcedure,
+  devices: iosDevicesRouter,
+  activities: iosActivitiesRouter,
+
   status: publicProcedure
     .meta({ openapi: { method: 'GET', path: '/notifications/status', tags: ['notifications'], summary: 'Kill switch, quiet hours, and how many channels and rules are set up' } })
     .output(Status)

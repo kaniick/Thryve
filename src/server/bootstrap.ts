@@ -10,6 +10,8 @@ import type { RestoreClient } from '../backup/restore'
 import type { UpdateClient } from '../update/client'
 import { createAutopilot } from '../autopilot/instance'
 import { createNotifier } from '../notify/instance'
+import { IosService } from '../notify/ios/service'
+import type { ApnsSender } from '../notify/ios/types'
 import { CaptureService, MemorySink, type BlobSink } from '../camera/captures'
 import { CareEngine } from '../care/engine'
 import type { MirroredSink } from '../camera/mirrorSink'
@@ -80,6 +82,8 @@ export interface CoreOptions {
   clockTrusted?: () => boolean
   /** HomeKit (ADR 0023); node hosts only. Attached to the context here, unpublished on stop. */
   homekit?: HomeKitControl & { attach(ctx: Context): void, shutdown(): Promise<void> }
+  /** Apple Push for the iPhone app (node:http2); node hosts only. Without it the app still gets the feed. */
+  apns?: ApnsSender | null
 }
 
 export interface Core {
@@ -113,10 +117,11 @@ export function createCore(opts: CoreOptions): Core {
   // The light's single owner: manual > Autopilot > schedule (ADR-0020).
   const light = new LightArbiter({ hal: o.hal, now: () => (o.now?.() ?? new Date()).getTime(), log: m => console.warn(m) })
   const autopilot = createAutopilot({ hal: o.hal, store: o.store, events, light, now: o.now, clockTrusted: o.clockTrusted, log: m => console.warn(m) })
-  const notifier = createNotifier({ hal: o.hal, store: o.store, events, now: o.now, update: o.update, log: m => console.warn(m) })
+  const ios = new IosService({ store: o.store, apns: o.apns ?? null, now: o.now, log: m => console.warn(m) })
+  const notifier = createNotifier({ hal: o.hal, store: o.store, events, now: o.now, update: o.update, log: m => console.warn(m), ios })
   const flash = new FlashMeter({ store: o.store, source: o.flashSource ?? null, disk: o.disk, now: o.now })
   const podCodes = new PodCodeService({ store: o.store, captures, reader: o.codeReader ?? null, log: m => console.warn(m), onRead: () => events.emit({ kind: 'mutation', path: 'podCodes' }) })
-  const ctx: Context = { hal: o.hal, events, store: o.store, captures, analysis, podCodes, mirror: o.mirror, backup: o.backup, restore: o.restore, update: o.update, bootLog: o.bootLog, homekit: o.homekit, models: o.models, podvision: o.podvision, bridge: o.bridge, flash, database: o.database, logging: o.logging, wifi, light, autopilot, notifier, version: o.version, host: o.host, now: o.now }
+  const ctx: Context = { hal: o.hal, events, store: o.store, captures, analysis, podCodes, mirror: o.mirror, backup: o.backup, restore: o.restore, update: o.update, bootLog: o.bootLog, homekit: o.homekit, models: o.models, podvision: o.podvision, bridge: o.bridge, flash, database: o.database, logging: o.logging, wifi, light, autopilot, notifier, ios, version: o.version, host: o.host, now: o.now }
   o.homekit?.attach(ctx)
   const recorder = new Recorder({ store: o.store, events, now: o.now })
   const retention = new TelemetryRetention({ store: o.store, now: o.now })
@@ -131,6 +136,7 @@ export function createCore(opts: CoreOptions): Core {
     scheduler.start()
     autopilot.start()
     notifier.start()
+    ios.attach({ events, hal: o.hal })
     flash.start()
     o.backup?.start()
     grow.tick()
@@ -157,6 +163,7 @@ export function createCore(opts: CoreOptions): Core {
       scheduler.stop()
       autopilot.stop()
       notifier.stop()
+      ios.stop()
       light.close()
       captures.stop()
       podCodes.stop()

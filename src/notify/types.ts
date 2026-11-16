@@ -64,8 +64,27 @@ export interface AppriseSecrets {
   urls?: string[]
 }
 
-export type ChannelConfig = PushoverConfig | PushbulletConfig | AppriseConfig | Record<string, unknown>
-export type ChannelSecrets = PushoverSecrets | PushbulletSecrets | AppriseSecrets | Record<string, unknown>
+/**
+ * The Thryve iPhone app. Every registered iPhone gets the notification: through
+ * Apple Push (APNs) straight from the unit when a key is saved here, and from
+ * the unit's feed when the app checks in.
+ */
+export interface IosConfig {
+  /** The APNs key's 10-character Key ID. */
+  keyId?: string
+  /** The Apple Developer team ID. */
+  teamId?: string
+  /** The app's bundle ID (apns-topic); default com.thryve.app. */
+  bundleId?: string
+}
+
+export interface IosSecrets {
+  /** The AuthKey_XXXXXXXXXX.p8 contents. */
+  apnsKey?: string
+}
+
+export type ChannelConfig = PushoverConfig | PushbulletConfig | AppriseConfig | IosConfig | Record<string, unknown>
+export type ChannelSecrets = PushoverSecrets | PushbulletSecrets | AppriseSecrets | IosSecrets | Record<string, unknown>
 
 export interface NotificationChannel {
   id: number

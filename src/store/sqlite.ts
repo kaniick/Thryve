@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url'
 import type { SensorId } from '../hardware/contract'
 import type { AutomationRule, Condition } from '../autopilot/types'
 import type { ChannelConfig, ChannelSecrets, NotificationChannel, NotificationRule, NotificationRun, NotifyPriority, NotifyTrigger } from '../notify/types'
+import type { ActivityToken, ApnsEnvironment, FeedItem, FeedLevel, IosDevice } from '../notify/ios/types'
 import * as t from '../db/schema'
 import { downsample } from './memory'
 import type { AlertRow, Automation, AutomationRun, AnalysisPoint, AnalysisRow, AnalyzerStats, BackupRecord, Capture, CustomPlant, DeviceSettings, FlashSample, GrowCycle, GrowProtocolState, GrowStage, LightSpec, PlanRow, PlantProfile, Pod, PodCodePair, PodCodeRead, PodLabel, PodLabelCursor, PodLabelInput, PodLabelSource, PodLabelValue, PumpSpec, SavedCycle, SavedSchedule, Schedule, ScheduleRun, Store, SuggestionDismissal, TankAction, TankActionKind, TelemetryPoint } from './types'
@@ -536,6 +537,58 @@ export class SqliteStore implements Store {
       },
       prune: (beforeTs: string): number => this.db.delete(t.notificationRuns).where(lt(t.notificationRuns.firedAt, beforeTs)).run().changes,
     },
+    ios: {
+      devices: {
+        list: (): IosDevice[] => this.db.select().from(t.notificationIosDevices).all().map(rowToIosDevice),
+        get: (deviceId: string): IosDevice | null => {
+          const r = this.db.select().from(t.notificationIosDevices).where(eq(t.notificationIosDevices.deviceId, deviceId)).get()
+          return r ? rowToIosDevice(r) : null
+        },
+        upsert: (d: Omit<IosDevice, 'createdAt' | 'updatedAt'>, ts: string): IosDevice => {
+          const r = this.db.insert(t.notificationIosDevices).values({ ...d, createdAt: ts, updatedAt: ts })
+            .onConflictDoUpdate({ target: t.notificationIosDevices.deviceId, set: { name: d.name, token: d.token, environment: d.environment, bundleId: d.bundleId, updatedAt: ts } })
+            .returning().get()
+          return rowToIosDevice(r)
+        },
+        setToken: (deviceId: string, token: string | null, ts: string): void => {
+          this.db.update(t.notificationIosDevices).set({ token, updatedAt: ts }).where(eq(t.notificationIosDevices.deviceId, deviceId)).run()
+        },
+        remove: (deviceId: string): boolean => this.db.delete(t.notificationIosDevices).where(eq(t.notificationIosDevices.deviceId, deviceId)).run().changes > 0,
+      },
+      activityTokens: {
+        list: (): ActivityToken[] => this.db.select().from(t.notificationActivityTokens).orderBy(asc(t.notificationActivityTokens.id)).all()
+          .map(r => ({ deviceId: r.deviceId, kind: r.kind as ActivityToken['kind'], activityId: r.activityId, token: r.token, environment: r.environment as ApnsEnvironment, updatedAt: r.updatedAt })),
+        upsert: (tok: Omit<ActivityToken, 'updatedAt'>, ts: string): void => {
+          const a = t.notificationActivityTokens
+          this.db.transaction((tx) => {
+            const same = tok.kind === 'start'
+              ? and(eq(a.deviceId, tok.deviceId), eq(a.kind, 'start'))
+              : and(eq(a.deviceId, tok.deviceId), eq(a.kind, 'update'), eq(a.activityId, tok.activityId ?? ''))
+            tx.delete(a).where(same).run()
+            tx.insert(a).values({ ...tok, updatedAt: ts }).run()
+          })
+        },
+        removeToken: (token: string): void => {
+          this.db.delete(t.notificationActivityTokens).where(eq(t.notificationActivityTokens.token, token)).run()
+        },
+        removeKind: (kind: ActivityToken['kind']): void => {
+          this.db.delete(t.notificationActivityTokens).where(eq(t.notificationActivityTokens.kind, kind)).run()
+        },
+        removeDevice: (deviceId: string): void => {
+          this.db.delete(t.notificationActivityTokens).where(eq(t.notificationActivityTokens.deviceId, deviceId)).run()
+        },
+      },
+      feed: {
+        add: (item: Omit<FeedItem, 'id'>): FeedItem => rowToFeed(this.db.insert(t.notificationFeed).values(item).returning().get()),
+        after: (afterId: number, limit: number): FeedItem[] => this.db.select().from(t.notificationFeed).where(gt(t.notificationFeed.id, afterId))
+          .orderBy(asc(t.notificationFeed.id)).limit(limit).all().map(rowToFeed),
+        latestId: (): number | null => this.db.select({ id: t.notificationFeed.id }).from(t.notificationFeed).orderBy(desc(t.notificationFeed.id)).limit(1).get()?.id ?? null,
+        prune: (keep: number): void => {
+          const cut = this.db.select({ id: t.notificationFeed.id }).from(t.notificationFeed).orderBy(desc(t.notificationFeed.id)).limit(1).offset(keep).get()
+          if (cut) this.db.delete(t.notificationFeed).where(lte(t.notificationFeed.id, cut.id)).run()
+        },
+      },
+    },
   }
 
   tankActions = {
@@ -661,6 +714,14 @@ function notifyRuleColumns(rule: Partial<Omit<NotificationRule, 'id' | 'createdA
   if (rule.ignoreQuietHours !== undefined) out.ignoreQuietHours = rule.ignoreQuietHours
   if (rule.repeatWhileTrue !== undefined) out.repeatWhileTrue = rule.repeatWhileTrue
   return out as typeof t.notificationRules.$inferInsert
+}
+
+function rowToIosDevice(r: typeof t.notificationIosDevices.$inferSelect): IosDevice {
+  return { ...r, environment: r.environment as ApnsEnvironment }
+}
+
+function rowToFeed(r: typeof t.notificationFeed.$inferSelect): FeedItem {
+  return { ...r, level: r.level as FeedLevel }
 }
 
 function rowToNotifyChannel(r: typeof t.notificationChannels.$inferSelect): NotificationChannel {

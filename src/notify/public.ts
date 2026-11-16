@@ -1,6 +1,6 @@
 
 import { hasSecret, maskSecret } from './mask'
-import type { AppriseSecrets, NotificationChannel, NotificationRule, PushoverSecrets, PushbulletSecrets } from './types'
+import type { AppriseSecrets, IosSecrets, NotificationChannel, NotificationRule, PushoverSecrets, PushbulletSecrets } from './types'
 
 export function publicSecrets(ch: NotificationChannel) {
   if (ch.kind === 'pushover') {
@@ -10,6 +10,11 @@ export function publicSecrets(ch: NotificationChannel) {
   if (ch.kind === 'pushbullet') {
     const s = ch.secrets as PushbulletSecrets
     return blank({ accessToken: maskSecret(s.accessToken), hasAccessToken: hasSecret(s.accessToken) })
+  }
+  if (ch.kind === 'ios') {
+    const s = ch.secrets as IosSecrets
+    // A PEM's last characters are its END line, so don't show a tail; just say it's set.
+    return blank({ apnsKey: hasSecret(s.apnsKey) ? '••••' : null, hasApnsKey: hasSecret(s.apnsKey) })
   }
   if (ch.kind === 'apprise') {
     const s = ch.secrets as AppriseSecrets
@@ -40,6 +45,8 @@ function blank(partial: Record<string, unknown>) {
     hasApiKey: false,
     urls: 0,
     hasUrls: false,
+    apnsKey: null as string | null,
+    hasApnsKey: false,
     ...partial,
   }
 }
@@ -70,6 +77,7 @@ export function mergeSecrets(
     accessToken?: string
     apiKey?: string
     urls?: string[]
+    apnsKey?: string
   } | undefined,
 ): NotificationChannel['secrets'] {
   const keep = <T extends string>(key: T, incoming: string | undefined, existing: string | undefined): string | undefined => {
@@ -84,6 +92,10 @@ export function mergeSecrets(
   if (kind === 'pushbullet') {
     const p = (prev ?? {}) as PushbulletSecrets
     return { accessToken: keep('accessToken', patch?.accessToken, p.accessToken) }
+  }
+  if (kind === 'ios') {
+    const p = (prev ?? {}) as IosSecrets
+    return { apnsKey: keep('apnsKey', patch?.apnsKey?.trim(), p.apnsKey) }
   }
   if (kind === 'apprise') {
     const p = (prev ?? {}) as AppriseSecrets
@@ -121,6 +133,10 @@ export function parseConfig(kind: NotificationChannel['kind'], raw: Record<strin
       deviceIden: typeof r.deviceIden === 'string' ? r.deviceIden : undefined,
       channelTag: typeof r.channelTag === 'string' ? r.channelTag : undefined,
     }
+  }
+  if (kind === 'ios') {
+    const text = (v: unknown) => typeof v === 'string' && v.trim() ? v.trim() : undefined
+    return { keyId: text(r.keyId), teamId: text(r.teamId), bundleId: text(r.bundleId) }
   }
   if (kind === 'apprise') {
     return {

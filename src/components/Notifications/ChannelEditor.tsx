@@ -10,6 +10,7 @@ const KINDS: ReadonlyArray<{ value: ChannelKind, label: string }> = [
   { value: 'pushover', label: 'Pushover' },
   { value: 'pushbullet', label: 'Pushbullet' },
   { value: 'apprise', label: 'Apprise API' },
+  { value: 'ios', label: 'Thryve iPhone app' },
 ]
 
 const SOUNDS = ['', 'pushover', 'bike', 'bugle', 'cashregister', 'classical', 'cosmic', 'falling', 'gamelan', 'incoming', 'intermission', 'magic', 'mechanical', 'pianobar', 'siren', 'spacealarm', 'tugboat', 'alien', 'climb', 'persistent', 'echo', 'updown', 'vibrate', 'none']
@@ -31,6 +32,8 @@ interface PublicChannel {
     hasApiKey: boolean
     urls: number
     hasUrls: boolean
+    apnsKey?: string | null
+    hasApnsKey?: boolean
   }
 }
 
@@ -55,12 +58,17 @@ export function ChannelEditor({ id, existing, onClose }: { id: number | null, ex
   const [accessToken, setAccessToken] = useState('')
   const [apiKey, setApiKey] = useState('')
   const [urls, setUrls] = useState('')
+  const [keyId, setKeyId] = useState(str(existing?.config.keyId))
+  const [teamId, setTeamId] = useState(str(existing?.config.teamId))
+  const [bundleId, setBundleId] = useState(str(existing?.config.bundleId))
+  const [apnsKey, setApnsKey] = useState('')
   const saving = create.isPending || update.isPending
   const err = create.error?.message ?? update.error?.message
 
   const configFor = () => {
     if (kind === 'pushover') return { device: device || undefined, sound: sound || undefined, retry, expire }
     if (kind === 'pushbullet') return { deviceIden: deviceIden || undefined, channelTag: channelTag || undefined }
+    if (kind === 'ios') return { keyId: keyId || undefined, teamId: teamId || undefined, bundleId: bundleId || undefined }
     return { serverUrl, configKey: configKey || undefined, tag: tag || undefined }
   }
 
@@ -72,6 +80,9 @@ export function ChannelEditor({ id, existing, onClose }: { id: number | null, ex
     }
     else if (kind === 'pushbullet') {
       if (accessToken) s.accessToken = accessToken
+    }
+    else if (kind === 'ios') {
+      if (apnsKey.trim()) s.apnsKey = apnsKey.trim()
     }
     else {
       if (apiKey) s.apiKey = apiKey
@@ -137,6 +148,8 @@ export function ChannelEditor({ id, existing, onClose }: { id: number | null, ex
           </>
         )}
 
+        {kind === 'ios' && <IosFields {...{ keyId, setKeyId, teamId, setTeamId, bundleId, setBundleId, apnsKey, setApnsKey, hasKey: !!existing?.secrets.hasApnsKey }} />}
+
         {kind === 'apprise' && (
           <>
             <p className="text-[13px] text-fg-2">
@@ -156,6 +169,58 @@ export function ChannelEditor({ id, existing, onClose }: { id: number | null, ex
         {err && <InlineError>{err}</InlineError>}
       </div>
     </Modal>
+  )
+}
+
+/** The iPhone app: every registered iPhone gets it; an APNs key makes it a real push. */
+function IosFields(p: {
+  keyId: string
+  setKeyId: (v: string) => void
+  teamId: string
+  setTeamId: (v: string) => void
+  bundleId: string
+  setBundleId: (v: string) => void
+  apnsKey: string
+  setApnsKey: (v: string) => void
+  hasKey: boolean
+}) {
+  const devices = trpc.notifications.devices.list.useQuery()
+  const forget = trpc.notifications.devices.unregister.useMutation({ onSuccess: () => void devices.refetch() })
+  const keyInvalid = p.apnsKey.trim() !== '' && !/-----BEGIN PRIVATE KEY-----[\s\S]+-----END PRIVATE KEY-----/.test(p.apnsKey)
+  return (
+    <>
+      <p className="text-[13px] text-fg-2">
+        Sends to every iPhone that turned on notifications in the Thryve app (Settings › Notifications there). Without a key, phones pick notifications up when the app checks in. With an APNs key from your Apple Developer account, the unit pushes through Apple straight away, and keeps the watering Live Activity current. No Thryve server is involved.
+      </p>
+      <TextField label="APNs Key ID" value={p.keyId} onChange={p.setKeyId} placeholder="10 characters, e.g. ABC123DEFG" />
+      <TextField label="Team ID" value={p.teamId} onChange={p.setTeamId} placeholder="10 characters, from Membership details" />
+      <TextField label="Bundle ID (optional)" value={p.bundleId} onChange={p.setBundleId} placeholder="com.thryve.app" />
+      <label className="flex flex-col gap-1 text-[13px] text-fg-2">
+        APNs key (.p8)
+        <textarea
+          className="min-h-[96px] rounded-ctl border border-line-2 bg-transparent px-2.5 py-1.5 font-mono text-[12px] text-fg"
+          value={p.apnsKey}
+          onChange={e => p.setApnsKey(e.target.value)}
+          placeholder={p.hasKey ? 'Saved. Paste a new key to replace it.' : '-----BEGIN PRIVATE KEY-----\n…\n-----END PRIVATE KEY-----'}
+        />
+        <span className={keyInvalid ? 'text-danger' : 'text-fg-3'}>
+          {keyInvalid ? 'Paste the whole AuthKey_….p8 file, including the BEGIN and END lines.' : 'Open AuthKey_….p8 in a text editor and paste all of it. It stays on the unit and is never shown again.'}
+        </span>
+      </label>
+      <div className="flex flex-col gap-1">
+        <span className="text-[13px] text-fg-2">Registered iPhones</span>
+        {(devices.data ?? []).length === 0 && <span className="text-[13px] text-fg-3">None yet. Turn on notifications in the app.</span>}
+        {(devices.data ?? []).map(d => (
+          <div key={d.deviceId} className="flex items-center justify-between gap-2 text-[13px]">
+            <span>
+              {d.name}
+              <span className="text-fg-3">{d.hasToken ? ` · push (${d.environment})` : ' · background checks'}</span>
+            </span>
+            <Button variant="ghost" size="sm" onClick={() => forget.mutate({ deviceId: d.deviceId })}>Forget</Button>
+          </div>
+        ))}
+      </div>
+    </>
   )
 }
 

@@ -27,7 +27,13 @@ export const AppriseConfigSchema = z.object({
   tag: z.string().max(120).optional(),
 })
 
-export const ChannelConfigSchema = z.union([PushoverConfigSchema, PushbulletConfigSchema, AppriseConfigSchema])
+export const IosConfigSchema = z.object({
+  keyId: z.string().max(20).optional(),
+  teamId: z.string().max(20).optional(),
+  bundleId: z.string().max(155).optional(),
+})
+
+export const ChannelConfigSchema = z.union([PushoverConfigSchema, PushbulletConfigSchema, AppriseConfigSchema, IosConfigSchema])
 
 /** Write-only: omitted fields keep the stored value; empty string clears. */
 export const ChannelSecretsInput = z.object({
@@ -36,6 +42,8 @@ export const ChannelSecretsInput = z.object({
   accessToken: z.string().max(200).optional(),
   apiKey: z.string().max(200).optional(),
   urls: z.array(z.string().min(1).max(500)).max(20).optional(),
+  /** The APNs .p8 key (PEM). */
+  apnsKey: z.string().max(1000).refine(k => k.trim() === '' || /-----BEGIN PRIVATE KEY-----[\s\S]+-----END PRIVATE KEY-----/.test(k), 'paste the whole AuthKey .p8 file, including the BEGIN and END lines').optional(),
 }).passthrough()
 
 export const ChannelInput = z.object({
@@ -57,6 +65,8 @@ export const MaskedSecrets = z.object({
   hasApiKey: z.boolean(),
   urls: z.number(),
   hasUrls: z.boolean(),
+  apnsKey: z.string().nullable(),
+  hasApnsKey: z.boolean(),
 })
 
 export const PublicChannel = z.object({

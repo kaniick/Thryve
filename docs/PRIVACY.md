@@ -46,6 +46,12 @@ the API and MCP tools return them masked (last four characters only) and they
 are never written to the journal or a dataset export. A backup file includes
 them, like the MQTT password, so keep backups private.
 
+The **Thryve iPhone app** channel sends nothing off the LAN unless you save an
+APNs key. With one, the unit sends each notification's title and message, and
+the watering Live Activity's run times, to Apple Push (`api.push.apple.com`)
+for your registered iPhones. The key and the phones' push tokens stay on the
+unit and are never returned by the API.
+
 A dataset export (`GET /api/datasets/export`) and a backup download
 (`GET /api/backup/download`) are downloads you start; they go only to the
 browser or script that asked for them. A backup file holds the unit's secrets

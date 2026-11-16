@@ -1,6 +1,7 @@
 import type { SensorId } from '../hardware/contract'
 import type { AlertRow, Automation, AutomationRun, AnalysisPoint, AnalysisRow, AnalyzerStats, BackupRecord, Capture, CustomPlant, DeviceSettings, FlashSample, GrowCycle, GrowProtocolState, GrowStage, PlanRow, PlantProfile, Pod, PodCodePair, PodCodeRead, PodLabel, PodLabelCursor, PodLabelInput, PodLabelSource, PodLabelValue, SavedSchedule, Schedule, ScheduleRun, Store, SuggestionDismissal, TankAction, TankActionKind, TelemetryPoint } from './types'
 import type { NotificationChannel, NotificationRule, NotificationRun } from '../notify/types'
+import type { ActivityToken, FeedItem, IosDevice } from '../notify/ios/types'
 import type { AutomationRule } from '../autopilot/types'
 import { DEFAULT_SETTINGS, POD_LABELS, profileKey } from './types'
 
@@ -34,6 +35,10 @@ export class MemoryStore implements Store {
   private nextNotificationChannelId = 1
   private nextNotificationRuleId = 1
   private nextNotificationRunId = 1
+  private iosDevices = new Map<string, IosDevice>()
+  private activityTokenRows: ActivityToken[] = []
+  private feedRows: FeedItem[] = []
+  private nextFeedId = 1
   private readonly labelRows = new Map<string, PodLabel>()
   private readonly dismissalRows = new Map<string, SuggestionDismissal>()
   private readonly codePairs = new Map<string, PodCodePair>()
@@ -530,6 +535,53 @@ export class MemoryStore implements Store {
         const before = this.notificationRunRows.length
         this.notificationRunRows = this.notificationRunRows.filter(r => r.firedAt >= beforeTs)
         return before - this.notificationRunRows.length
+      },
+    },
+    ios: {
+      devices: {
+        list: (): IosDevice[] => [...this.iosDevices.values()].map(clone),
+        get: (deviceId: string): IosDevice | null => {
+          const d = this.iosDevices.get(deviceId)
+          return d ? clone(d) : null
+        },
+        upsert: (d: Omit<IosDevice, 'createdAt' | 'updatedAt'>, ts: string): IosDevice => {
+          const row: IosDevice = { ...clone(d), createdAt: this.iosDevices.get(d.deviceId)?.createdAt ?? ts, updatedAt: ts }
+          this.iosDevices.set(d.deviceId, row)
+          return clone(row)
+        },
+        setToken: (deviceId: string, token: string | null, ts: string): void => {
+          const d = this.iosDevices.get(deviceId)
+          if (d) this.iosDevices.set(deviceId, { ...d, token, updatedAt: ts })
+        },
+        remove: (deviceId: string): boolean => this.iosDevices.delete(deviceId),
+      },
+      activityTokens: {
+        list: (): ActivityToken[] => this.activityTokenRows.map(clone),
+        upsert: (t: Omit<ActivityToken, 'updatedAt'>, ts: string): void => {
+          this.activityTokenRows = this.activityTokenRows.filter(r => !(r.deviceId === t.deviceId && r.kind === t.kind && (t.kind === 'start' || r.activityId === t.activityId)))
+          this.activityTokenRows.push({ ...clone(t), updatedAt: ts })
+        },
+        removeToken: (token: string): void => {
+          this.activityTokenRows = this.activityTokenRows.filter(r => r.token !== token)
+        },
+        removeKind: (kind: ActivityToken['kind']): void => {
+          this.activityTokenRows = this.activityTokenRows.filter(r => r.kind !== kind)
+        },
+        removeDevice: (deviceId: string): void => {
+          this.activityTokenRows = this.activityTokenRows.filter(r => r.deviceId !== deviceId)
+        },
+      },
+      feed: {
+        add: (item: Omit<FeedItem, 'id'>): FeedItem => {
+          const row: FeedItem = { ...clone(item), id: this.nextFeedId++ }
+          this.feedRows.push(row)
+          return clone(row)
+        },
+        after: (afterId: number, limit: number): FeedItem[] => this.feedRows.filter(r => r.id > afterId).slice(0, limit).map(clone),
+        latestId: (): number | null => this.feedRows.at(-1)?.id ?? null,
+        prune: (keep: number): void => {
+          if (this.feedRows.length > keep) this.feedRows = this.feedRows.slice(-keep)
+        },
       },
     },
   }

@@ -5,6 +5,7 @@ import type { Wifi } from '../network/wifi'
 import type { Store } from '../store/types'
 import type { AutopilotEngine } from '../autopilot/engine'
 import type { NotifyEngine } from '../notify/engine'
+import type { IosService } from '../notify/ios/service'
 import type { CaptureService } from '../camera/captures'
 import type { MirroredSink } from '../camera/mirrorSink'
 import type { AnalysisService } from '../vision/service'
@@ -31,6 +32,8 @@ export interface Context {
   light: LightArbiter
   autopilot: AutopilotEngine
   notifier: NotifyEngine
+  /** The iPhone app channel: registered phones, the feed, Live Activity pushes. */
+  ios?: IosService
   /** SD card writes (ADR-0021); reports unavailable off a Pi. */
   flash: FlashMeter
   /** The Database view's scan; absent in tests. */

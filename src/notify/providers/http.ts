@@ -5,6 +5,8 @@ export interface SendRequest {
   title: string
   message: string
   priority: 'lowest' | 'low' | 'normal' | 'high' | 'emergency'
+  /** The alert kind the notification is about, when there is one (the iOS app's Acknowledge button). */
+  alertKind?: string
 }
 
 export interface SendResult {

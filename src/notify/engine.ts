@@ -10,6 +10,7 @@ import { SustainTracker } from '../autopilot/expressions'
 import { WindowStore } from '../autopilot/windows'
 import { decideRate, markSent, type RateState } from './cooldown'
 import { EVENT_LABELS, edges, eventMatches, type EventSnapshot, type FiredEvent } from './events'
+import type { IosService } from './ios/service'
 import { sendOnChannel, type HttpFetch } from './providers'
 import { redactSecrets } from './mask'
 import { renderTemplate } from './template'
@@ -32,6 +33,8 @@ export interface NotifyEngineDeps {
   changed?: () => void
   log?: (m: string) => void
   fetch?: HttpFetch
+  /** The iPhone app channel (feed + APNs). */
+  ios?: IosService | null
 }
 
 interface Runtime {
@@ -101,7 +104,7 @@ export class NotifyEngine {
     const channels = this.channelsFor(rule)
     const results = []
     for (const ch of channels) {
-      const r = await sendOnChannel(ch, { title, message, priority: rule.priority }, this.fetch)
+      const r = await sendOnChannel(ch, { title, message, priority: rule.priority, alertKind: ctx.alert?.kind }, this.fetch, this.d.ios)
       results.push({ channelId: ch.id, name: ch.name, ok: r.ok, error: r.error })
     }
     this.d.recordRun(rule.id, results.some(r => r.ok) ? 'sent' : 'error', { test: true, title, results: results.map(r => ({ channelId: r.channelId, ok: r.ok, error: r.error })) })
@@ -116,7 +119,7 @@ export class NotifyEngine {
       title: `Thryve: test (${channel.name})`,
       message: `This is a test from ${name}. If you got this, the ${channel.kind} channel is working.`,
       priority: 'normal',
-    }, this.fetch)
+    }, this.fetch, this.d.ios)
   }
 
   private async evaluate(): Promise<boolean> {
@@ -194,7 +197,7 @@ export class NotifyEngine {
       const message = renderTemplate(rule.messageTemplate, ctx)
       const results = []
       for (const ch of channels) {
-        const r = await sendOnChannel(ch, { title, message, priority: rule.priority }, this.fetch)
+        const r = await sendOnChannel(ch, { title, message, priority: rule.priority, alertKind: ctx.alert?.kind }, this.fetch, this.d.ios)
         results.push({ channelId: ch.id, name: ch.name, ok: r.ok, error: r.error })
         if (!r.ok) this.d.log?.(redactSecrets(`notify ${rule.name} via ${ch.name}: ${r.error ?? 'failed'}`, secretValues(ch)))
       }
