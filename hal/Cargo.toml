@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/hal-core", "crates/hal-sim", "crates/hal-drivers", "crates/hald", "crates/podvision"]
 
 [workspace.package]
-version = "2.0.2"
+version = "2.1.0"
 edition = "2021"
 license = "AGPL-3.0-only"
 repository = "https://github.com/kaniick/Thryve"

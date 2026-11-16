@@ -1,5 +1,42 @@
 # Changelog
 
+## 2.1.0 — 2026-11-16
+
+Merges upstream seedypod/core work (PRs #255–#272) into Thryve, rebranded, on
+top of our pump power, soft start, and pod-bounds editor.
+
+### Analysis and vision
+
+- Suggested labels with provenance, **Accept the rest**, and **Clear** to
+  dismiss a suggestion. Suggestion dismissals are stored and travel in
+  `thryve-dataset` v4.
+- Pod cards and an **All pods** view for charts across the tower.
+- Shared pod codes: a unit can share a confirmed code through a GitHub issue
+  form; a bot opens a PR on `kaniick/Thryve`. The table of known codes ships
+  in the release.
+- Sprouting is treated as growing, matching how the model is trained.
+
+### Pump and HAL
+
+- Brown-out guard: stops the pump if the 12 V supply stays below 10.8 V for
+  300 ms, or if the Pi reports under-voltage.
+- Pump current is sampled every 100 ms while a run is on. Dry-run mode and
+  cutoff stay in `hal.toml`; the app may only change the spin-up grace
+  (within the unit's bounds). That grace includes the soft-start ramp.
+- Stored pump duty (default 30%, Settings → Pump) is unchanged and is not
+  overridden by an unnamed start. Soft-start toggle and ramp are unchanged.
+- If a scheduled watering is refused, the scheduler retries every minute up
+  to 15 times.
+- systemd watchdog (10 s) and an `ExecStopPost` pump-off script
+  (`/usr/local/lib/thryve/pump-off`). After this update, run
+  `sudo scripts/install-hal` once on the unit so those unit files are
+  installed; the web updater does not.
+
+### Database
+
+- `0023_label_source` and `0024_suggestion_dismissals` follow our
+  `0022_pump_power` migration.
+
 ## 2.0.2 — 2026-11-16
 
 - Plant catalog now includes every variety in Gardyn's public plant library
