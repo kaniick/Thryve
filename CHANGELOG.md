@@ -2,12 +2,19 @@
 
 ## Unreleased
 
+## 2.2.0 — 2026-11-16
+
 - Notifications: IF/THEN push rules for Pushover, Pushbullet, and an external
   Apprise API server (the unit does not install Python Apprise). Settings →
   Notifications holds the kill switch and quiet hours; the Notifications page
   edits channels and rules. Secrets are stored on the unit, returned masked,
   and kept out of logs and dataset exports. Starter rules (pump fault, tank
-  low, unit offline) save disabled. See `docs/NOTIFICATIONS.md`.
+  low, unit offline) save disabled. See `docs/NOTIFICATIONS.md` (PR #22).
+- Thryve iPhone app channel: APNs push (Key ID, Team ID, bundle ID, and a
+  write-only `.p8` key) and watering Live Activity updates when the pump
+  runs. Registered devices and activity tokens stay on the unit; a LAN
+  notification feed works without an Apple key. Migration
+  `0026_ios_notifications` (PR #24).
 
 ## 2.1.1 — 2026-11-16
 
