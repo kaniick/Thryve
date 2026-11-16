@@ -7,7 +7,7 @@ import { HOLD_MS } from '../useLightControl'
 const { data, errors, calls, setLight } = vi.hoisted(() => ({
   data: new Map<string, unknown>(),
   errors: new Map<string, Error>(),
-  calls: { resume: vi.fn(), hold: vi.fn(), set: vi.fn(), upsert: vi.fn(), setAuto: vi.fn(), refetch: vi.fn() },
+  calls: { resume: vi.fn(), hold: vi.fn(), set: vi.fn(), upsert: vi.fn(), remove: vi.fn(), setAuto: vi.fn(), refetch: vi.fn() },
   setLight: { pending: undefined as unknown, setData: vi.fn(), hook: {} as { onMutate?: () => { command: number }, onSuccess?: (s: unknown, sent: unknown, context: { command: number }) => void, onError?: (e: Error, sent: { level?: number }) => void } },
 }))
 
@@ -15,7 +15,7 @@ vi.mock('@tanstack/react-router', () => ({ Link: ({ children, to, hash }: { chil
 vi.mock('../CurveEditor', () => ({ CurveEditor: ({ schedule }: { schedule: { name: string } }) => <div>{`editing ${schedule.name}`}</div> }))
 vi.mock('@/src/utils/trpc', () => {
   const query = (name: string) => ({ useQuery: () => ({ data: data.get(name), error: errors.get(name) ?? null, refetch: () => calls.refetch(name) }) })
-  const mutation = (name: keyof typeof calls) => ({ useMutation: () => ({ isPending: false, mutate: (i?: unknown) => calls[name](i) }) })
+  const mutation = (name: keyof typeof calls) => ({ useMutation: () => ({ isPending: false, reset: vi.fn(), mutate: (i?: unknown) => calls[name](i) }) })
   const set = {
     useMutation: (hook: typeof setLight.hook) => {
       setLight.hook = hook
@@ -26,7 +26,7 @@ vi.mock('@/src/utils/trpc', () => {
     trpc: {
       useUtils: () => ({ light: { invalidate: vi.fn(), get: { setData: setLight.setData }, owner: { invalidate: vi.fn() } }, schedules: { invalidate: vi.fn() } }),
       light: { get: query('light'), owner: query('owner'), set, resume: mutation('resume'), hold: mutation('hold') },
-      schedules: { list: query('schedules'), upsert: mutation('upsert'), setAuto: mutation('setAuto') },
+      schedules: { list: query('schedules'), upsert: mutation('upsert'), remove: mutation('remove'), setAuto: mutation('setAuto') },
       telemetry: { lightHours: query('hours') },
       settings: { get: query('settings') },
     },
@@ -281,6 +281,23 @@ describe('LightPage: when the light can\'t be read', () => {
 })
 
 describe('LightPage: curves', () => {
+  it('offers confirmed removal for a disabled curve, but not for enabled or Auto-paused curves', () => {
+    const paused = { ...boost, id: 'paused', name: 'Paused curve', pausedByAuto: true }
+    data.set('schedules', [daylight, boost, paused, pump])
+    render(<LightPage />)
+    expect(screen.queryByRole('button', { name: 'Remove Daylight curve' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Remove Paused curve' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Weekend boost' }))
+    const dialog = screen.getByRole('dialog', { name: 'Remove light curve?' })
+    expect(within(dialog).getByText(/Weekend boost/)).toBeTruthy()
+    expect(calls.remove).not.toHaveBeenCalled()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Weekend boost' }))
+    fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Remove curve' }))
+    expect(calls.remove).toHaveBeenCalledWith({ id: 'boost', onlyUnusedLight: true })
+  })
+
   it('shows today’s curve with its hours of full light and rating, and says so when none runs', () => {
     data.set('schedules', [daylight, pump])
     render(<LightPage />)

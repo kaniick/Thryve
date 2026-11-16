@@ -1,8 +1,9 @@
-import { ChevronDown, ChevronUp, Clock, Hand, LocateFixed, Plus, Sun } from 'lucide-react'
+import { ChevronDown, ChevronUp, Clock, Hand, LocateFixed, Plus, Sun, Trash2 } from 'lucide-react'
 import { Link } from '@tanstack/react-router'
 import { useMemo, useState, type ReactNode } from 'react'
 import { cn } from '@/lib/utils'
-import { Badge, Button, Card, GhostIcon } from '@/src/components/ds/core'
+import { Badge, Button, Card, GhostIcon, InlineError } from '@/src/components/ds/core'
+import { Modal } from '@/src/components/ds/feedback'
 import { Toggle } from '@/src/components/ds/forms'
 import { LineChart } from '@/src/components/ds/charts'
 import { ScheduleTimeline } from '@/src/components/charts/ScheduleTimeline'
@@ -41,6 +42,18 @@ export function LightPage() {
   const lightHours = trpc.telemetry.lightHours.useQuery()
   const [openId, setOpenId] = useState<string | null>(null)
   const [adding, setAdding] = useState(false)
+  const [removing, setRemoving] = useState<LightCurve | null>(null)
+  const remove = trpc.schedules.remove.useMutation({
+    onSuccess: async (_result, { id }) => {
+      await utils.schedules.invalidate()
+      setOpenId(current => current === id ? null : current)
+      setRemoving(null)
+    },
+  })
+  const closeRemove = () => {
+    if (!remove.isPending) setRemoving(null)
+  }
+  const pausedByAuto = useMemo(() => new Set((schedules.data ?? []).filter(s => s.pausedByAuto).map(s => s.id)), [schedules.data])
   const settings = trpc.settings.get.useQuery()
   const timezone = settings.data?.timezone
   // Auto's curve leads the list.
@@ -246,10 +259,35 @@ export function LightPage() {
           open={open === c.id}
           locked={autoOn && !c.spec.sun?.auto}
           onOpen={next => setOpenId(next ? c.id : '')}
+          onRemove={!c.enabled && !pausedByAuto.has(c.id)
+            ? () => {
+                remove.reset()
+                setRemoving(c)
+              }
+            : undefined}
           // Auto's own switch is the strip's: on, it runs alone; off, the curves it stopped come back.
           onSave={next => (c.spec.sun?.auto && next.enabled !== c.enabled ? setAuto.mutate({ on: next.enabled }) : upsert.mutate(next))}
         />
       ))}
+      {removing && (
+        <Modal
+          open
+          onClose={closeRemove}
+          title="Remove light curve?"
+          icon={Trash2}
+          footer={(
+            <div className="flex gap-2">
+              <Button disabled={remove.isPending} onClick={closeRemove}>Cancel</Button>
+              <Button variant="danger" disabled={remove.isPending} onClick={() => remove.mutate({ id: removing.id, onlyUnusedLight: true })}>
+                {remove.isPending ? 'Removing…' : 'Remove curve'}
+              </Button>
+            </div>
+          )}
+        >
+          <p className="text-sm text-fg-2">{`Remove “${removing.name}” from your light curves?`}</p>
+          {remove.error && <InlineError>{remove.error.message}</InlineError>}
+        </Modal>
+      )}
     </div>
   )
 }
@@ -406,7 +444,7 @@ function LightStrip({ on, known, owner: o, running, curves, minute, weekday, zon
 /** A caution once the light is on long enough, however dim, to make lettuce and herbs bolt. */
 const LONG_DAY = 'long enough to make lettuce and herbs bolt'
 
-function CurveCard({ curve: c, running, open, locked, onOpen, onSave }: { curve: LightCurve, running: boolean, open: boolean, /** Auto is on, so this curve waits. */ locked: boolean, onOpen: (open: boolean) => void, onSave: (next: LightCurve) => void }) {
+function CurveCard({ curve: c, running, open, locked, onOpen, onSave, onRemove }: { curve: LightCurve, running: boolean, open: boolean, /** Auto is on, so this curve waits. */ locked: boolean, onOpen: (open: boolean) => void, onSave: (next: LightCurve) => void, onRemove?: () => void }) {
   const n = c.spec.setpoints.length
   const hours = lightHours(c.spec)
   const meta = [c.spec.sun?.auto ? 'Auto · follows the sun' : c.spec.sun ? 'Follows the sun' : `${n} setpoint${n === 1 ? '' : 's'}`, daysLabel(c.days), c.enabled ? `on ${hours.lit} h, ${hours.full} h of full light` : 'off', c.enabled && hours.lit > LONG_DAY_HOURS && LONG_DAY, locked && 'waiting while Auto runs'].filter(Boolean).join(' · ')
@@ -432,6 +470,7 @@ function CurveCard({ curve: c, running, open, locked, onOpen, onSave }: { curve:
           />
         )}
         <Toggle on={c.enabled} size="md" label={`Enable ${c.name}`} disabled={locked} onChange={enabled => onSave({ ...c, enabled })} />
+        {onRemove && <GhostIcon icon={Trash2} label={`Remove ${c.name}`} className="text-fg-3 hover:text-danger" onClick={onRemove} />}
         <GhostIcon icon={open ? ChevronUp : ChevronDown} label={open ? `Close ${c.name}` : `Edit ${c.name}`} aria-expanded={open} className="text-fg-3" onClick={() => onOpen(!open)} />
       </div>
       {open && (
