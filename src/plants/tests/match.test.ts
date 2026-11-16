@@ -61,8 +61,8 @@ describe('matchOrder', () => {
       ['Swiss Chard', 'red-swiss-chard', 1],
     ])
     expect(r.plants).toEqual([{ plantId: 'basil', count: 3 }, { plantId: 'butterhead', count: 3 }, { plantId: 'red-swiss-chard', count: 1 }])
-    // Two chards are equally good: the other comes back as an alternative.
-    expect(r.matched[3]?.alternatives.map(a => a.plantId)).toEqual(['yellow-swiss-chard'])
+    // Other chards are equally good on a colour-less 'Swiss Chard' line.
+    expect(r.matched[3]?.alternatives.map(a => a.plantId)).toEqual(['yellow-swiss-chard', 'pink-swiss-chard'])
     expect(r.matched[0]?.alternatives).toEqual([])
     expect(r.unmatched).toEqual([{ line: 'Dragonfruit x1', name: 'Dragonfruit', count: 1, suggestions: [] }])
     expect(r.skipped).toEqual(['$12.99'])
@@ -100,18 +100,14 @@ describe('matchOrder', () => {
       ['Mint', 'mint', 1, 1],
       ['Bunching Onions', 'bunching-onions', 1, 1],
       ['Oregano', 'oregano', 1, 1],
+      ['Pink Swiss Chard', 'pink-swiss-chard', 1, 1],
       ['Buttercrunch Lettuce', 'buttercrunch', 1, 0.76],
     ])
     expect(r.matched.every(m => m.alternatives.length === 0)).toBe(true)
-    // Gardyn sells Red and Yellow Swiss Chard only: Pink is a variant to ask about or add, not a second Red.
-    expect(r.unmatched).toHaveLength(1)
-    expect(r.unmatched[0]).toMatchObject({ line: '1 x Pink Swiss Chard', name: 'Pink Swiss Chard', count: 1 })
-    expect(r.unmatched[0]?.suggestions.slice(0, 2)).toEqual([
-      { plantId: 'red-swiss-chard', plantName: 'Red Swiss Chard', confidence: 0.36, reason: 'colour differs (pink; catalog has red)' },
-      { plantId: 'yellow-swiss-chard', plantName: 'Yellow Swiss Chard', confidence: 0.35, reason: 'colour differs (pink; catalog has yellow)' },
-    ])
+    expect(r.unmatched).toEqual([])
     expect(r.plants.find(p => p.plantId === 'red-swiss-chard')).toEqual({ plantId: 'red-swiss-chard', count: 1 })
-    expect(r.plants.reduce((n, p) => n + p.count, 0)).toBe(19)
+    expect(r.plants.find(p => p.plantId === 'pink-swiss-chard')).toEqual({ plantId: 'pink-swiss-chard', count: 1 })
+    expect(r.plants.reduce((n, p) => n + p.count, 0)).toBe(20)
     expect(r.skipped).toEqual([])
   })
 

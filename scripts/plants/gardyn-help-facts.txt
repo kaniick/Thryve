@@ -1,0 +1,7 @@
+# Gardyn plant-book articles (help.mygardyn.com plant library), read 2026-11-16.
+# name|care|first harvest in months, converted from published days to maturity.
+# Used when the yCube store page doesn't publish that field.
+Lime Basil|Beginner|2-2 Months
+Mammoth Basil|Beginner|2-2 Months
+Pink Swiss Chard|Beginner|1-2 Months
+Oopsy Daisy|Intermediate|2-2 Months

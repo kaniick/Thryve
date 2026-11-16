@@ -1,8 +1,9 @@
 """Build src/plants/catalog.json from Gardyn's published facts.
 
-Inputs (both in this folder, raw extracts with provenance headers):
+Inputs (in this folder, raw extracts with provenance headers):
   gardyn-zone-guide.txt     name|zone              (Gardyn light-zone placement guide)
   gardyn-store-ycubes.txt   name|handle|yield|care|first harvest  (Gardyn yCube store)
+  gardyn-help-facts.txt     name|care|first harvest  (plant-book articles, when the store has no value)
 
 Everything else is derived by rules in this file and flagged as inferred:
   category      by name (fruiting, vegetable, legume, flower, herb, green, lettuce)
@@ -41,12 +42,13 @@ STORE_ALIAS = {
     'Flashy Lettuce': 'Flashy Trout Back', 'Iceberg Lettuce': 'Iceberg', 'Jalapeños': 'Jalapeño',
     'Marigold': 'Marietta Marigold', 'Red Cherry Tomatoes': 'Red Cherry Tomato',
     'Red Sails': 'Red Sails Lettuce', 'Sweet Peppers': 'Sweet Pepper',
+    'Strawberries': 'Bare Root Strawberries',
 }
 
 FRUITING = re.compile(r'pepper|jalape|tomato|eggplant|strawberr|gooseberry|cucumber|okra|pumpkin|squash')
 LEGUME = re.compile(r'\bbeans?\b|\bpeas\b')
 VEGETABLE = re.compile(r'broccoli|cauliflower|kohlrabi|celery|cabbage|beet')
-FLOWER = re.compile(r'sunflower|celosia|snapdragon|stock|zinnia|portulaca|viola|cornflower|hibiscus|borage|canna|chamomile|dianthus|gitana|marigold|matilda|nasturtium|petunia|campanula|calendula|impatiens|torenia')
+FLOWER = re.compile(r'sunflower|celosia|snapdragon|stock|zinnia|portulaca|viola|cornflower|hibiscus|borage|canna|chamomile|dianthus|gitana|marigold|matilda|nasturtium|petunia|campanula|calendula|impatiens|torenia|daisy')
 HERB = re.compile(r'basil|lavender|stevia|parsley|sage|savory|shiso|marjoram|tarragon|catnip|chervil|chives|cilantro|dill|lemon balm|lemongrass|mint|oregano|rosemary|thyme|onion')
 LETTUCE = re.compile(r'lettuce|buttercrunch|butterhead|cardinale|endive|flashy|iceberg|lollo|monte carlo|romaine|salanova|salad bowl|rouge|bronze arrow|breen')
 
@@ -119,9 +121,17 @@ def main():
         key = STORE_ALIAS.get(name, name)
         store[key] = {'handle': handle, 'yield': yld.lower() or None, 'care': care.lower() or None, 'harvest': months(first)}
 
+    help_facts = {}
+    for name, care, first in rows('gardyn-help-facts.txt'):
+        key = STORE_ALIAS.get(name, name)
+        help_facts[key] = {'care': care.lower() or None, 'harvest': months(first)}
+
     unknown = sorted(set(store) - set(zones))
     if unknown:
         raise SystemExit(f'store products with no zone-guide entry: {unknown}')
+    unknown_help = sorted(set(help_facts) - set(zones))
+    if unknown_help:
+        raise SystemExit(f'help-facts plants with no zone-guide entry: {unknown_help}')
 
     # Category medians of the store's harvest windows, for estimates.
     by_cat = {}
@@ -134,8 +144,9 @@ def main():
     for name in sorted(zones):
         cat = category(name)
         s = store.get(name, {})
+        h = help_facts.get(name, {})
         succ, succ_inferred = succession(name, cat)
-        harvest = s.get('harvest')
+        harvest = s.get('harvest') or h.get('harvest')
         n = name.lower()
         plants.append({
             'id': slug(name),
@@ -144,7 +155,7 @@ def main():
             'zone': zones[name],
             'harvestMonths': harvest or median.get(cat),
             'harvestEstimated': harvest is None,
-            'careLevel': s.get('care'),
+            'careLevel': s.get('care') or h.get('care'),
             'yield': s.get('yield'),
             'succession': succ,
             'successionInferred': succ_inferred,
@@ -157,12 +168,13 @@ def main():
     OUT.parent.mkdir(parents=True, exist_ok=True)
     doc = {
         'version': 1,
-        'generatedFrom': ['scripts/plants/gardyn-zone-guide.txt', 'scripts/plants/gardyn-store-ycubes.txt'],
+        'generatedFrom': ['scripts/plants/gardyn-zone-guide.txt', 'scripts/plants/gardyn-store-ycubes.txt', 'scripts/plants/gardyn-help-facts.txt'],
         'sources': {
             'zone': 'https://help.mygardyn.com/en/articles/11547329',
             'zoneMap': 'https://help.mygardyn.com/en/articles/11567361',
             'store': 'https://mygardyn.com/collections/ycubes',
             'succession': 'https://help.mygardyn.com/en/articles/1782337',
+            'plantBook': 'https://help.mygardyn.com/en/categories/456897-ycubes',
         },
         'categoryHarvestMedians': median,
         'plants': plants,

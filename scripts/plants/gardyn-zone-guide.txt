@@ -1,4 +1,4 @@
-# Gardyn "All Plants Placement by Light Zone Guide" (help.mygardyn.com/en/articles/11547329), read 2026-11-02.
+# Gardyn "All Plants Placement by Light Zone Guide" (help.mygardyn.com/en/articles/11547329), read 2026-11-02; plants added from the 2026-11-16 plant library: Pink Swiss Chard, Oopsy Daisy.
 # name|zone (high|mid|low). Dragon Beans and Green Beans share one line upstream.
 Banana Pepper|high
 Black Pearl Pepper|high
@@ -87,6 +87,7 @@ Wasabi Greens|medium
 Watercress|medium
 White Kohlrabi|medium
 Yellow Swiss Chard|medium
+Pink Swiss Chard|medium
 Celery|medium
 Basil|medium
 Italian Parsley|medium
@@ -114,6 +115,7 @@ Night-Scented Stock|medium
 Pink Petunia|medium
 Purple Campanula|medium
 Purple Petunia|medium
+Oopsy Daisy|medium
 Radio Calendula|medium
 Red Hibiscus|medium
 Red Impatiens|medium
