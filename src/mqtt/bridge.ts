@@ -9,7 +9,7 @@
  * configured, LAN-only by design.
  */
 import type { MqttLike } from '../hardware/mqttClient'
-import type { Capture } from '../store/types'
+import type { Capture, DeviceSettings } from '../store/types'
 import type { CoreEvent, EventBus } from '../lib/eventBus'
 import type { HalClient } from '../hardware/types'
 import type { Store } from '../store/types'
@@ -264,16 +264,57 @@ export function superviseBridge(connect: () => Promise<HaBridge | null>, events:
   }
 }
 
+type BrokerSettings = Pick<DeviceSettings, 'mqttUrl' | 'mqttUsername' | 'mqttPassword' | 'mqttTlsEnabled' | 'mqttTlsInsecure'>
+
+function brokerOptions(s: BrokerSettings) {
+  const url = s.mqttUrl
+  if (!url) return null
+  return {
+    url: s.mqttTlsEnabled ? url.replace(/^mqtt:\/\//, 'mqtts://') : url,
+    options: { username: s.mqttUsername ?? undefined, password: s.mqttPassword ?? undefined, rejectUnauthorized: !s.mqttTlsInsecure },
+  }
+}
+
+/** Check that the broker accepts a fresh client using the saved credentials. */
+export async function testBroker(s: BrokerSettings): Promise<{ ok: boolean, detail: string }> {
+  const broker = brokerOptions(s)
+  if (!broker) return { ok: false, detail: 'Save a broker URL first.' }
+  try {
+    const url = new URL(broker.url)
+    if (!url.hostname || !['mqtt:', 'mqtts:', 'ws:', 'wss:'].includes(url.protocol)) throw new Error()
+  }
+  catch {
+    return { ok: false, detail: 'Enter a valid MQTT broker URL, such as mqtt://homeassistant.local:1883.' }
+  }
+
+  try {
+    const { connectAsync } = await import('./connect')
+    const client = await connectAsync(broker.url, { ...broker.options, reconnectPeriod: 0, connectTimeout: 5000 }, false)
+    const connected = client.connected
+    client.end()
+    return connected
+      ? { ok: true, detail: 'Connected to the MQTT broker.' }
+      : { ok: false, detail: 'The broker closed the connection before accepting it.' }
+  }
+  catch (error) {
+    // Return known diagnostics only. Broker errors may contain configuration values.
+    const code = (error as { code?: string | number } | null)?.code
+    if (code === 4 || code === 5 || code === 134 || code === 135) return { ok: false, detail: 'The broker rejected the login. Check the MQTT username and password.' }
+    if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') return { ok: false, detail: 'Could not resolve the broker hostname.' }
+    if (code === 'ECONNREFUSED') return { ok: false, detail: 'Connection refused. Check the broker port and that MQTT is running.' }
+    if (code === 'ETIMEDOUT' || (error instanceof Error && error.message === 'connack timeout')) return { ok: false, detail: 'The MQTT connection timed out. Check the broker address, port, and network access.' }
+    if (typeof code === 'string' && /CERT|TLS|SSL/.test(code)) return { ok: false, detail: 'TLS verification or negotiation failed. Check the broker TLS settings and certificate.' }
+    return { ok: false, detail: 'Could not connect to the MQTT broker. Check its address, port, and TLS settings.' }
+  }
+}
+
 /** Build a real mqtt.js connection from settings; returns null when the bridge is dormant. */
 export async function connectBridge(o: Omit<BridgeOptions, 'mqtt'>): Promise<HaBridge | null> {
-  const s = o.store.settings.get()
-  if (!s.mqttUrl) return null
+  const broker = brokerOptions(o.store.settings.get())
+  if (!broker) return null
   const { connectAsync } = await import('./connect')
-  const url = s.mqttTlsEnabled ? s.mqttUrl.replace(/^mqtt:\/\//, 'mqtts://') : s.mqttUrl
-  const mqtt = await connectAsync(url, {
-    username: s.mqttUsername ?? undefined,
-    password: s.mqttPassword ?? undefined,
-    rejectUnauthorized: !s.mqttTlsInsecure,
+  const mqtt = await connectAsync(broker.url, {
+    ...broker.options,
     reconnectPeriod: 5000,
     keepalive: 30,
     will: { topic: `${o.prefix ?? 'thryve'}/${o.unitId}/core/availability`, payload: Buffer.from('offline'), retain: true, qos: 0 },

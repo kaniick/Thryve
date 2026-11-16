@@ -1,7 +1,7 @@
 import { TRPCError } from '@trpc/server'
 import { z } from 'zod'
 import { SystemInfo } from '../../hardware/contract'
-import { bridgeStatus } from '../../mqtt/bridge'
+import { bridgeStatus, testBroker } from '../../mqtt/bridge'
 import { Check, systemChecks } from '../checks'
 import { LoginSummary, loginSummary } from '../loginSummary'
 import { publicProcedure, router } from '../trpc'
@@ -41,6 +41,12 @@ export const systemRouter = router({
     .meta({ openapi: { method: 'GET', path: '/system/bridge', tags: ['system'], summary: 'Home Assistant MQTT bridge: off, connected or disconnected, the broker, and the last connect error' } })
     .output(z.object({ state: z.enum(['off', 'connected', 'disconnected']), broker: z.string().nullable(), since: z.string().nullable(), error: z.string().nullable() }))
     .query(({ ctx }) => ctx.bridge?.() ?? bridgeStatus(ctx.store.settings.get().mqttUrl, null, null)),
+  testBridge: publicProcedure
+    .meta({ openapi: { method: 'POST', path: '/system/bridge/test', tags: ['system'], summary: 'Test the saved Home Assistant MQTT broker connection' } })
+    .output(z.object({ ok: z.boolean(), detail: z.string() }))
+    .mutation(({ ctx }) => ctx.bridge
+      ? testBroker(ctx.store.settings.get())
+      : { ok: false, detail: 'MQTT connection testing is unavailable on this core.' }),
   logging: publicProcedure
     .meta({ openapi: { method: 'GET', path: '/system/logging', tags: ['system'], summary: 'How much core and hald log: quiet (warnings and errors), off, or debug until a time' } })
     .output(LoggingState.nullable())

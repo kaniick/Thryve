@@ -3,10 +3,10 @@ import { createHal } from '../../hardware/factory'
 import { createEventBus } from '../../lib/eventBus'
 import { MemoryStore } from '../../store/memory'
 import { SimHal } from '../../hardware/sim'
-import { connectBridge } from '../bridge'
+import { connectBridge, testBroker } from '../bridge'
 import { connectAsync } from '../connect'
 
-const fake = { on: vi.fn(), subscribe: vi.fn(), publish: vi.fn(), end: vi.fn() }
+const fake = { connected: true, on: vi.fn(), subscribe: vi.fn(), publish: vi.fn(), end: vi.fn() }
 
 vi.mock('mqtt', () => ({ connectAsync: vi.fn(async () => fake) }))
 
@@ -29,5 +29,21 @@ describe('the mqtt entry point', () => {
     const bridge = await connectBridge({ store, hal: new SimHal({ tickMs: 0 }), events: createEventBus(), unitId: 'u1' })
     expect(connectAsync).toHaveBeenCalledWith('mqtt://ha.local:1883', expect.objectContaining({ clientId: 'thryve-core-bridge-u1' }))
     bridge?.stop()
+  })
+
+  it('tests saved broker settings with a temporary client and closes it', async () => {
+    const store = new MemoryStore()
+    const settings = store.settings.update({ mqttUrl: 'mqtt://ha.local:8883', mqttUsername: 'ha', mqttPassword: 'secret', mqttTlsEnabled: true })
+    await expect(testBroker(settings)).resolves.toEqual({ ok: true, detail: 'Connected to the MQTT broker.' })
+    expect(connectAsync).toHaveBeenCalledWith('mqtts://ha.local:8883', { username: 'ha', password: 'secret', rejectUnauthorized: true, reconnectPeriod: 0, connectTimeout: 5000 }, false)
+    expect(fake.end).toHaveBeenCalledOnce()
+    expect(fake.publish).not.toHaveBeenCalled()
+  })
+
+  it('reports rejected credentials without returning the broker error text', async () => {
+    const store = new MemoryStore()
+    const settings = store.settings.update({ mqttUrl: 'mqtt://ha.local:1883' })
+    vi.mocked(connectAsync).mockRejectedValueOnce(Object.assign(new Error('private broker message'), { code: 5 }))
+    await expect(testBroker(settings)).resolves.toEqual({ ok: false, detail: 'The broker rejected the login. Check the MQTT username and password.' })
   })
 })

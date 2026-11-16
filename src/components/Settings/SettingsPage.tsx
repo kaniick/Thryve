@@ -192,6 +192,8 @@ function SettingsForm({ s, coreVersion, coreHost, system, onSave, saving }: {
   const level = sensors.data?.water_level_pct?.value
   const mirrorSaved = !!(s.mirrorEndpoint && s.mirrorBucket)
   const [bucketOpen, setBucketOpen] = useState(mirrorSaved)
+  const mqttTest = trpc.system.testBridge.useMutation()
+  const mqttChanged = ['mqttUrl', 'mqttUsername', 'mqttPassword', 'mqttTlsEnabled', 'mqttTlsInsecure'].some(k => d[k] !== original[k])
 
   return (
     <div className="mx-auto flex max-w-[1000px] flex-col gap-6 min-[900px]:pt-3">
@@ -313,6 +315,16 @@ function SettingsForm({ s, coreVersion, coreHost, system, onSave, saving }: {
             <Row label="Password" sub={s.hasMqttPassword ? 'set' : 'not set'}><TextField className="w-60" type="password" value={str('mqttPassword')} onChange={v => setD({ ...d, mqttPassword: v || null })} placeholder="••••••" /></Row>
             <Row label="TLS"><Toggle label="TLS" on={!!d.mqttTlsEnabled} onChange={v => setD({ ...d, mqttTlsEnabled: v })} /></Row>
             <Row label="Allow self-signed" sub="Off by default (ADR-0013)"><Toggle label="Allow self-signed" on={!!d.mqttTlsInsecure} onChange={v => setD({ ...d, mqttTlsInsecure: v })} /></Row>
+            <Row label="Broker connection" sub={mqttChanged ? 'Save MQTT changes before testing.' : 'Checks the saved broker address and credentials from Thryve.'}>
+              <div className="flex flex-col items-end gap-1">
+                <Button size="sm" disabled={!s.mqttUrl?.trim() || mqttChanged || saving || mqttTest.isPending} onClick={() => mqttTest.mutate()}>
+                  {mqttTest.isPending ? 'Testing…' : 'Test connection'}
+                </Button>
+                <div role="status" className={`text-xs ${mqttTest.data?.ok ? 'text-fg-2' : 'text-danger'}`}>
+                  {!mqttChanged && (mqttTest.data?.detail ?? mqttTest.error?.message)}
+                </div>
+              </div>
+            </Row>
           </Section>
 
           <HomeKitSection />

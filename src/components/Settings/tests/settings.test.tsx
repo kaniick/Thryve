@@ -6,14 +6,14 @@ import { parsePlace, SettingsPage } from '../SettingsPage'
 
 const { data, calls } = vi.hoisted(() => ({
   data: new Map<string, unknown>(),
-  calls: { update: vi.fn(), test: vi.fn(), sync: vi.fn(), run: vi.fn(), undo: vi.fn(), browse: vi.fn(), fromBucket: vi.fn() },
+  calls: { update: vi.fn(), testBridge: vi.fn(), test: vi.fn(), sync: vi.fn(), run: vi.fn(), undo: vi.fn(), browse: vi.fn(), fromBucket: vi.fn() },
 }))
 
 vi.mock('@tanstack/react-router', () => ({ Link: ({ to, children, className }: { to: string, children: unknown, className?: string }) => <a href={to} className={className}>{children as string}</a> }))
 
 vi.mock('@/src/utils/trpc', () => {
   const query = (name: string) => ({ useQuery: () => ({ data: data.get(name), refetch: vi.fn() }) })
-  const mutation = (name: 'update' | 'test' | 'sync' | 'run' | 'undo' | 'browse' | 'fromBucket') => ({ useMutation: () => ({
+  const mutation = (name: 'update' | 'testBridge' | 'test' | 'sync' | 'run' | 'undo' | 'browse' | 'fromBucket') => ({ useMutation: () => ({
     isPending: false,
     data: data.get(`${name}Result`),
     error: data.get(`${name}Error`) ?? null,
@@ -24,7 +24,7 @@ vi.mock('@/src/utils/trpc', () => {
     trpc: {
       useUtils: () => ({ settings: { invalidate: vi.fn() }, pump: { invalidate: vi.fn() } }),
       settings: { get: query('settings'), update: mutation('update') },
-      system: { info: query('info') },
+      system: { info: query('info'), testBridge: mutation('testBridge') },
       backup: { status: query('backup'), runNow: mutation('run'), restoreInfo: query('restoreInfo'), undo: mutation('undo'), list: query('bucketList'), browse: mutation('browse'), restoreFromBucket: mutation('fromBucket') },
       storage: { flash: query('flash'), mirror: query('mirror'), testMirror: mutation('test'), syncMirror: mutation('sync') },
       sensors: { latest: query('sensors') },
@@ -439,6 +439,22 @@ describe('Settings: units', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Decrease Capacity' }))
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     expect(calls.update.mock.calls[0]?.[0]).toMatchObject({ waterEmptyCm: 20.96, tankCapacityL: 17.98 })
+  })
+})
+
+describe('Settings: MQTT broker test', () => {
+  it('tests the saved broker and asks the user to save any MQTT edits first', () => {
+    data.set('settings', { ...settings, mqttUrl: 'mqtt://ha.local:1883', hasMqttPassword: true })
+    data.set('testBridgeResult', { ok: true, detail: 'Connected to the MQTT broker.' })
+    render(<SettingsPage />)
+    const button = screen.getByRole<HTMLButtonElement>('button', { name: 'Test connection' })
+    fireEvent.click(button)
+    expect(calls.testBridge).toHaveBeenCalledWith(undefined)
+    expect(screen.getByText('Connected to the MQTT broker.')).toBeTruthy()
+    fireEvent.change(field('Broker URL'), { target: { value: 'mqtt://other.local:1883' } })
+    expect(button.disabled).toBe(true)
+    expect(screen.queryByText('Connected to the MQTT broker.')).toBeNull()
+    expect(screen.getByText('Save MQTT changes before testing.')).toBeTruthy()
   })
 })
 
