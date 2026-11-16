@@ -1,4 +1,4 @@
-# Gardyn yCube store (mygardyn.com/collections/ycubes + /products/<handle>), read 2026-11-02.
+# Gardyn yCube store (mygardyn.com/collections/ycubes + /products/<handle>), read 2026-11-02, refreshed 2026-11-16 (Purslane and Strawberries now in the yCube collection).
 # name|handle|yield|care level|first harvest. Empty fields were not shown on the product page.
 Arugula|arugula|Light|Expert|1-2 Months
 Banana Peppers|banana-peppers|Bountiful|Expert|3-4 Months
@@ -44,6 +44,7 @@ Purple Campanula|purple-campanula|Generous|Intermediate|2-3 Months
 Purple Kohlrabi|purple-kohlrabi|Light|Beginner|2-3 Months
 Purple Petunia|purple-petunia|Bountiful|Intermediate|1-2 Months
 Purple Snapdragon|purple-snapdragon|Bountiful|Intermediate|2-3 Months
+Purslane|purslane|Generous|Beginner|2-3 Months
 Radio Calendula|radio-calendula|Generous|Intermediate|1-2 Months
 Red Amaranth|red-amaranth|Generous|Intermediate|3-4 Months
 Red Cherry Tomatoes|cherry-tomatoes|Bountiful|Expert|3-4 Months
@@ -60,6 +61,7 @@ Sage|sage|Generous|Intermediate|2-3 Months
 Savory|savory|Generous|Beginner|1-2 Months
 Stevia|stevia|Generous|Beginner|2-3 Months
 Stock Flower|stock-flower|Bountiful|Beginner|3-4 Months
+Strawberries|strawberries|Bountiful|Beginner|
 Sunflower|sunflower|Light|Intermediate|2-3 Months
 Sweet Marjoram|sweet-marjoram|Generous|Beginner|2-3 Months
 Sweet Peppers|sweet-peppers|Bountiful|Expert|

@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest'
+import { PLANTS } from '../../../plants/catalog'
 import { CATALOG, lookup, words } from '../plants/catalog'
 
 describe('plant catalog', () => {
-  it('covers every yCube once', () => {
-    expect(CATALOG).toHaveLength(73)
+  it('covers every built-in catalog plant once', () => {
     expect(new Set(CATALOG.map(e => e.name)).size).toBe(CATALOG.length)
+    expect(PLANTS.map(p => p.name).filter(name => !lookup(name))).toEqual([])
   })
 
   it('normalises names to plain singular words', () => {
@@ -25,6 +26,12 @@ describe('plant catalog', () => {
     ['peppers', 'Sweet Peppers'],
     ['beans', 'Green Beans'],
     ['Lavender', 'Lavender'],
+    ['Lime Basil', 'Lime Basil'],
+    ['Mammoth Basil', 'Mammoth Basil'],
+    ['Pink Swiss Chard', 'Pink Swiss Chard'],
+    ['Oopsy Daisy', 'Oopsy Daisy'],
+    ['Bare Root Strawberries', 'Bare Root Strawberries'],
+    ['Purslane', 'Purslane'],
   ])('matches %s to %s', (name, found) => {
     expect(lookup(name)?.name).toBe(found)
   })

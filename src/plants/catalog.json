@@ -2,13 +2,15 @@
  "version": 1,
  "generatedFrom": [
   "scripts/plants/gardyn-zone-guide.txt",
-  "scripts/plants/gardyn-store-ycubes.txt"
+  "scripts/plants/gardyn-store-ycubes.txt",
+  "scripts/plants/gardyn-help-facts.txt"
  ],
  "sources": {
   "zone": "https://help.mygardyn.com/en/articles/11547329",
   "zoneMap": "https://help.mygardyn.com/en/articles/11567361",
   "store": "https://mygardyn.com/collections/ycubes",
-  "succession": "https://help.mygardyn.com/en/articles/1782337"
+  "succession": "https://help.mygardyn.com/en/articles/1782337",
+  "plantBook": "https://help.mygardyn.com/en/categories/456897-ycubes"
  },
  "categoryHarvestMedians": {
   "green": [
@@ -108,14 +110,14 @@
     4
    ],
    "harvestEstimated": true,
-   "careLevel": null,
-   "yield": null,
+   "careLevel": "beginner",
+   "yield": "bountiful",
    "succession": "long-fruiting",
    "successionInferred": false,
    "size": "normal",
    "placement": null,
-   "gardynHandle": null,
-   "inStore": false
+   "gardynHandle": "strawberries",
+   "inStore": true
   },
   {
    "id": "basil",
@@ -1169,10 +1171,10 @@
    "zone": "medium",
    "harvestMonths": [
     2,
-    3
+    2
    ],
-   "harvestEstimated": true,
-   "careLevel": null,
+   "harvestEstimated": false,
+   "careLevel": "beginner",
    "yield": null,
    "succession": "long-greens-herbs",
    "successionInferred": false,
@@ -1207,10 +1209,10 @@
    "zone": "medium",
    "harvestMonths": [
     2,
-    3
+    2
    ],
-   "harvestEstimated": true,
-   "careLevel": null,
+   "harvestEstimated": false,
+   "careLevel": "beginner",
    "yield": null,
    "succession": "long-greens-herbs",
    "successionInferred": false,
@@ -1467,6 +1469,25 @@
    "inStore": false
   },
   {
+   "id": "oopsy-daisy",
+   "name": "Oopsy Daisy",
+   "category": "flower",
+   "zone": "medium",
+   "harvestMonths": [
+    2,
+    2
+   ],
+   "harvestEstimated": false,
+   "careLevel": "intermediate",
+   "yield": null,
+   "succession": "flowers",
+   "successionInferred": true,
+   "size": "normal",
+   "placement": null,
+   "gardynHandle": null,
+   "inStore": false
+  },
+  {
    "id": "oregano",
    "name": "Oregano",
    "category": "herb",
@@ -1555,6 +1576,25 @@
    "careLevel": null,
    "yield": null,
    "succession": "flowers",
+   "successionInferred": false,
+   "size": "normal",
+   "placement": null,
+   "gardynHandle": null,
+   "inStore": false
+  },
+  {
+   "id": "pink-swiss-chard",
+   "name": "Pink Swiss Chard",
+   "category": "green",
+   "zone": "medium",
+   "harvestMonths": [
+    1,
+    2
+   ],
+   "harvestEstimated": false,
+   "careLevel": "beginner",
+   "yield": null,
+   "succession": "long-greens-herbs",
    "successionInferred": false,
    "size": "normal",
    "placement": null,
@@ -1757,18 +1797,18 @@
    "category": "green",
    "zone": "low",
    "harvestMonths": [
-    1,
-    2
+    2,
+    3
    ],
-   "harvestEstimated": true,
-   "careLevel": null,
-   "yield": null,
+   "harvestEstimated": false,
+   "careLevel": "beginner",
+   "yield": "generous",
    "succession": "fast-greens",
    "successionInferred": true,
    "size": "normal",
    "placement": null,
-   "gardynHandle": null,
-   "inStore": false
+   "gardynHandle": "purslane",
+   "inStore": true
   },
   {
    "id": "radicchio",

@@ -161,7 +161,7 @@ describe('Grow', () => {
     fireEvent.click(screen.getByRole('button', { name: '2 Kale' }))
     expect(screen.getByTestId('placement-advice').textContent).toBe('Kale grows best in medium light; this pod gets low. Free pods that suit it: 3.')
     fireEvent.click(screen.getByRole('button', { name: /^3 / }))
-    expect(screen.getByTestId('placement-advice').textContent).toBe('Suits this pod: Basil, Breen Lettuce, Buttercrunch, Butterhead, Celery, Dianthus.')
+    expect(screen.getByTestId('placement-advice').textContent).toBe('Suits this pod: American Mustard, Basil, Black Viola, Blue Cornflower, Blush Hibiscus, Borage.')
   })
 
   it('crops a lower pod from the lower camera, and says when there is no photo or trend yet', () => {
