@@ -11,8 +11,21 @@ export function publicSecrets(ch: NotificationChannel) {
     const s = ch.secrets as PushbulletSecrets
     return blank({ accessToken: maskSecret(s.accessToken), hasAccessToken: hasSecret(s.accessToken) })
   }
-  const s = ch.secrets as AppriseSecrets
-  return blank({ apiKey: maskSecret(s.apiKey), hasApiKey: hasSecret(s.apiKey), urls: s.urls?.length ?? 0, hasUrls: (s.urls?.length ?? 0) > 0 })
+  if (ch.kind === 'apprise') {
+    const s = ch.secrets as AppriseSecrets
+    return blank({ apiKey: maskSecret(s.apiKey), hasApiKey: hasSecret(s.apiKey), urls: s.urls?.length ?? 0, hasUrls: (s.urls?.length ?? 0) > 0 })
+  }
+  // Additional kinds: mask any string fields under the known keys; never return raw values.
+  const s = (ch.secrets ?? {}) as Record<string, unknown>
+  const str = (k: string) => typeof s[k] === 'string' ? s[k] as string : undefined
+  return blank({
+    userKey: maskSecret(str('userKey')), hasUserKey: hasSecret(str('userKey')),
+    appToken: maskSecret(str('appToken')), hasAppToken: hasSecret(str('appToken')),
+    accessToken: maskSecret(str('accessToken')), hasAccessToken: hasSecret(str('accessToken')),
+    apiKey: maskSecret(str('apiKey')), hasApiKey: hasSecret(str('apiKey')),
+    urls: Array.isArray(s.urls) ? s.urls.length : 0,
+    hasUrls: Array.isArray(s.urls) && s.urls.length > 0,
+  })
 }
 
 function blank(partial: Record<string, unknown>) {
@@ -72,9 +85,25 @@ export function mergeSecrets(
     const p = (prev ?? {}) as PushbulletSecrets
     return { accessToken: keep('accessToken', patch?.accessToken, p.accessToken) }
   }
-  const p = (prev ?? {}) as AppriseSecrets
-  const urls = patch?.urls === undefined ? p.urls : (patch.urls.length === 0 ? undefined : patch.urls)
-  return { apiKey: keep('apiKey', patch?.apiKey, p.apiKey), urls }
+  if (kind === 'apprise') {
+    const p = (prev ?? {}) as AppriseSecrets
+    const urls = patch?.urls === undefined ? p.urls : (patch.urls.length === 0 ? undefined : patch.urls)
+    return { apiKey: keep('apiKey', patch?.apiKey, p.apiKey), urls }
+  }
+  const prevRec = (prev as Record<string, unknown> | undefined) ?? {}
+  const next: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(prevRec)) {
+    const incoming = patch ? (patch as Record<string, unknown>)[k] : undefined
+    if (incoming === '' || (Array.isArray(incoming) && incoming.length === 0)) continue
+    next[k] = incoming === undefined ? v : incoming
+  }
+  if (patch) {
+    for (const [k, v] of Object.entries(patch)) {
+      if (v === undefined || v === '' || (Array.isArray(v) && v.length === 0)) continue
+      if (!(k in next)) next[k] = v
+    }
+  }
+  return next
 }
 
 export function parseConfig(kind: NotificationChannel['kind'], raw: Record<string, unknown> | undefined) {
@@ -93,9 +122,13 @@ export function parseConfig(kind: NotificationChannel['kind'], raw: Record<strin
       channelTag: typeof r.channelTag === 'string' ? r.channelTag : undefined,
     }
   }
-  return {
-    serverUrl: typeof r.serverUrl === 'string' ? r.serverUrl : '',
-    configKey: typeof r.configKey === 'string' ? r.configKey : undefined,
-    tag: typeof r.tag === 'string' ? r.tag : undefined,
+  if (kind === 'apprise') {
+    return {
+      serverUrl: typeof r.serverUrl === 'string' ? r.serverUrl : '',
+      configKey: typeof r.configKey === 'string' ? r.configKey : undefined,
+      tag: typeof r.tag === 'string' ? r.tag : undefined,
+    }
   }
+  // Unknown kinds (e.g. APNs) keep their config as a plain object.
+  return { ...r }
 }

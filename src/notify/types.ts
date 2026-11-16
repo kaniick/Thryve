@@ -4,7 +4,10 @@
  */
 import type { CompareOp, Condition, DayOfWeek } from '../autopilot/types'
 
-export type ChannelKind = 'pushover' | 'pushbullet' | 'apprise'
+/** Built-in delivery services. Additional kinds (e.g. APNs) register a provider at startup. */
+export const BUILTIN_CHANNEL_KINDS = ['pushover', 'pushbullet', 'apprise'] as const
+export type BuiltinChannelKind = (typeof BUILTIN_CHANNEL_KINDS)[number]
+export type ChannelKind = BuiltinChannelKind | (string & {})
 
 export type NotifyPriority = 'lowest' | 'low' | 'normal' | 'high' | 'emergency'
 
@@ -61,8 +64,8 @@ export interface AppriseSecrets {
   urls?: string[]
 }
 
-export type ChannelConfig = PushoverConfig | PushbulletConfig | AppriseConfig
-export type ChannelSecrets = PushoverSecrets | PushbulletSecrets | AppriseSecrets
+export type ChannelConfig = PushoverConfig | PushbulletConfig | AppriseConfig | Record<string, unknown>
+export type ChannelSecrets = PushoverSecrets | PushbulletSecrets | AppriseSecrets | Record<string, unknown>
 
 export interface NotificationChannel {
   id: number

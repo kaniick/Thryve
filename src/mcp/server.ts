@@ -201,11 +201,11 @@ export function createMcpServer(ctx: Context): McpServer {
   }, async () => text(await caller.notifications.channels()))
 
   server.registerTool('set_notification_channel', {
-    description: 'Create or update a push notification channel. kind is pushover, pushbullet or apprise. Tokens and Apprise URLs are write-only: omitted secrets stay as they are; an empty string clears one. The response masks secrets. Confirm with the person first.',
+    description: 'Create or update a push notification channel. kind is pushover, pushbullet or apprise (or another registered provider, e.g. APNs). Tokens and Apprise URLs are write-only: omitted secrets stay as they are; an empty string clears one. The response masks secrets. Confirm with the person first.',
     inputSchema: {
       id: z.number().int().optional(),
       name: z.string().min(1).max(60),
-      kind: z.enum(['pushover', 'pushbullet', 'apprise']),
+      kind: z.string().min(1).max(40),
       enabled: z.boolean().optional(),
       config: z.record(z.string(), z.unknown()).optional(),
       user_key: z.string().optional(),

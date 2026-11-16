@@ -2,10 +2,21 @@ import { expect, test } from '@playwright/test'
 import { mkdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 
-const shots = resolve('/workspace/brand')
+/** Prefer the box preview dir when we can write it; CI falls back to the repo. */
+function shotDir(): string {
+  const candidates = [process.env.NOTIFY_SHOT_DIR, '/workspace/brand', resolve('tests/browser/test-results')].filter((p): p is string => !!p)
+  for (const dir of candidates) {
+    try {
+      mkdirSync(dir, { recursive: true })
+      return dir
+    }
+    catch { /* not writable (GitHub Actions has no /workspace/brand) */ }
+  }
+  return resolve('tests/browser/test-results')
+}
 
 test('notifications: add a channel, open the rule editor, capture the UI', async ({ page }) => {
-  mkdirSync(shots, { recursive: true })
+  const shots = shotDir()
   await page.goto('/notifications')
   await expect(page.getByRole('heading', { name: 'Notifications' })).toBeVisible()
   await expect(page.getByText('No channels yet')).toBeVisible()

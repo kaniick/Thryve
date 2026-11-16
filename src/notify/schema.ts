@@ -7,7 +7,7 @@ const CompareOp = z.enum(['>', '>=', '<', '<=', '==', '!='])
 
 const Time = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'use HH:MM')
 
-export const ChannelKindSchema = z.enum(['pushover', 'pushbullet', 'apprise'])
+export const ChannelKindSchema = z.string().min(1).max(40)
 
 export const PushoverConfigSchema = z.object({
   device: z.string().max(80).optional(),
@@ -36,7 +36,7 @@ export const ChannelSecretsInput = z.object({
   accessToken: z.string().max(200).optional(),
   apiKey: z.string().max(200).optional(),
   urls: z.array(z.string().min(1).max(500)).max(20).optional(),
-})
+}).passthrough()
 
 export const ChannelInput = z.object({
   name: z.string().min(1).max(60),

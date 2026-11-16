@@ -639,7 +639,7 @@ function rowToBackup(r: typeof t.backups.$inferSelect): BackupRecord {
 function notifyChannelColumns(ch: Partial<Omit<NotificationChannel, 'id' | 'createdAt' | 'updatedAt'>>) {
   const out: Partial<typeof t.notificationChannels.$inferInsert> = {}
   if (ch.name !== undefined) out.name = ch.name
-  if (ch.kind !== undefined) out.kind = ch.kind
+  if (ch.kind !== undefined) out.kind = ch.kind as typeof t.notificationChannels.$inferInsert['kind']
   if (ch.enabled !== undefined) out.enabled = ch.enabled
   if (ch.config !== undefined) out.config = JSON.stringify(ch.config)
   if (ch.secrets !== undefined) out.secrets = JSON.stringify(ch.secrets)

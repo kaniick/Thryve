@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { sendApprise, appriseNotifyUrl } from '../providers/apprise'
+import { registerChannelProvider, sendOnChannel } from '../providers'
 import { sendPushbullet } from '../providers/pushbullet'
 import { sendPushover } from '../providers/pushover'
 import type { NotificationChannel } from '../types'
@@ -65,6 +66,18 @@ describe('notification providers', () => {
     expect((await sendPushover({ ...base, kind: 'pushover', config: {}, secrets: {} }, { title: 't', message: 'm', priority: 'normal' }, fetchImpl)).ok).toBe(false)
     expect((await sendPushbullet({ ...base, kind: 'pushbullet', config: {}, secrets: {} }, { title: 't', message: 'm', priority: 'normal' }, fetchImpl)).ok).toBe(false)
     expect((await sendApprise({ ...base, kind: 'apprise', config: { serverUrl: '' }, secrets: {} }, { title: 't', message: 'm', priority: 'normal' }, fetchImpl)).ok).toBe(false)
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+})
+
+describe('provider registry', () => {
+  it('dispatches built-in kinds and lets a new kind register without a switch change', async () => {
+    const fetchImpl = vi.fn()
+    const unknown = await sendOnChannel({ ...base, kind: 'apns', config: {}, secrets: {} }, { title: 't', message: 'm', priority: 'normal' }, fetchImpl)
+    expect(unknown).toEqual({ ok: false, error: 'No provider registered for apns' })
+    registerChannelProvider('apns', async () => ({ ok: true, id: 'apns-1' }))
+    const sent = await sendOnChannel({ ...base, kind: 'apns', config: {}, secrets: { deviceToken: 'tok' } }, { title: 't', message: 'm', priority: 'normal' }, fetchImpl)
+    expect(sent).toEqual({ ok: true, id: 'apns-1' })
     expect(fetchImpl).not.toHaveBeenCalled()
   })
 })
