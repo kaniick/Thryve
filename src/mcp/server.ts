@@ -8,7 +8,8 @@
  */
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
-import { RuleInput } from '../autopilot/schema'
+import { ConditionSchema, RuleInput } from '../autopilot/schema'
+import { NotifyTriggerSchema } from '../notify/schema'
 import { GARDYN_LIGHT_GUIDE, LIGHT_PRESETS, lightHours, lightRating, LONG_DAY_HOURS } from '../scheduler/lightPlan'
 import { dayEnabled, localTime } from '../scheduler/time'
 import { appliedPreset, dailyMinutes, daysSinceSowing, GARDYN_WATERING_GUIDE, lightWindow, presetRuns, presetDays, presetSchedules, PUMP_PRESETS, plantCategories, recommendedPreset, sowWeekday, TIPS_CITATION, WATERING_TIPS } from '../scheduler/pumpPlan'
@@ -193,6 +194,93 @@ export function createMcpServer(ctx: Context): McpServer {
     description: 'Autopilot rules (WHEN trigger / IF conditions / THEN actions, as JSON), whether each is enabled or in dry-run, its last run, the kill switch, which source owns the light (manual hold, Autopilot or schedule), and the latest audit-log entries. Read-only: creating, arming or disabling rules changes what the unit does unattended, so that is done in the app.',
     inputSchema: { runs: z.number().int().min(0).max(100).optional() },
   }, async i => text({ rules: await caller.automations.list(), status: await caller.automations.status(), runs: await caller.automations.runs({ limit: i.runs ?? 20 }) }))
+
+  server.registerTool('list_notification_channels', {
+    description: 'Push notification channels (Pushover, Pushbullet, or an external Apprise API). Secrets are masked (last four characters only) and are never returned in full. Read-only.',
+    inputSchema: {},
+  }, async () => text(await caller.notifications.channels()))
+
+  server.registerTool('set_notification_channel', {
+    description: 'Create or update a push notification channel. kind is pushover, pushbullet or apprise (or another registered provider, e.g. APNs). Tokens and Apprise URLs are write-only: omitted secrets stay as they are; an empty string clears one. The response masks secrets. Confirm with the person first.',
+    inputSchema: {
+      id: z.number().int().optional(),
+      name: z.string().min(1).max(60),
+      kind: z.string().min(1).max(40),
+      enabled: z.boolean().optional(),
+      config: z.record(z.string(), z.unknown()).optional(),
+      user_key: z.string().optional(),
+      app_token: z.string().optional(),
+      access_token: z.string().optional(),
+      api_key: z.string().optional(),
+      urls: z.array(z.string()).optional(),
+    },
+  }, async (i) => {
+    const secrets = { userKey: i.user_key, appToken: i.app_token, accessToken: i.access_token, apiKey: i.api_key, urls: i.urls }
+    if (i.id) return text(await caller.notifications.updateChannel({ id: i.id, name: i.name, kind: i.kind, enabled: i.enabled, config: i.config, secrets }))
+    return text(await caller.notifications.createChannel({ name: i.name, kind: i.kind, enabled: i.enabled, config: i.config, secrets }))
+  })
+
+  server.registerTool('remove_notification_channel', {
+    description: 'Delete a notification channel by id (from list_notification_channels). Confirm with the person first.',
+    inputSchema: { id: z.number().int() },
+  }, async i => text(await caller.notifications.removeChannel(i)))
+
+  server.registerTool('test_notification_channel', {
+    description: 'Send a test message on a notification channel (id from list_notification_channels). This leaves the unit and reaches the person\'s phone. Confirm with them first.',
+    inputSchema: { id: z.number().int() },
+  }, async i => text(await caller.notifications.testChannel(i)))
+
+  server.registerTool('list_notification_rules', {
+    description: 'IF/THEN notification rules (trigger, Autopilot-style conditions, channels, templates, priority, cooldown, quiet hours), the kill switch, and recent history. Read-only: creating or enabling rules is done with set_notification_rule, or in the app under Notifications.',
+    inputSchema: { runs: z.number().int().min(0).max(100).optional() },
+  }, async i => text({ rules: await caller.notifications.rules(), status: await caller.notifications.status(), runs: await caller.notifications.runs({ limit: i.runs ?? 20 }) }))
+
+  server.registerTool('set_notification_rule', {
+    description: 'Create or update a notification rule. trigger is tick, signalChange, timeOfDay, threshold (sensor + op + value) or event (pump_fault, dry_run, brown_out, alert_raised, alert_cleared, pod_attention, pod_harvest, task_due, light_on, light_off, update_available, unit_offline, unit_online, analysis_finding). conditions use the Autopilot AST (and/or/not/compare/between/timeBetween/onDays/sustained). channel_ids empty means every enabled channel. title_template and message_template accept {{sensor.water_level_pct}}, {{alert.detail}}, {{unit.name}}, {{eventLabel}} and similar. New rules save disabled unless enabled is true. Confirm with the person before enabling.',
+    inputSchema: {
+      id: z.number().int().optional(),
+      name: z.string().min(1).max(80),
+      enabled: z.boolean().optional(),
+      trigger: z.unknown(),
+      conditions: z.unknown(),
+      channel_ids: z.array(z.number().int()).optional(),
+      title_template: z.string().min(1).max(200),
+      message_template: z.string().min(1).max(2000),
+      priority: z.enum(['lowest', 'low', 'normal', 'high', 'emergency']).optional(),
+      cooldown_min: z.number().int().min(0).max(1440).optional(),
+      quiet_hours: z.object({ start: z.string(), end: z.string() }).nullable().optional(),
+      ignore_quiet_hours: z.boolean().optional(),
+      repeat_while_true: z.boolean().optional(),
+    },
+  }, async (i) => {
+    const trigger = NotifyTriggerSchema.parse(i.trigger)
+    const conditions = ConditionSchema.parse(i.conditions ?? { kind: 'and', conditions: [] })
+    const body = {
+      name: i.name, enabled: i.enabled, trigger, conditions,
+      channelIds: i.channel_ids ?? [],
+      titleTemplate: i.title_template, messageTemplate: i.message_template,
+      priority: i.priority, cooldownMin: i.cooldown_min,
+      quietHours: i.quiet_hours, ignoreQuietHours: i.ignore_quiet_hours,
+      repeatWhileTrue: i.repeat_while_true,
+    }
+    if (i.id) return text(await caller.notifications.updateRule({ id: i.id, ...body }))
+    return text(await caller.notifications.createRule(body))
+  })
+
+  server.registerTool('remove_notification_rule', {
+    description: 'Delete a notification rule by id (from list_notification_rules). Confirm with the person first.',
+    inputSchema: { id: z.number().int() },
+  }, async i => text(await caller.notifications.removeRule(i)))
+
+  server.registerTool('test_notification_rule', {
+    description: 'Render a rule\'s title and message from live readings and send it on its channels, bypassing cooldown and quiet hours. This leaves the unit. Confirm with the person first.',
+    inputSchema: { id: z.number().int() },
+  }, async i => text(await caller.notifications.testRule(i)))
+
+  server.registerTool('set_notifications_enabled', {
+    description: 'The notifications kill switch: off stops every notification rule. Confirm with the person first.',
+    inputSchema: { enabled: z.boolean() },
+  }, async i => text(await caller.notifications.setGlobal(i)))
 
   server.registerTool('starter_rules', {
     description: 'Starter Autopilot rules sourced from the knowledge bundle (ADR-0029): pH outside 5.5–6.5, EC below the crop target (seedlings, leafy greens, herbs or fruiting, from what is planted), tank below half. Each is notify-only and comes with its citations, the sensors it needs and whether the unit has them (unavailable says why not), whether a rule of that name is already added, and the rule JSON. Read-only: offer one to the person, backtest it with backtest_automation (pass rule), and let them add it in the app (Autopilot → Starter rules), where it starts in dry-run until they arm it.',

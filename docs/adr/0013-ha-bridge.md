@@ -33,3 +33,13 @@ daemon's own alert entities).
 
 - Two discovery sources, one HA device (shared `identifiers`).
 - Core never republishes the daemon's entities; no duplication, no drift.
+
+## Amendment (2026-11-16)
+
+Native push notifications (Pushover, Pushbullet, and an external Apprise API
+server) are now a first-class Thryve feature, with their own IF/THEN rules.
+See `docs/NOTIFICATIONS.md`. Home Assistant remains the path for automations
+that live in HA; it is no longer the only delivery channel for "tell me when
+X happens." Autopilot's `notify` action is unchanged: it still only raises an
+in-app alert. A Notifications rule on **alert raised** can forward that alert
+to a phone if the owner wants it.

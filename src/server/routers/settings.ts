@@ -36,6 +36,9 @@ export const SettingsSchema = z.object({
   mirrorAccessKeyId: z.string().nullable(),
   mirrorSecretAccessKey: z.string().nullable(),
   autopilotEnabled: z.boolean(),
+  notificationsEnabled: z.boolean(),
+  notifyQuietStart: z.string().nullable(),
+  notifyQuietEnd: z.string().nullable(),
   /** % duty for runs without their own speed, and the most any run from core may use; hald's pump_max_duty caps it too. */
   pumpPower: z.number().int().min(1).max(100),
   pumpSoftStart: z.boolean(),

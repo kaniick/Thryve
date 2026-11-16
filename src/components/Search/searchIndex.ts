@@ -4,7 +4,7 @@
  * guides, ranked with BM25.
  */
 import type { LucideIcon } from 'lucide-react'
-import { Archive, BookOpen, CloudUpload, Code, Database, HardDrive, House, Info, KeyRound, Monitor, Radio, RefreshCw, Ruler, Settings, Sprout, Timer, Camera, Wand2, Waves, Wifi } from 'lucide-react'
+import { Archive, BellRing, BookOpen, CloudUpload, Code, Database, HardDrive, House, Info, KeyRound, Monitor, Radio, RefreshCw, Ruler, Settings, Sprout, Timer, Camera, Wand2, Waves, Wifi } from 'lucide-react'
 import { navItems } from '@/src/components/AppShell/navItems'
 import { createBm25Index, tokenize } from '@/src/lib/bm25'
 import { DOCS_BASE, type DocsIndex } from './docsIndex'
@@ -39,6 +39,7 @@ const PAGES: Record<string, { description: string, keywords: string }> = {
   '/water': { description: 'Tank level, running the pump and pump cycles', keywords: 'water tank reservoir pump level refill watering schedule timer cycle program' },
   '/care': { description: 'Chores, the tank log, setup issues, starter rules and connecting an AI assistant', keywords: 'care chores feed top off refresh thin trim roots clean tank log nutrients setup check starter rules ai assistant agent claude mcp kelby' },
   '/autopilot': { description: 'Rules that react to readings, with backtests', keywords: 'automation automations rules backtest dry run kill switch' },
+  '/notifications': { description: 'Push rules for Pushover, Pushbullet and Apprise', keywords: 'notifications notify pushover pushbullet apprise push alerts ifttt rules quiet hours cooldown' },
   '/grow': { description: 'Grow cycle, stages, reminders and the 30 pods', keywords: 'grow cycle pods plants harvest seedling stage tower' },
   '/plan': { description: 'Lay out pods by light zone and stagger sowing dates', keywords: 'plan planner layout light zone placement sow sowing succession catalog ycube seed' },
   '/cameras': { description: 'Stills from both cameras and the timelapse', keywords: 'camera photo picture still timelapse capture' },
@@ -55,6 +56,7 @@ const SETTINGS: ReadonlyArray<Omit<SearchEntry, 'crumbs' | 'href'> & { anchor: s
   { id: 'tank', anchor: 'tank', title: 'Tank calibration', description: 'Distance to the water when full and when empty, and the capacity', keywords: 'tank calibration full empty capacity litres liters distance ultrasonic water level', icon: Ruler },
   { id: 'pump', anchor: 'pump', title: 'Pump duty cycle', description: 'How hard the pump runs, its soft start, and a test run', keywords: 'pump power speed duty cycle strength water top tower reboot brown out soft start ramp inrush test run', icon: Waves, boost: 0.7 },
   { id: 'reminders', anchor: 'reminders', title: 'Grow reminders', description: 'Days to thinning, root check, harvest and nutrients', keywords: 'reminders thinning root check harvest nutrients feed days', icon: Timer },
+  { id: 'notifications', anchor: 'notifications', title: 'Notifications', description: 'Kill switch and quiet hours for Pushover, Pushbullet and Apprise rules', keywords: 'notifications pushover pushbullet apprise quiet hours push', icon: BellRing },
   { id: 'cameras', anchor: 'cameras', title: 'Capture interval', description: 'How often the cameras take a still, and analysis masks', keywords: 'camera capture interval timelapse masks artifacts photos', icon: Camera },
   { id: 'storage', anchor: 'storage', title: 'Storage', description: 'How much the unit writes to its SD card each day', keywords: 'sd card flash writes wear storage disk endurance', icon: HardDrive },
   { id: 'backup', anchor: 'backup', title: 'Backup', description: 'Download a backup, nightly backups to the bucket, restore and undo', keywords: 'backup restore download nightly bucket undo archive recovery card', icon: Archive },

@@ -4,6 +4,7 @@ import type { EventBus } from '../lib/eventBus'
 import type { Wifi } from '../network/wifi'
 import type { Store } from '../store/types'
 import type { AutopilotEngine } from '../autopilot/engine'
+import type { NotifyEngine } from '../notify/engine'
 import type { CaptureService } from '../camera/captures'
 import type { MirroredSink } from '../camera/mirrorSink'
 import type { AnalysisService } from '../vision/service'
@@ -29,6 +30,7 @@ export interface Context {
   wifi: Wifi
   light: LightArbiter
   autopilot: AutopilotEngine
+  notifier: NotifyEngine
   /** SD card writes (ADR-0021); reports unavailable off a Pi. */
   flash: FlashMeter
   /** The Database view's scan; absent in tests. */

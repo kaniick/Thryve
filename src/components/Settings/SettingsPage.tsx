@@ -21,7 +21,7 @@ import { apiBase, trpc } from '@/src/utils/trpc'
 type SettingsView = inferRouterOutputs<AppRouter>['settings']['get']
 type GrowView = inferRouterOutputs<AppRouter>['grow']['current']
 
-type SectionId = 'unit' | 'tank' | 'pump' | 'reminders' | 'cameras' | 'api' | 'off-device' | 'storage' | 'backup' | 'home-assistant' | 'homekit' | 'wifi' | 'update' | 'about'
+type SectionId = 'unit' | 'tank' | 'pump' | 'reminders' | 'notifications' | 'cameras' | 'api' | 'off-device' | 'storage' | 'backup' | 'home-assistant' | 'homekit' | 'wifi' | 'update' | 'about'
 
 /** In-page nav, in page order. Anchors are what ⌘K search links to. */
 const SECTIONS: ReadonlyArray<{ id: SectionId, label: string, icon: LucideIcon }> = [
@@ -29,6 +29,7 @@ const SECTIONS: ReadonlyArray<{ id: SectionId, label: string, icon: LucideIcon }
   { id: 'tank', label: 'Tank', icon: Droplets },
   { id: 'pump', label: 'Pump', icon: Waves },
   { id: 'reminders', label: 'Reminders', icon: BellRing },
+  { id: 'notifications', label: 'Notifications', icon: BellRing },
   { id: 'cameras', label: 'Cameras', icon: Camera },
   { id: 'api', label: 'API access', icon: KeyRound },
   { id: 'off-device', label: 'Storage', icon: Cloud },
@@ -248,6 +249,8 @@ function SettingsForm({ s, coreVersion, coreHost, system, onSave, saving }: {
 
           <Reminders d={d} s={s} grow={grow.data} onChange={(k, v) => setD({ ...d, [k]: v })} />
 
+          <NotificationsSection s={s} onSave={onSave} saving={saving} />
+
           <Section id="cameras" title="Cameras">
             <Row label="Capture interval" sub="0 turns off timelapse"><Stepper label="Capture interval" className={stepper} value={num('captureIntervalMin', 60)} min={0} max={720} step={15} onChange={v => setD({ ...d, captureIntervalMin: v })} format={v => `${v} min`} /></Row>
             <Row label="Keep analysis masks" sub="About 115 kB per photo. Off saves SD card space."><Toggle label="Keep analysis masks" on={!!d.analysisArtifacts} onChange={v => setD({ ...d, analysisArtifacts: v })} /></Row>
@@ -417,6 +420,24 @@ function Reminders({ d, s, grow, onChange }: {
       ))}
       <Row label="Nutrients" sub={nutrientSub}>
         <Stepper label="Nutrients" className={stepper} value={every} min={0} max={30} onChange={v => onChange('nutrientReminderDays', v)} format={v => `every ${v} d`} />
+      </Row>
+    </Section>
+  )
+}
+
+function NotificationsSection({ s, onSave, saving }: { s: SettingsView, onSave: (patch: Record<string, unknown>) => void, saving: boolean }) {
+  const quiet = s.notifyQuietStart && s.notifyQuietEnd ? { start: s.notifyQuietStart, end: s.notifyQuietEnd } : null
+  return (
+    <Section id="notifications" title="Notifications" sub="Push messages through Pushover, Pushbullet or an Apprise API when a rule matches — the same IF/THEN idea as Autopilot." right={<Link to="/notifications" className="text-[13px] text-fg underline-offset-2 hover:underline">Channels and rules</Link>}>
+      <Row label="Enabled" sub="Off stops every notification rule, including tests you have already saved.">
+        <Toggle label="Notifications enabled" on={s.notificationsEnabled} onChange={v => onSave({ notificationsEnabled: v })} />
+      </Row>
+      <Row label="Quiet hours" sub="No pushes in this window, unless a rule ignores quiet hours.">
+        <div className="flex items-center gap-2">
+          <input aria-label="Quiet hours start" type="time" className="rounded-ctl border border-line-2 bg-transparent px-2 py-1 font-mono text-[13px] text-fg" value={quiet?.start ?? ''} disabled={saving} onChange={e => onSave({ notifyQuietStart: e.target.value || null, notifyQuietEnd: e.target.value ? (quiet?.end || e.target.value) : null })} />
+          <span className="text-[13px] text-fg-3">to</span>
+          <input aria-label="Quiet hours end" type="time" className="rounded-ctl border border-line-2 bg-transparent px-2 py-1 font-mono text-[13px] text-fg" value={quiet?.end ?? ''} disabled={saving} onChange={e => onSave({ notifyQuietEnd: e.target.value || null, notifyQuietStart: e.target.value ? (quiet?.start || '22:00') : null })} />
+        </div>
       </Row>
     </Section>
   )

@@ -4,6 +4,7 @@
  * router, the scheduler and the grow cycle are storage-agnostic.
  */
 import type { AutomationRule, RunOutcome } from '../autopilot/types'
+import type { NotificationChannel, NotificationRule, NotificationRun } from '../notify/types'
 import type { SensorId } from '../hardware/contract'
 import type { Category, Succession, Zone } from '../plants/catalog'
 import type { PlanResult, SowingWave } from '../plants/planner'
@@ -64,6 +65,11 @@ export interface DeviceSettings {
   homekitEnabled: boolean
   /** False until the owner picks Welcome → Set up a new garden, or restores a backup. */
   setupComplete: boolean
+  /** Push notifications kill switch: off stops every notification rule. */
+  notificationsEnabled: boolean
+  /** Global quiet hours (HH:MM local); null = none. */
+  notifyQuietStart: string | null
+  notifyQuietEnd: string | null
   updatedAt: string
 }
 
@@ -505,6 +511,28 @@ export interface Store {
     /** Replace one camera's reads with a new pod-ID still's. */
     setReads(camera: 'upper' | 'lower', reads: PodCodeRead[]): void
   }
+  notifications: {
+    channels: {
+      list(): NotificationChannel[]
+      get(id: number): NotificationChannel | null
+      create(ch: Omit<NotificationChannel, 'id' | 'createdAt' | 'updatedAt'>, ts: string): NotificationChannel
+      update(id: number, patch: Partial<Omit<NotificationChannel, 'id' | 'createdAt' | 'updatedAt'>>, ts: string): NotificationChannel | null
+      remove(id: number): boolean
+    }
+    rules: {
+      list(): NotificationRule[]
+      get(id: number): NotificationRule | null
+      create(rule: Omit<NotificationRule, 'id' | 'createdAt' | 'updatedAt'>, ts: string): NotificationRule
+      update(id: number, patch: Partial<Omit<NotificationRule, 'id' | 'createdAt' | 'updatedAt'>>, ts: string): NotificationRule | null
+      remove(id: number): boolean
+    }
+    runs: {
+      add(run: Omit<NotificationRun, 'id'>): void
+      /** Newest first. */
+      list(q?: { ruleId?: number, limit?: number }): NotificationRun[]
+      prune(beforeTs: string): number
+    }
+  }
   automations: {
     list(): Automation[]
     get(id: number): Automation | null
@@ -577,4 +605,7 @@ export const DEFAULT_SETTINGS: Omit<DeviceSettings, 'updatedAt'> = {
   pumpSoftStartMs: 1500,
   homekitEnabled: false,
   setupComplete: false,
+  notificationsEnabled: true,
+  notifyQuietStart: null,
+  notifyQuietEnd: null,
 }
