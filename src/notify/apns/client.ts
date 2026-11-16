@@ -100,7 +100,7 @@ export class ApnsClient implements ApnsSender {
 }
 
 /** node:http2, one session per origin, reopened when Apple or the network closes it. */
-export function http2Transport(timeoutMs = 10_000): ApnsTransport {
+export function http2Transport(timeoutMs = 10_000): ApnsTransport & { close(): void } {
   const sessions = new Map<string, ClientHttp2Session>()
   const session = (origin: string) => {
     const open = sessions.get(origin)
@@ -113,7 +113,7 @@ export function http2Transport(timeoutMs = 10_000): ApnsTransport {
     sessions.set(origin, s)
     return s
   }
-  return ({ origin, path, headers, body }) => new Promise((resolve, reject) => {
+  const send: ApnsTransport = ({ origin, path, headers, body }) => new Promise((resolve, reject) => {
     const s = session(origin)
     const stream = s.request({ [constants.HTTP2_HEADER_METHOD]: 'POST', [constants.HTTP2_HEADER_PATH]: path, ...headers })
     let settled = false
@@ -140,4 +140,10 @@ export function http2Transport(timeoutMs = 10_000): ApnsTransport {
     stream.on('close', () => fail(new Error('APNs did not answer')))
     stream.end(body)
   })
+  /** Close the pooled connections (shutdown, tests). */
+  const close = () => {
+    for (const s of sessions.values()) s.close()
+    sessions.clear()
+  }
+  return Object.assign(send, { close })
 }

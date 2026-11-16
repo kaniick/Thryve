@@ -133,6 +133,8 @@ describe('http2Transport', () => {
     expect(bad.status).toBe(400)
     expect(JSON.parse(bad.body)).toEqual({ reason: 'BadDeviceToken' })
     expect(seen[0]).toEqual({ path: '/3/device/aa', method: 'POST', topic: 'com.thryve.app', body: '{"aps":{}}' })
+    // Node 22's server.close waits for open sessions, so drop the client's pooled one first.
+    transport.close()
     await new Promise(r => server.close(r))
   })
 })
