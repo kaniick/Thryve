@@ -1,4 +1,4 @@
-import { Activity, Bell, Camera, Cpu, Droplets, LayoutDashboard, LayoutGrid, Leaf, ListChecks, ScanEye, Settings, Sun, Wand2 } from 'lucide-react'
+import { Activity, Bell, BellRing, Camera, Cpu, Droplets, LayoutDashboard, LayoutGrid, Leaf, ListChecks, ScanEye, Settings, Sun, Wand2 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
 export interface NavItem {
@@ -26,6 +26,7 @@ export const navItems: NavItem[] = [
   { to: '/light', label: 'Light', icon: Sun, group: 'control', tab: true },
   { to: '/water', label: 'Water', icon: Droplets, group: 'control', tab: true },
   { to: '/autopilot', label: 'Autopilot', icon: Wand2, group: 'control' },
+  { to: '/notifications', label: 'Notifications', icon: BellRing, group: 'control' },
   { to: '/cameras', label: 'Cameras', icon: Camera, group: 'observe' },
   { to: '/analysis', label: 'Analysis', icon: ScanEye, group: 'observe' },
   // Health, History and Storage join Status here once they ship.

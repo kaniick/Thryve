@@ -4,10 +4,12 @@
  * browser demo and the tests — one wiring, three hosts.
  */
 import type { AutopilotEngine } from '../autopilot/engine'
+import type { NotifyEngine } from '../notify/engine'
 import type { BackupService } from '../backup/service'
 import type { RestoreClient } from '../backup/restore'
 import type { UpdateClient } from '../update/client'
 import { createAutopilot } from '../autopilot/instance'
+import { createNotifier } from '../notify/instance'
 import { CaptureService, MemorySink, type BlobSink } from '../camera/captures'
 import { CareEngine } from '../care/engine'
 import type { MirroredSink } from '../camera/mirrorSink'
@@ -87,6 +89,7 @@ export interface Core {
   grow: GrowEngine
   care: CareEngine
   autopilot: AutopilotEngine
+  notifier: NotifyEngine
   stop(): Promise<void>
 }
 
@@ -110,9 +113,10 @@ export function createCore(opts: CoreOptions): Core {
   // The light's single owner: manual > Autopilot > schedule (ADR-0020).
   const light = new LightArbiter({ hal: o.hal, now: () => (o.now?.() ?? new Date()).getTime(), log: m => console.warn(m) })
   const autopilot = createAutopilot({ hal: o.hal, store: o.store, events, light, now: o.now, clockTrusted: o.clockTrusted, log: m => console.warn(m) })
+  const notifier = createNotifier({ hal: o.hal, store: o.store, events, now: o.now, update: o.update, log: m => console.warn(m) })
   const flash = new FlashMeter({ store: o.store, source: o.flashSource ?? null, disk: o.disk, now: o.now })
   const podCodes = new PodCodeService({ store: o.store, captures, reader: o.codeReader ?? null, log: m => console.warn(m), onRead: () => events.emit({ kind: 'mutation', path: 'podCodes' }) })
-  const ctx: Context = { hal: o.hal, events, store: o.store, captures, analysis, podCodes, mirror: o.mirror, backup: o.backup, restore: o.restore, update: o.update, bootLog: o.bootLog, homekit: o.homekit, models: o.models, podvision: o.podvision, bridge: o.bridge, flash, database: o.database, logging: o.logging, wifi, light, autopilot, version: o.version, host: o.host, now: o.now }
+  const ctx: Context = { hal: o.hal, events, store: o.store, captures, analysis, podCodes, mirror: o.mirror, backup: o.backup, restore: o.restore, update: o.update, bootLog: o.bootLog, homekit: o.homekit, models: o.models, podvision: o.podvision, bridge: o.bridge, flash, database: o.database, logging: o.logging, wifi, light, autopilot, notifier, version: o.version, host: o.host, now: o.now }
   o.homekit?.attach(ctx)
   const recorder = new Recorder({ store: o.store, events, now: o.now })
   const retention = new TelemetryRetention({ store: o.store, now: o.now })
@@ -126,6 +130,7 @@ export function createCore(opts: CoreOptions): Core {
     retention.start()
     scheduler.start()
     autopilot.start()
+    notifier.start()
     flash.start()
     o.backup?.start()
     grow.tick()
@@ -145,11 +150,13 @@ export function createCore(opts: CoreOptions): Core {
     grow,
     care,
     autopilot,
+    notifier,
     async stop() {
       await o.homekit?.shutdown()
       unsubHal()
       scheduler.stop()
       autopilot.stop()
+      notifier.stop()
       light.close()
       captures.stop()
       podCodes.stop()

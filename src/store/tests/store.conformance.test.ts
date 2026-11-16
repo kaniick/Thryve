@@ -301,6 +301,28 @@ for (const [name, make] of impls) {
       expect(store.settings.get().autopilotEnabled).toBe(true)
       expect(store.settings.get().homekitEnabled).toBe(false)
       expect(store.settings.update({ homekitEnabled: true }).homekitEnabled).toBe(true)
+      expect(store.settings.get().notificationsEnabled).toBe(true)
+    })
+
+    it('notification channels and rules round-trip, mask stays in the store, and runs prune', () => {
+      store = make()
+      const ch = store.notifications.channels.create({ name: 'Phone', kind: 'pushover', enabled: true, config: { sound: 'siren' }, secrets: { userKey: 'secret-user', appToken: 'secret-app' } }, '2026-11-16T00:00:00Z')
+      expect(ch.secrets).toEqual({ userKey: 'secret-user', appToken: 'secret-app' })
+      expect(store.notifications.channels.get(ch.id)?.config).toEqual({ sound: 'siren' })
+      expect(store.notifications.channels.update(ch.id, { name: 'Kitchen phone' }, '2026-11-16T01:00:00Z')).toMatchObject({ name: 'Kitchen phone', secrets: { userKey: 'secret-user', appToken: 'secret-app' } })
+      const rule = { name: 'Tank low', enabled: false, trigger: { kind: 'threshold' as const, signal: 'sensor.water_level_pct', op: '<' as const, value: 25 }, conditions: { kind: 'and' as const, conditions: [] }, channelIds: [ch.id], titleTemplate: 'Low', messageTemplate: 'Tank', priority: 'high' as const, cooldownMin: 60, quietHours: null, ignoreQuietHours: false, repeatWhileTrue: false }
+      const r = store.notifications.rules.create(rule, '2026-11-16T00:00:00Z')
+      expect(r).toMatchObject({ ...rule, id: r.id })
+      expect(store.notifications.rules.update(r.id, { enabled: true }, '2026-11-16T02:00:00Z')).toMatchObject({ enabled: true, name: 'Tank low' })
+      expect(store.notifications.rules.update(999, { name: 'x' }, 't')).toBeNull()
+      store.notifications.runs.add({ ruleId: r.id, firedAt: '2026-11-16T00:00:00Z', outcome: 'skipped', detail: { reason: 'cooldown' } })
+      store.notifications.runs.add({ ruleId: r.id, firedAt: '2026-11-16T03:00:00Z', outcome: 'sent', detail: {} })
+      expect(store.notifications.runs.list({ ruleId: r.id }).map(x => x.outcome)).toEqual(['sent', 'skipped'])
+      expect(store.notifications.runs.prune('2026-11-16T01:00:00Z')).toBe(1)
+      expect(store.notifications.rules.remove(r.id)).toBe(true)
+      expect(store.notifications.runs.list()).toHaveLength(0)
+      expect(store.notifications.channels.remove(ch.id)).toBe(true)
+      expect(store.settings.update({ notifyQuietStart: '22:00', notifyQuietEnd: '07:00' })).toMatchObject({ notifyQuietStart: '22:00', notifyQuietEnd: '07:00' })
     })
 
     it('plans save, update, apply, issue and remove', () => {

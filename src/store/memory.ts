@@ -1,5 +1,6 @@
 import type { SensorId } from '../hardware/contract'
 import type { AlertRow, Automation, AutomationRun, AnalysisPoint, AnalysisRow, AnalyzerStats, BackupRecord, Capture, CustomPlant, DeviceSettings, FlashSample, GrowCycle, GrowProtocolState, GrowStage, PlanRow, PlantProfile, Pod, PodCodePair, PodCodeRead, PodLabel, PodLabelCursor, PodLabelInput, PodLabelSource, PodLabelValue, SavedSchedule, Schedule, ScheduleRun, Store, SuggestionDismissal, TankAction, TankActionKind, TelemetryPoint } from './types'
+import type { NotificationChannel, NotificationRule, NotificationRun } from '../notify/types'
 import type { AutomationRule } from '../autopilot/types'
 import { DEFAULT_SETTINGS, POD_LABELS, profileKey } from './types'
 
@@ -27,6 +28,12 @@ export class MemoryStore implements Store {
   private runRows: AutomationRun[] = []
   private nextAutomationId = 1
   private nextRunId = 1
+  private notificationChannels: NotificationChannel[] = []
+  private notificationRules: NotificationRule[] = []
+  private notificationRunRows: NotificationRun[] = []
+  private nextNotificationChannelId = 1
+  private nextNotificationRuleId = 1
+  private nextNotificationRunId = 1
   private readonly labelRows = new Map<string, PodLabel>()
   private readonly dismissalRows = new Map<string, SuggestionDismissal>()
   private readonly codePairs = new Map<string, PodCodePair>()
@@ -454,6 +461,76 @@ export class MemoryStore implements Store {
       const before = this.runRows.length
       this.runRows = this.runRows.filter(r => r.firedAt >= beforeTs)
       return before - this.runRows.length
+    },
+  }
+
+  notifications = {
+    channels: {
+      list: (): NotificationChannel[] => this.notificationChannels.map(clone),
+      get: (id: number): NotificationChannel | null => {
+        const r = this.notificationChannels.find(c => c.id === id)
+        return r ? clone(r) : null
+      },
+      create: (ch: Omit<NotificationChannel, 'id' | 'createdAt' | 'updatedAt'>, ts: string): NotificationChannel => {
+        const row: NotificationChannel = { ...clone(ch), id: this.nextNotificationChannelId++, createdAt: ts, updatedAt: ts }
+        this.notificationChannels.push(row)
+        return clone(row)
+      },
+      update: (id: number, patch: Partial<Omit<NotificationChannel, 'id' | 'createdAt' | 'updatedAt'>>, ts: string): NotificationChannel | null => {
+        const i = this.notificationChannels.findIndex(c => c.id === id)
+        if (i < 0) return null
+        const cur = this.notificationChannels[i]
+        if (!cur) return null
+        const defined = Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined))
+        const next: NotificationChannel = { ...cur, ...clone(defined), updatedAt: ts }
+        this.notificationChannels[i] = next
+        return clone(next)
+      },
+      remove: (id: number): boolean => {
+        const before = this.notificationChannels.length
+        this.notificationChannels = this.notificationChannels.filter(c => c.id !== id)
+        return this.notificationChannels.length < before
+      },
+    },
+    rules: {
+      list: (): NotificationRule[] => this.notificationRules.map(clone),
+      get: (id: number): NotificationRule | null => {
+        const r = this.notificationRules.find(x => x.id === id)
+        return r ? clone(r) : null
+      },
+      create: (rule: Omit<NotificationRule, 'id' | 'createdAt' | 'updatedAt'>, ts: string): NotificationRule => {
+        const row: NotificationRule = { ...clone(rule), id: this.nextNotificationRuleId++, createdAt: ts, updatedAt: ts }
+        this.notificationRules.push(row)
+        return clone(row)
+      },
+      update: (id: number, patch: Partial<Omit<NotificationRule, 'id' | 'createdAt' | 'updatedAt'>>, ts: string): NotificationRule | null => {
+        const i = this.notificationRules.findIndex(r => r.id === id)
+        if (i < 0) return null
+        const cur = this.notificationRules[i]
+        if (!cur) return null
+        const defined = Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined))
+        const next: NotificationRule = { ...cur, ...clone(defined), updatedAt: ts }
+        this.notificationRules[i] = next
+        return clone(next)
+      },
+      remove: (id: number): boolean => {
+        this.notificationRunRows = this.notificationRunRows.filter(r => r.ruleId !== id)
+        const before = this.notificationRules.length
+        this.notificationRules = this.notificationRules.filter(r => r.id !== id)
+        return this.notificationRules.length < before
+      },
+    },
+    runs: {
+      add: (run: Omit<NotificationRun, 'id'>): void => {
+        this.notificationRunRows.push({ ...run, id: this.nextNotificationRunId++ })
+      },
+      list: (q?: { ruleId?: number, limit?: number }): NotificationRun[] =>
+        this.notificationRunRows.filter(r => q?.ruleId === undefined || r.ruleId === q.ruleId).slice().reverse().slice(0, q?.limit ?? 100),
+      prune: (beforeTs: string): number => {
+        const before = this.notificationRunRows.length
+        this.notificationRunRows = this.notificationRunRows.filter(r => r.firedAt >= beforeTs)
+        return before - this.notificationRunRows.length
+      },
     },
   }
 

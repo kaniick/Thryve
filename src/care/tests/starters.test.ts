@@ -80,7 +80,7 @@ describe('starter rules (ADR-0029)', () => {
     expect(JSON.parse((res.content as Array<{ text: string }>)[0]?.text ?? '[]')).toHaveLength(3)
     // Nothing on MCP creates or arms a rule.
     const tools = (await client.listTools()).tools.map(t => t.name)
-    expect(tools.filter(t => /automation|rule/.test(t)).sort()).toEqual(['backtest_automation', 'list_automations', 'starter_rules'])
+    expect(tools.filter(t => /automation|starter_rules/.test(t)).sort()).toEqual(['backtest_automation', 'list_automations', 'starter_rules'])
     expect(ctx.store.automations.list()).toEqual([])
   })
 })

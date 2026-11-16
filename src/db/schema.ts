@@ -56,6 +56,11 @@ export const deviceSettings = sqliteTable('device_settings', {
   mirrorSecretAccessKey: text(),
   /** Autopilot kill switch (ADR-0020): off stops every rule and drops their light leases. */
   autopilotEnabled: integer({ mode: 'boolean' }).notNull().default(true),
+  /** Push notifications kill switch: off stops every notification rule. */
+  notificationsEnabled: integer({ mode: 'boolean' }).notNull().default(true),
+  /** Global quiet hours (HH:MM local); null = none. Per-rule hours can tighten this. */
+  notifyQuietStart: text(),
+  notifyQuietEnd: text(),
   /** Pump power, % duty: the level for runs without their own speed, and the most any run from core may use. */
   pumpPower: integer().notNull().default(30),
   /** Ramp each pump start up gently, over pumpSoftStartMs, so its inrush doesn't brown the Pi out. */
@@ -365,3 +370,45 @@ export const plans = sqliteTable('plans', {
   /** Sow reminders already raised, JSON string[]. */
   issued: text().notNull().default('[]'),
 })
+
+/** Push notification delivery channels (Pushover, Pushbullet, Apprise API). Secrets stay in `secrets`. */
+export const notificationChannels = sqliteTable('notification_channels', {
+  id: integer().primaryKey({ autoIncrement: true }),
+  name: text().notNull(),
+  kind: text({ enum: ['pushover', 'pushbullet', 'apprise'] }).notNull(),
+  enabled: integer({ mode: 'boolean' }).notNull().default(true),
+  /** Non-secret config JSON (device, sound, server URL, tags). */
+  config: text().notNull().default('{}'),
+  /** Secret fields JSON (tokens, keys, Apprise URLs). Never returned in full. */
+  secrets: text().notNull().default('{}'),
+  createdAt: text().notNull(),
+  updatedAt: text().notNull(),
+})
+
+/** IF/THEN notification rules: a trigger, Autopilot-style conditions, and channels to notify. */
+export const notificationRules = sqliteTable('notification_rules', {
+  id: integer().primaryKey({ autoIncrement: true }),
+  name: text().notNull(),
+  enabled: integer({ mode: 'boolean' }).notNull().default(false),
+  trigger: text().notNull(),
+  conditions: text().notNull(),
+  /** JSON number[]; empty means every enabled channel. */
+  channelIds: text().notNull().default('[]'),
+  titleTemplate: text().notNull(),
+  messageTemplate: text().notNull(),
+  priority: text({ enum: ['lowest', 'low', 'normal', 'high', 'emergency'] }).notNull().default('normal'),
+  cooldownMin: integer().notNull().default(60),
+  quietHours: text(),
+  ignoreQuietHours: integer({ mode: 'boolean' }).notNull().default(false),
+  repeatWhileTrue: integer({ mode: 'boolean' }).notNull().default(false),
+  createdAt: text().notNull(),
+  updatedAt: text().notNull(),
+})
+
+export const notificationRuns = sqliteTable('notification_runs', {
+  id: integer().primaryKey({ autoIncrement: true }),
+  ruleId: integer().notNull(),
+  firedAt: text().notNull(),
+  outcome: text({ enum: ['sent', 'skipped', 'quiet', 'cooldown', 'dedup', 'error', 'disabled'] }).notNull(),
+  detail: text().notNull().default('{}'),
+}, t => [index('notification_runs_rule_time').on(t.ruleId, t.firedAt)])

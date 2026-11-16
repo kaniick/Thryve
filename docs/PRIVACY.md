@@ -39,7 +39,14 @@ goes through Apple's servers unless you add a home hub, which is Apple's
 service, not thryve's. The setup code is shown to anyone on your LAN, like
 the rest of the API (ADR 0012). A backup holds HomeKit's pairing keys.
 
+**Notifications** (Pushover, Pushbullet, or an Apprise API you run) are off
+until you add a channel. When a rule fires, Thryve sends the rendered title
+and message to that service. Tokens, keys and Apprise URLs stay on the unit;
+the API and MCP tools return them masked (last four characters only) and they
+are never written to the journal or a dataset export. A backup file includes
+them, like the MQTT password, so keep backups private.
+
 A dataset export (`GET /api/datasets/export`) and a backup download
 (`GET /api/backup/download`) are downloads you start; they go only to the
 browser or script that asked for them. A backup file holds the unit's secrets
-(bucket keys, MQTT password), so keep it somewhere private.
+(bucket keys, MQTT password, notification tokens), so keep it somewhere private.

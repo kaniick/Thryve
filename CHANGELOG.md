@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Notifications: IF/THEN push rules for Pushover, Pushbullet, and an external
+  Apprise API server (the unit does not install Python Apprise). Settings →
+  Notifications holds the kill switch and quiet hours; the Notifications page
+  edits channels and rules. Secrets are stored on the unit, returned masked,
+  and kept out of logs and dataset exports. Starter rules (pump fault, tank
+  low, unit offline) save disabled. See `docs/NOTIFICATIONS.md`.
+
 ## 2.1.1 — 2026-11-16
 
 - Settings → Home Assistant bridge: **Test connection** uses the saved broker

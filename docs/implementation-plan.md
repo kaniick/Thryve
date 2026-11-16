@@ -221,7 +221,7 @@ Core is built against `hal-sim` from day one; real hardware only enters at 3.9.
 | 5.2 | HomeKit via `hap-nodejs` (light as Lightbulb, pump as Switch/Fan, sensors) — reuse [sleepypod](https://sleepypod.github.io/core/integrations/) identity derivation ADR-0020 | optional |
 | 5.3 | iOS: evaluate forking `sleepypod/ios` shell (tRPC client, networking, mock client pattern) → `seedypod/ios` | optional; separate repo |
 | 5.4 | M5 Dial / small physical controller for light+pump ([sleepypod](https://sleepypod.github.io/dial/) `m5-rotary-dial` pattern, mDNS discovery) | optional |
-| 5.5 | Notifications: HA is the delivery channel; no push service of our own | decision in ADR-0013 |
+| 5.5 | Notifications: native Pushover, Pushbullet, and Apprise API rules; HA remains an option | done, see docs/NOTIFICATIONS.md (amends ADR-0013) |
 
 ### Phase 6 — Hardware expansion  ⏱ 1–2 weekends  ⛔ Phase 2 · **∥ Phases 4–5**
 

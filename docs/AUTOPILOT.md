@@ -16,7 +16,9 @@ Schedules act at set times. Autopilot rules act on what the unit **reads**:
 - "If the tank is below 30 %, tell me."
 - "If pod 7 has stopped growing, mark it for attention."
 
-Open **Autopilot** in the sidebar.
+Open **Autopilot** in the sidebar. Autopilot's *notify* action still only
+raises an in-app alert. To get a message on your phone, add a channel and a
+rule under **Notifications** (see [Notifications](./NOTIFICATIONS.md)).
 
 ## A rule is WHEN, IF, THEN
 

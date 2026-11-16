@@ -6,7 +6,8 @@ import { existsSync, mkdirSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { SensorId } from '../hardware/contract'
-import type { AutomationRule } from '../autopilot/types'
+import type { AutomationRule, Condition } from '../autopilot/types'
+import type { ChannelConfig, ChannelSecrets, NotificationChannel, NotificationRule, NotificationRun, NotifyPriority, NotifyTrigger } from '../notify/types'
 import * as t from '../db/schema'
 import { downsample } from './memory'
 import type { AlertRow, Automation, AutomationRun, AnalysisPoint, AnalysisRow, AnalyzerStats, BackupRecord, Capture, CustomPlant, DeviceSettings, FlashSample, GrowCycle, GrowProtocolState, GrowStage, LightSpec, PlanRow, PlantProfile, Pod, PodCodePair, PodCodeRead, PodLabel, PodLabelCursor, PodLabelInput, PodLabelSource, PodLabelValue, PumpSpec, SavedCycle, SavedSchedule, Schedule, ScheduleRun, Store, SuggestionDismissal, TankAction, TankActionKind, TelemetryPoint } from './types'
@@ -487,6 +488,56 @@ export class SqliteStore implements Store {
     pruneRuns: (beforeTs: string): number => this.db.delete(t.automationRuns).where(lt(t.automationRuns.firedAt, beforeTs)).run().changes,
   }
 
+  notifications = {
+    channels: {
+      list: (): NotificationChannel[] => this.db.select().from(t.notificationChannels).orderBy(asc(t.notificationChannels.id)).all().map(rowToNotifyChannel),
+      get: (id: number): NotificationChannel | null => {
+        const r = this.db.select().from(t.notificationChannels).where(eq(t.notificationChannels.id, id)).get()
+        return r ? rowToNotifyChannel(r) : null
+      },
+      create: (ch: Omit<NotificationChannel, 'id' | 'createdAt' | 'updatedAt'>, ts: string): NotificationChannel => {
+        const r = this.db.insert(t.notificationChannels).values({ ...notifyChannelColumns(ch), createdAt: ts, updatedAt: ts }).returning().get()
+        return rowToNotifyChannel(r)
+      },
+      update: (id: number, patch: Partial<Omit<NotificationChannel, 'id' | 'createdAt' | 'updatedAt'>>, ts: string): NotificationChannel | null => {
+        const r = this.db.update(t.notificationChannels).set({ ...notifyChannelColumns(patch), updatedAt: ts }).where(eq(t.notificationChannels.id, id)).returning().get()
+        return r ? rowToNotifyChannel(r) : null
+      },
+      remove: (id: number): boolean => this.db.delete(t.notificationChannels).where(eq(t.notificationChannels.id, id)).run().changes > 0,
+    },
+    rules: {
+      list: (): NotificationRule[] => this.db.select().from(t.notificationRules).orderBy(asc(t.notificationRules.id)).all().map(rowToNotifyRule),
+      get: (id: number): NotificationRule | null => {
+        const r = this.db.select().from(t.notificationRules).where(eq(t.notificationRules.id, id)).get()
+        return r ? rowToNotifyRule(r) : null
+      },
+      create: (rule: Omit<NotificationRule, 'id' | 'createdAt' | 'updatedAt'>, ts: string): NotificationRule => {
+        const r = this.db.insert(t.notificationRules).values({ ...notifyRuleColumns(rule), createdAt: ts, updatedAt: ts }).returning().get()
+        return rowToNotifyRule(r)
+      },
+      update: (id: number, patch: Partial<Omit<NotificationRule, 'id' | 'createdAt' | 'updatedAt'>>, ts: string): NotificationRule | null => {
+        const r = this.db.update(t.notificationRules).set({ ...notifyRuleColumns(patch), updatedAt: ts }).where(eq(t.notificationRules.id, id)).returning().get()
+        return r ? rowToNotifyRule(r) : null
+      },
+      remove: (id: number): boolean => {
+        this.db.delete(t.notificationRuns).where(eq(t.notificationRuns.ruleId, id)).run()
+        return this.db.delete(t.notificationRules).where(eq(t.notificationRules.id, id)).run().changes > 0
+      },
+    },
+    runs: {
+      add: (run: Omit<NotificationRun, 'id'>): void => {
+        this.db.insert(t.notificationRuns).values({ ...run, detail: JSON.stringify(run.detail ?? {}) }).run()
+      },
+      list: (q?: { ruleId?: number, limit?: number }): NotificationRun[] => {
+        const base = this.db.select().from(t.notificationRuns)
+        const rows = (q?.ruleId !== undefined ? base.where(eq(t.notificationRuns.ruleId, q.ruleId)) : base)
+          .orderBy(desc(t.notificationRuns.id)).limit(q?.limit ?? 100).all()
+        return rows.map(r => ({ ...r, outcome: r.outcome as NotificationRun['outcome'], detail: JSON.parse(r.detail) as unknown }))
+      },
+      prune: (beforeTs: string): number => this.db.delete(t.notificationRuns).where(lt(t.notificationRuns.firedAt, beforeTs)).run().changes,
+    },
+  }
+
   tankActions = {
     add: (a: Omit<TankAction, 'id' | 'createdAt'>, createdAt: string): TankAction => this.db.insert(t.tankActions).values({ ...a, createdAt }).returning().get(),
     list: (q?: { kind?: TankActionKind, limit?: number }): TankAction[] => {
@@ -584,3 +635,46 @@ function rowToAutomation(r: typeof t.automations.$inferSelect): Automation {
 function rowToBackup(r: typeof t.backups.$inferSelect): BackupRecord {
   return { ...r, destination: r.destination as BackupRecord['destination'] }
 }
+
+function notifyChannelColumns(ch: Partial<Omit<NotificationChannel, 'id' | 'createdAt' | 'updatedAt'>>) {
+  const out: Partial<typeof t.notificationChannels.$inferInsert> = {}
+  if (ch.name !== undefined) out.name = ch.name
+  if (ch.kind !== undefined) out.kind = ch.kind
+  if (ch.enabled !== undefined) out.enabled = ch.enabled
+  if (ch.config !== undefined) out.config = JSON.stringify(ch.config)
+  if (ch.secrets !== undefined) out.secrets = JSON.stringify(ch.secrets)
+  return out as typeof t.notificationChannels.$inferInsert
+}
+
+function notifyRuleColumns(rule: Partial<Omit<NotificationRule, 'id' | 'createdAt' | 'updatedAt'>>) {
+  const out: Partial<typeof t.notificationRules.$inferInsert> = {}
+  if (rule.name !== undefined) out.name = rule.name
+  if (rule.enabled !== undefined) out.enabled = rule.enabled
+  if (rule.trigger !== undefined) out.trigger = JSON.stringify(rule.trigger)
+  if (rule.conditions !== undefined) out.conditions = JSON.stringify(rule.conditions)
+  if (rule.channelIds !== undefined) out.channelIds = JSON.stringify(rule.channelIds)
+  if (rule.titleTemplate !== undefined) out.titleTemplate = rule.titleTemplate
+  if (rule.messageTemplate !== undefined) out.messageTemplate = rule.messageTemplate
+  if (rule.priority !== undefined) out.priority = rule.priority
+  if (rule.cooldownMin !== undefined) out.cooldownMin = rule.cooldownMin
+  if (rule.quietHours !== undefined) out.quietHours = rule.quietHours ? JSON.stringify(rule.quietHours) : null
+  if (rule.ignoreQuietHours !== undefined) out.ignoreQuietHours = rule.ignoreQuietHours
+  if (rule.repeatWhileTrue !== undefined) out.repeatWhileTrue = rule.repeatWhileTrue
+  return out as typeof t.notificationRules.$inferInsert
+}
+
+function rowToNotifyChannel(r: typeof t.notificationChannels.$inferSelect): NotificationChannel {
+  return { ...r, config: JSON.parse(r.config) as ChannelConfig, secrets: JSON.parse(r.secrets) as ChannelSecrets }
+}
+
+function rowToNotifyRule(r: typeof t.notificationRules.$inferSelect): NotificationRule {
+  return {
+    ...r,
+    trigger: JSON.parse(r.trigger) as NotifyTrigger,
+    conditions: JSON.parse(r.conditions) as Condition,
+    channelIds: JSON.parse(r.channelIds) as number[],
+    priority: r.priority as NotifyPriority,
+    quietHours: r.quietHours ? JSON.parse(r.quietHours) as NotificationRule['quietHours'] : null,
+  }
+}
+
