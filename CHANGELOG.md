@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.0.2 — 2026-11-16
+
+- Plant catalog now includes every variety in Gardyn's public plant library
+  (141 plants, up from 139). Added Pink Swiss Chard and Oopsy Daisy.
+- Lime Basil and Mammoth Basil were already listed, but now have published
+  care and harvest data and their own tower/thumbnail models, so they no
+  longer appear as generic basil.
+- Purslane and bare-root Strawberries are marked as currently sold yCubes.
+- Every built-in plant now has a visual model in the Grow view.
+
 ## 2.0.1 — 2026-11-14
 
 - Analysis → Pod bounds → Edit boxes: the outer box can be moved or resized,
