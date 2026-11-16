@@ -523,10 +523,14 @@ fn run_engine(mut engine: Engine, mut cfg: LoopConfig, rx: Receiver<Inbound>, tx
             // A pump trace, the pump guard's fast reads, and a soft-start ramp wake the loop between ticks.
             let watch = (!cfg.sim).then(|| engine.pump_watch_due(now)).flatten();
             let ramp = engine.pump_ramp_due(now);
-            let wake = [cfg.trace.as_ref().and_then(pump_trace::PumpTrace::due), watch, ramp]
-                .into_iter()
-                .flatten()
-                .fold(deadline, Instant::min);
+            let wake = [
+                cfg.trace.as_ref().and_then(pump_trace::PumpTrace::due),
+                watch,
+                ramp,
+            ]
+            .into_iter()
+            .flatten()
+            .fold(deadline, Instant::min);
             match rx.recv_timeout(wake.saturating_duration_since(Instant::now())) {
                 Ok(Inbound::Shutdown) | Err(RecvTimeoutError::Disconnected) => {
                     send(&tx, engine.handle(Inbound::Shutdown, now));

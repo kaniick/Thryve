@@ -1711,7 +1711,6 @@ mod tests {
         let _ = std::fs::remove_dir_all(&r.dir);
     }
 
-
     /// A rig whose pump runs to full power with a 1 s soft start, and a 30 % default.
     fn ramp_rig(tag: &str) -> Rig {
         let mut r = rig(vec![ActuatorId::Pump], false, tag);
@@ -1857,10 +1856,7 @@ mod tests {
             .engine
             .handle(Inbound::ActuatorSet(ActuatorId::Pump, on(None, None)), r.now);
         assert_eq!(payload(&out, "thryve/u1/actuator/pump/state")["on"], false);
-        assert_eq!(
-            payload(&out, "thryve/u1/actuator/pump/state")["fault"],
-            "dry-run"
-        );
+        assert_eq!(payload(&out, "thryve/u1/actuator/pump/state")["fault"], "dry-run");
         assert_eq!(r.world.lock().unwrap().pump_level, 0.0);
         let out = r.engine.handle(Inbound::AlertAck(AlertKind::PumpFault), r.now);
         assert!(payload(&out, "thryve/u1/actuator/pump/state")["fault"].is_null());
@@ -2363,10 +2359,7 @@ mod tests {
         let (n, out) = tripped.expect("never tripped");
         // The ranger is read once a second: the first low reading at 0.5 s, the second a second on.
         assert_eq!(n, 15, "tripped {n} steps after the tank went low");
-        assert_eq!(
-            payload(&out, "thryve/u1/actuator/pump/state")["fault"],
-            "dry-run"
-        );
+        assert_eq!(payload(&out, "thryve/u1/actuator/pump/state")["fault"], "dry-run");
         assert_eq!(payload(&out, "thryve/u1/alert/pump_fault")["active"], true);
         let _ = std::fs::remove_dir_all(&r.dir);
     }

@@ -1527,7 +1527,10 @@ mod tests {
 
     #[test]
     fn a_sagging_supply_stops_the_pump_past_the_grace_and_latches_until_acknowledged() {
-        let mut g = PumpGuard::new(PumpLimits { soft_start_ms: 0, ..PumpLimits::default() });
+        let mut g = PumpGuard::new(PumpLimits {
+            soft_start_ms: 0,
+            ..PumpLimits::default()
+        });
         let t0 = Instant::now();
         let ms = |n| t0 + Duration::from_millis(n);
         g.request(&on(None, Some(60)), wet(), t0).unwrap();
@@ -1552,7 +1555,10 @@ mod tests {
 
     #[test]
     fn a_good_read_starts_the_sag_count_again_and_a_missing_one_never_trips_it() {
-        let mut g = PumpGuard::new(PumpLimits { soft_start_ms: 0, ..PumpLimits::default() });
+        let mut g = PumpGuard::new(PumpLimits {
+            soft_start_ms: 0,
+            ..PumpLimits::default()
+        });
         let t0 = Instant::now();
         let ms = |n| t0 + Duration::from_millis(n);
         g.request(&on(None, Some(60)), wet(), t0).unwrap();
@@ -1632,7 +1638,10 @@ mod tests {
 
     #[test]
     fn the_pis_under_voltage_flag_trips_on_two_reads_in_a_row() {
-        let mut g = PumpGuard::new(PumpLimits { soft_start_ms: 0, ..PumpLimits::default() });
+        let mut g = PumpGuard::new(PumpLimits {
+            soft_start_ms: 0,
+            ..PumpLimits::default()
+        });
         let t0 = Instant::now();
         let ms = |n| t0 + Duration::from_millis(n);
         g.request(&on(None, Some(60)), wet(), t0).unwrap();
