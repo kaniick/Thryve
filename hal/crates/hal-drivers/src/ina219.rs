@@ -12,8 +12,33 @@ pub const REG_POWER: u8 = 0x03;
 pub const REG_CURRENT: u8 = 0x04;
 pub const REG_CALIBRATION: u8 = 0x05;
 
-/// 32 V range, ±320 mV shunt (PGA /8), 12-bit, continuous shunt+bus.
-pub const CONFIG_DEFAULT: u16 = 0x399F;
+/// Configuration register fields (datasheet SBOS448, table 6).
+pub const BRNG_32V: u16 = 1 << 13;
+/// PGA /8: ±320 mV across the shunt.
+pub const PG_320MV: u16 = 0b11 << 11;
+/// ADC setting `1xxx`: 12-bit, averaging 2^xxx samples (`1111` = 128, 68.10 ms).
+pub const fn adc_average(log2_samples: u16) -> u16 {
+    0b1000 | (log2_samples & 0b111)
+}
+pub const BADC_SHIFT: u16 = 7;
+pub const SADC_SHIFT: u16 = 3;
+/// Shunt and bus, continuous.
+pub const MODE_CONTINUOUS: u16 = 0b111;
+
+/// 32 V range, ±320 mV shunt (PGA /8), continuous shunt + bus. Below full duty the
+/// pump is PWM-driven at 50 Hz (20 ms period), so a single shunt sample lands at a random
+/// point in the cycle: full pulse current or none. Averaging 128 samples (68.10 ms)
+/// spans ~3.4 periods, so a read is within about ±15 % of the mean. Bus voltage
+/// averages 16 samples (8.51 ms): one conversion cycle is 76.6 ms, under the
+/// 100 ms the pump guard reads at, so every guard read sees a new conversion.
+pub const CONFIG_DEFAULT: u16 =
+    BRNG_32V | PG_320MV | (adc_average(4) << BADC_SHIFT) | (adc_average(7) << SADC_SHIFT) | MODE_CONTINUOUS;
+
+/// Conversion time of an averaging ADC setting `1xxx` (µs): 532 µs a sample,
+/// as datasheet table 5 lists them (1.06 ms for 2 … 68.10 ms for 128).
+pub fn conversion_us(adc: u16) -> f64 {
+    532.0 * f64::from(1u16 << (adc & 0b111))
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Ina219Config {
@@ -179,9 +204,34 @@ mod tests {
         d.probe().unwrap();
         assert_eq!(
             d.bus.writes,
-            vec![(0x40, vec![0x00, 0x39, 0x9F]), (0x40, vec![0x05, 0x10, 0x62])]
+            vec![(0x40, vec![0x00, 0x3E, 0x7F]), (0x40, vec![0x05, 0x10, 0x62])]
         );
         assert_eq!(d.ids().len(), 3);
+    }
+
+    #[test]
+    fn config_averages_the_shunt_over_several_pwm_periods() {
+        // Field by field against the datasheet's configuration register layout.
+        let c = CONFIG_DEFAULT;
+        assert_eq!(c, 0x3E7F);
+        assert_eq!(c >> 15, 0, "RST clear");
+        assert_eq!((c >> 13) & 1, 1, "BRNG: 32 V");
+        assert_eq!((c >> 11) & 0b11, 0b11, "PG: /8, ±320 mV");
+        let (badc, sadc) = ((c >> 7) & 0b1111, (c >> 3) & 0b1111);
+        assert_eq!(sadc, 0b1111, "shunt: 128 samples");
+        assert_eq!(badc, 0b1100, "bus: 16 samples");
+        assert_eq!(c & 0b111, 0b111, "shunt and bus, continuous");
+        // 128 samples take 68.1 ms: 3.4 periods of the 50 Hz pump PWM.
+        let shunt_ms = conversion_us(sadc) / 1000.0;
+        assert!((shunt_ms - 68.1).abs() < 0.01, "{shunt_ms}");
+        assert!(shunt_ms / 20.0 > 3.0);
+        // A whole cycle, shunt then bus, finishes inside the guard's 100 ms read.
+        let cycle_ms = (conversion_us(sadc) + conversion_us(badc)) / 1000.0;
+        assert!((cycle_ms - 76.6).abs() < 0.1 && cycle_ms < 100.0, "{cycle_ms}");
+        assert_eq!(conversion_us(adc_average(0)), 532.0);
+        assert_eq!(conversion_us(adc_average(5)), 17_024.0);
+        // Averaging doesn't touch the calibration: the current LSB is the same.
+        assert_eq!(calibration(&Ina219Config::default()).0, 4194);
     }
 
     #[test]

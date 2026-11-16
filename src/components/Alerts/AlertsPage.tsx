@@ -21,14 +21,14 @@ const LABEL: Record<string, string> = {
   water_low: 'Water low', pump_fault: 'Pump fault', dose_fault: 'Dosing lockout', over_temp: 'Board over temperature', camera_missing: 'Camera not capturing', hal_offline: 'Hardware daemon offline', mirror_failed: 'Off-device copy failed',
   reminder_thinning: 'Thin seedlings', reminder_root_check: 'Check roots', reminder_harvest: 'Harvest window', reminder_nutrients: 'Add nutrients', reminder_sow: 'Start new yCubes', reminder_first_harvest: 'First harvest', reminder_schedule_switch: 'Schedule didn’t switch', light_fault: 'Light fault',
   setup_light_schedule: 'No light schedule', setup_pump_schedule: 'No pump schedule', setup_water_sensor: 'Tank sensor',
-  watering_followed: 'Watering moved to the next stage',
+  watering_followed: 'Watering moved to the next stage', pump_schedule_missed: 'Scheduled watering didn’t run',
   chore_top_off: 'Top off the tank', chore_feed: 'Feed', chore_thin: 'Thin seedlings',
 }
 const ICON: Record<string, LucideIcon> = {
   camera_link_upper: Cable, camera_link_lower: Cable, camera_hub_flaky: Cable,
   water_low: Droplets, pump_fault: Waves, dose_fault: FlaskConical, over_temp: Thermometer, camera_missing: CameraOff, hal_offline: Unplug, mirror_failed: CloudOff, light_fault: Sun,
   reminder_thinning: Scissors, reminder_root_check: Sprout, reminder_harvest: Wheat, reminder_nutrients: FlaskConical, reminder_sow: Sprout,
-  setup_light_schedule: CalendarClock, setup_pump_schedule: CalendarClock, setup_water_sensor: Waves,
+  setup_light_schedule: CalendarClock, setup_pump_schedule: CalendarClock, setup_water_sensor: Waves, pump_schedule_missed: CalendarClock,
   chore_top_off: Droplets, chore_feed: FlaskConical, chore_thin: Scissors,
 }
 const HARDWARE = new Set(['water_low', 'pump_fault', 'dose_fault', 'over_temp', 'camera_missing', 'hal_offline', 'light_fault', 'camera_link_upper', 'camera_link_lower', 'camera_hub_flaky'])
@@ -75,6 +75,7 @@ const VIEW: Record<string, { to: string, label: string }> = {
   setup_light_schedule: { to: '/light', label: 'View light' },
   setup_pump_schedule: { to: '/water', label: 'View water' },
   watering_followed: { to: '/water', label: 'View water' },
+  pump_schedule_missed: { to: '/water', label: 'View water' },
   setup_water_sensor: { to: '/sensors', label: 'View sensors' },
   chore_top_off: { to: '/water', label: 'View water' },
   chore_feed: { to: '/water', label: 'View water' },

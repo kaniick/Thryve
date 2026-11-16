@@ -146,6 +146,25 @@ describe('PodCodeService (#224)', () => {
       [6, 'oo||', null, 'Green Bok Choy'],
     ])
   })
+
+  it('guesses from the owner\'s pair, then the shared table, then the record, and flags a disagreement (#259)', async () => {
+    const { store, svc } = rig(async () => codes({ 1: 'ooh|', 6: 'oo||', 7: 'o|hh', 8: 'hhhh' }))
+    await svc.readCamera('upper')
+    store.pods.update(1, { plant: 'Basil' }, 't')
+    store.pods.update(6, { plant: 'Cilantro' }, 't')
+    store.pods.update(7, { plant: 'Thyme' }, 't')
+    svc.confirm('ooh|', 'Chives', 't')
+    svc.confirm('hhhh', 'Mint', 't')
+    const shared = new Map([['oo||', 'Green Bok Choy'], ['hhhh', 'Basil']])
+    expect(podCodeViews(store, shared).map(v => [v.slot, v.guess, v.from, v.shared, v.disagrees])).toEqual([
+      [1, 'Chives', 'own', null, false],
+      [6, 'Green Bok Choy', 'shared', 'Green Bok Choy', false],
+      [7, 'Thyme', 'record', null, false],
+      [8, 'Mint', 'own', 'Basil', true],
+    ])
+    // The shipped table is the default, and it changes nothing that isn't in it.
+    expect(podCodeViews(store).find(v => v.slot === 7)).toMatchObject({ guess: 'Thyme', from: 'record' })
+  })
 })
 
 // The real binary, when it's built: `cargo build -p podvision` in hal/.

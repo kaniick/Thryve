@@ -2,7 +2,7 @@
 # 4 Hz at 30 % duty; the one real point is 1.87 A wet at 30 % and 0 A idle.
 # Replace with the real trace from the unit once it's recorded; keep the columns.
 # Dry run: started with the intake out of the water, 12 s, as a supervised test would be.
-# Must trip within dry_grace_s + dry_current_s.
+# Must trip within dry_grace_ms + dry_after_ms (plus a read).
 t_s,duty,pump_v,pump_a,pump_w
 0.00,30,12.05,0.000,0.00
 0.25,30,12.05,1.900,22.89

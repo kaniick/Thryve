@@ -24,6 +24,9 @@ pub struct SimWorld {
     /// The pump's intake is out of the water: it pulls air, draws a quarter of
     /// its wet current and moves nothing (`POST /sim/intake` in `hald --sim`).
     pub intake_dry: bool,
+    /// The pump supply sags to this (V) while the pump runs, as a failing
+    /// supply would: `POST /sim/supply` in `hald --sim`. `None`: a healthy 12.1 V.
+    pub supply_sag_v: Option<f64>,
 }
 
 impl Default for SimWorld {
@@ -38,6 +41,7 @@ impl Default for SimWorld {
             dose_level: [0.0; 3],
             cal_points: [0; 3],
             intake_dry: false,
+            supply_sag_v: None,
         }
     }
 }
@@ -106,7 +110,14 @@ impl Sensor for SimSensor {
                 ((20.0 - w.water_distance_cm) / 15.0 * 100.0).clamp(0.0, 100.0),
                 "%",
             ),
-            SensorId::PumpV => (if w.pump_level > 0.0 { 12.1 } else { 12.3 }, "V"),
+            SensorId::PumpV => (
+                match (w.pump_level > 0.0, w.supply_sag_v) {
+                    (true, Some(v)) => v,
+                    (true, None) => 12.1,
+                    (false, _) => 12.3,
+                },
+                "V",
+            ),
             SensorId::PumpA => (pump_w / 12.1, "A"),
             SensorId::PumpW => (pump_w, "W"),
             SensorId::Ph => (6.1, "pH"),
@@ -246,6 +257,19 @@ mod tests {
         assert_eq!(w.lock().unwrap().water_distance_cm, before);
         let dry = amps.read().unwrap().value;
         assert!(dry > 0.0 && dry < wet / 3.0, "wet {wet} A, dry {dry} A");
+    }
+
+    #[test]
+    fn a_sagging_supply_shows_only_while_the_pump_runs() {
+        let w = world();
+        let mut pump = SimActuator::new(ActuatorId::Pump, w.clone());
+        let mut volts = SimSensor::new(SensorId::PumpV, w.clone());
+        w.lock().unwrap().supply_sag_v = Some(10.2);
+        assert_eq!(volts.read().unwrap().value, 12.3);
+        pump.set_level(100.0).unwrap();
+        assert_eq!(volts.read().unwrap().value, 10.2);
+        w.lock().unwrap().supply_sag_v = None;
+        assert_eq!(volts.read().unwrap().value, 12.1);
     }
 
     #[test]

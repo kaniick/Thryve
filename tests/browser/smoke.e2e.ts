@@ -50,6 +50,7 @@ test('pump run is bounded and reported', async ({ page }) => {
   const strip = page.getByTestId('pump-strip')
   await strip.getByRole('radio', { name: '1 min' }).click()
   await strip.getByRole('button', { name: 'Run' }).click()
+  // Settings default duty, 30 %.
   await expect(page.getByText(/watering at 30%/)).toBeVisible()
   await expect(strip).toHaveAttribute('data-state', 'running')
   await expect(strip.getByTestId('run-left')).toHaveText(/^\d+:\d\d$/)

@@ -23,6 +23,7 @@ import { asCycle, fmtCountdown, fmtMinutes, fmtWhen, levelAt, nextRun, runSource
 import { useNow } from '@/src/components/System/useNow'
 import { useTankReserve } from './useTankReserve'
 import { YourSchedules } from './YourSchedules'
+import { DryGuardLine } from './DryGuardLine'
 import { DueChores } from '@/src/components/Care/ChoreItem'
 import { ScheduleTimeline } from '@/src/components/charts/ScheduleTimeline'
 
@@ -116,6 +117,7 @@ export function WaterPage() {
           onRun={() => runNow(Number(dur))}
           onStop={() => stop.mutate()}
         />
+        <DryGuardLine limits={limits} />
         {asked !== null && p?.on && <Started onSeen={() => setAsked(null)} />}
         <div className="flex flex-col gap-3.5 px-[22px] pb-5 pt-4">
           {flat

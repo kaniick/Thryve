@@ -19,7 +19,10 @@ mod identity;
 mod kinds;
 mod mdns;
 mod mqtt;
+mod notify;
 mod overlay;
+mod pi_power;
+mod pump_pin;
 mod pump_trace;
 mod recording;
 mod state;
@@ -85,6 +88,10 @@ struct Cli {
     /// pins already made, and exit. Needs root. Runs when a camera appears.
     #[arg(long)]
     sync_camera_rules: bool,
+    /// Print the pump's GPIO and exit; nothing if low doesn't turn it off. The
+    /// pump-off script hald.service runs after every stop drives it low.
+    #[arg(long)]
+    pump_pin: bool,
 }
 
 const DEFAULT_MQTT_URL: &str = "mqtt://127.0.0.1:1883";
@@ -144,6 +151,12 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let mut cfg = config::Config::load(cli.config.as_deref())?;
+    if cli.pump_pin {
+        if let Some(pin) = pump_pin::pump_off_pin(&cfg) {
+            println!("{pin}");
+        }
+        return Ok(());
+    }
     if cli.usb_recover {
         let boot = usb::Boot {
             sysfs: Path::new("/sys"),
@@ -211,11 +224,32 @@ async fn main() -> anyhow::Result<()> {
 
     if cli.check {
         let (sensors, actuators) = devices::planned_capabilities(&cfg);
+        // The guard the engine will run on this config, and why (before probing: an
+        // ina219 that doesn't answer at boot falls back further, and says so in the log).
+        let guard = hal_core::safety::resolve_dry_guard(
+            cfg.limits.pump_dry_guard,
+            cfg.limits.pump_dry_current_a,
+            sensors.contains(&hal_core::SensorId::PumpA),
+            cfg.limits.water_low_cm.is_some(),
+        );
+        let pump_v = sensors.contains(&hal_core::SensorId::PumpV);
+        let pi_flag = cfg.limits.pump_brownout_pi
+            && pi_power::under_voltage(std::path::Path::new(config::PI_THROTTLED)).is_some();
+        let brownout_v = (cfg.limits.pump_brownout_v > 0.0).then_some(cfg.limits.pump_brownout_v);
+        let brownout =
+            hal_core::safety::describe_brownout(brownout_v, cfg.limits.pump_brownout_ms, pump_v, pi_flag);
+        let warnings: Vec<&str> = guard
+            .warn
+            .then_some(guard.why.as_str())
+            .into_iter()
+            .chain((brownout_v.is_none() || !pump_v).then_some(brownout.as_str()))
+            .collect();
         println!(
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
                 "ok": errors.is_empty(),
                 "errors": errors,
+                "warnings": warnings,
                 "unit_id": unit_id,
                 "config": cli.config,
                 "mqtt_url": cfg.mqtt_url.clone().unwrap_or_else(|| DEFAULT_MQTT_URL.into()),
@@ -223,10 +257,17 @@ async fn main() -> anyhow::Result<()> {
                 "sensors": sensors,
                 "actuators": actuators,
                 "cameras": cfg.camera.iter().map(|c| c.name.clone()).collect::<Vec<_>>(),
-                "limits": { "pump_max_run_s": cfg.limits.pump_max_run_s, "pump_max_duty": cfg.limits.pump_max_duty, "pump_default_duty": cfg.limits.pump_default_duty,
+                "limits": { "pump_max_run_s": cfg.limits.pump_max_run_s, "pump_max_duty": cfg.limits.pump_max_duty, "pump_default_duty": cfg.limits.pump_default_duty, "pump_soft_start_ms": cfg.limits.pump_soft_start_ms,
                             "water_low_cm": cfg.limits.water_low_cm, "over_temp_c": cfg.limits.over_temp_c,
-                            "pump_dry_current_a": cfg.limits.pump_dry_current_a, "pump_dry_after_s": cfg.limits.pump_dry_after_s,
-                            "pump_dry_grace_s": cfg.limits.pump_dry_grace_s, "pump_soft_start_ms": cfg.limits.pump_soft_start_ms },
+                            "pump_dry_current_a": cfg.limits.pump_dry_current_a, "pump_dry_after_ms": cfg.limits.dry_after_ms(),
+                            "pump_dry_grace_ms": cfg.limits.dry_grace_ms(),
+                            "pump_dry_grace_min_ms": cfg.limits.pump_dry_grace_min_ms,
+                            "pump_dry_grace_max_ms": cfg.limits.pump_dry_grace_max_ms,
+                            "pump_dry_guard": guard.mode, "pump_dry_guard_asked": cfg.limits.pump_dry_guard,
+                            "pump_dry_guard_why": guard.why,
+                            "pump_brownout_v": brownout_v, "pump_brownout_ms": cfg.limits.pump_brownout_ms,
+                            "pump_brownout_pi": cfg.limits.pump_brownout_pi, "pump_brownout_pi_readable": pi_flag,
+                            "pump_brownout_guard": brownout },
                 "dosing_enabled": cfg.dosing.enabled,
             }))?
         );
@@ -277,6 +318,8 @@ async fn main() -> anyhow::Result<()> {
             pump_max_run_s: cfg.limits.pump_max_run_s,
             pump_max_duty: cfg.limits.pump_max_duty,
             water_low_cm: cfg.limits.water_low_cm,
+            // The engine fills in the dry-run guard it runs and its grace.
+            ..Limits::default()
         },
     };
     info!(unit = %unit_id, model = %system.model, sensors = ?system.caps.sensors, actuators = ?system.caps.actuators, "hald starting");
@@ -291,6 +334,9 @@ async fn main() -> anyhow::Result<()> {
             dosing: (&cfg.dosing).into(),
             button_pump_run_s: cfg.button.pump_run_s,
             ha_prefix: cfg.ha.discovery.then(|| cfg.ha.prefix.clone()),
+            dry_grace_bounds: (cfg.limits.pump_dry_grace_min_ms, cfg.limits.pump_dry_grace_max_ms),
+            pi_throttled: (cfg.limits.pump_brownout_pi && !cli.sim)
+                .then(|| std::path::PathBuf::from(config::PI_THROTTLED)),
         },
         built.registry,
         built.over_temp,
@@ -420,6 +466,7 @@ async fn main() -> anyhow::Result<()> {
         world: built.world,
         stop: built.stop,
         trace,
+        notify: notify::Notifier::from_env(),
     };
     let engine_task = tokio::task::spawn_blocking(move || run_engine(engine, loop_cfg, inbound_rx, out_tx));
     engine_task.await?;
@@ -437,6 +484,7 @@ struct LoopConfig {
     world: Option<hal_sim::Shared>,
     stop: Arc<AtomicBool>,
     trace: Option<pump_trace::PumpTrace<std::fs::File>>,
+    notify: notify::Notifier,
 }
 
 /// `--pump-trace`: reads the pump monitor when a read is due.
@@ -448,8 +496,10 @@ fn trace_pump(trace: &mut Option<pump_trace::PumpTrace<std::fs::File>>, engine: 
     }
 }
 
-/// The engine loop: drain commands until the next tick, tick, repeat.
-/// In `--sim`, virtual time advances one telemetry interval per tick.
+/// The engine loop: drain commands until the next tick, tick, repeat. While the
+/// pump runs it also wakes for the pump guard's fast reads (`Engine::pump_watch`).
+/// In `--sim`, virtual time advances one telemetry interval per tick, in the
+/// guard's 100 ms steps while the pump runs.
 fn run_engine(mut engine: Engine, mut cfg: LoopConfig, rx: Receiver<Inbound>, tx: UnboundedSender<Outbound>) {
     let send = |tx: &UnboundedSender<Outbound>, outs: Vec<Outbound>| {
         for o in outs {
@@ -465,19 +515,22 @@ fn run_engine(mut engine: Engine, mut cfg: LoopConfig, rx: Receiver<Inbound>, tx
     send(&tx, engine.boot(now));
     // After boot, which restores the light on this thread; from here on only the fader writes.
     engine.start_light_fades();
+    cfg.notify.ready();
     let mut ticks = 0u64;
     loop {
         let deadline = Instant::now() + real_tick;
         loop {
-            // A pump trace wakes the loop between ticks for its reads.
-            // So does a pump start's soft-start ramp, for its steps.
-            let wake = cfg
-                .trace
-                .as_ref()
-                .and_then(pump_trace::PumpTrace::due)
-                .into_iter()
-                .chain(engine.pump_ramp_due(now))
-                .fold(deadline, Instant::min);
+            // A pump trace, the pump guard's fast reads, and a soft-start ramp wake the loop between ticks.
+            let watch = (!cfg.sim).then(|| engine.pump_watch_due(now)).flatten();
+            let ramp = engine.pump_ramp_due(now);
+            let wake = [
+                cfg.trace.as_ref().and_then(pump_trace::PumpTrace::due),
+                watch,
+                ramp,
+            ]
+            .into_iter()
+            .flatten()
+            .fold(deadline, Instant::min);
             match rx.recv_timeout(wake.saturating_duration_since(Instant::now())) {
                 Ok(Inbound::Shutdown) | Err(RecvTimeoutError::Disconnected) => {
                     send(&tx, engine.handle(Inbound::Shutdown, now));
@@ -485,8 +538,7 @@ fn run_engine(mut engine: Engine, mut cfg: LoopConfig, rx: Receiver<Inbound>, tx
                     return;
                 }
                 Ok(msg) => {
-                    // On the unit, a command is judged at the time it lands, so a start's
-                    // ramp and deadline begin then, not at the last tick.
+                    // A pump start's spin-up grace counts from now, not the last tick.
                     if !cfg.sim {
                         now = Now::real();
                     }
@@ -495,22 +547,43 @@ fn run_engine(mut engine: Engine, mut cfg: LoopConfig, rx: Receiver<Inbound>, tx
                 Err(RecvTimeoutError::Timeout) if Instant::now() < deadline => {}
                 Err(RecvTimeoutError::Timeout) => break,
             }
-            if !cfg.sim {
+            if watch.is_some_and(|t| Instant::now() >= t) {
                 now = Now::real();
+                send(&tx, engine.pump_watch(now));
             }
-            engine.step_pump_ramp(now);
+            if ramp.is_some_and(|t| Instant::now() >= t) {
+                if !cfg.sim {
+                    now = Now::real();
+                }
+                engine.step_pump_ramp(now);
+            }
             trace_pump(&mut cfg.trace, &mut engine, now);
         }
         if cfg.sim {
             let dt = cfg.interval.mul_f64(cfg.time_scale.max(0.0));
-            if let Some(w) = &cfg.world {
-                w.lock().unwrap_or_else(|e| e.into_inner()).step(dt.as_secs_f64());
+            // While the guard watches the pump, virtual time goes in its steps.
+            let steps = match engine.pump_watch_due(now) {
+                Some(_) => (dt.as_millis() / engine::PUMP_SAMPLE_EVERY.as_millis()).clamp(1, 200) as u32,
+                None => 1,
+            };
+            for i in 0..steps {
+                if let Some(w) = &cfg.world {
+                    w.lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .step((dt / steps).as_secs_f64());
+                }
+                now.advance(dt / steps);
+                if i + 1 < steps {
+                    send(&tx, engine.pump_watch(now));
+                    engine.step_pump_ramp(now);
+                }
             }
-            now.advance(dt);
         } else {
             now = Now::real();
         }
         send(&tx, engine.tick(now));
+        engine.step_pump_ramp(now);
+        cfg.notify.watchdog();
         trace_pump(&mut cfg.trace, &mut engine, now);
         ticks += 1;
         if cfg.ticks.is_some_and(|n| ticks >= n) {
@@ -553,5 +626,82 @@ async fn wait_for_signal() {
     #[cfg(not(unix))]
     {
         let _ = tokio::signal::ctrl_c().await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::notify::tests::FakeSystemd;
+    use hal_core::registry::Registry;
+    use hal_core::{DoseLimits, PumpLimits};
+
+    fn engine() -> Engine {
+        let system = SystemInfo {
+            contract: CONTRACT_VERSION,
+            unit_id: "u1".into(),
+            model: "sim".into(),
+            board: None,
+            hal_version: "0.1.0".into(),
+            caps: Caps {
+                sensors: vec![],
+                actuators: vec![],
+                cameras: vec![],
+            },
+            limits: Limits {
+                pump_max_run_s: 900,
+                pump_max_duty: 100.0,
+                water_low_cm: None,
+                ..Limits::default()
+            },
+        };
+        let cfg = EngineConfig {
+            telemetry_interval: Duration::from_secs(10),
+            light_fade: Duration::ZERO,
+            pump: PumpLimits::default(),
+            dosing: DoseLimits::default(),
+            button_pump_run_s: 300,
+            ha_prefix: None,
+            dry_grace_bounds: (300, 5000),
+            pi_throttled: None,
+        };
+        Engine::new(system, cfg, Registry::default(), None, None, Arc::default())
+    }
+
+    fn run(systemd: &FakeSystemd, ticks: u64, rx: Receiver<Inbound>) {
+        let (tx, _out) = tokio::sync::mpsc::unbounded_channel();
+        let cfg = LoopConfig {
+            sim: true,
+            time_scale: 1.0,
+            ticks: Some(ticks),
+            interval: Duration::from_secs(10),
+            world: None,
+            stop: Arc::default(),
+            trace: None,
+            notify: systemd.notifier(),
+        };
+        run_engine(engine(), cfg, rx, tx);
+    }
+
+    /// The watchdog's pings come from the loop's own tick, one each, after READY=1:
+    /// a loop that stops ticking stops pinging.
+    #[test]
+    fn the_engine_loop_pings_systemd_once_a_tick() {
+        let systemd = FakeSystemd::new();
+        let (_keep, rx) = std::sync::mpsc::channel();
+        run(&systemd, 3, rx);
+        assert_eq!(
+            systemd.received(),
+            ["READY=1", "WATCHDOG=1", "WATCHDOG=1", "WATCHDOG=1"]
+        );
+    }
+
+    #[test]
+    fn a_loop_that_never_ticks_never_pings() {
+        let systemd = FakeSystemd::new();
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(Inbound::Shutdown).unwrap();
+        run(&systemd, 3, rx);
+        assert_eq!(systemd.received(), ["READY=1"]);
     }
 }

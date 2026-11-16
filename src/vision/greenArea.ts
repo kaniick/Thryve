@@ -142,15 +142,20 @@ export interface GrowthPoint { ts: string, slot: number, green: number }
 
 /**
  * Growth verdict from a per-slot series (oldest → newest): compares the mean
- * of the last `window` points against the previous window.
+ * of the last `window` points against the previous window. A seedling can't
+ * gain a full point of cover in one window, so cover that at least doubles with
+ * the newest 3 points all at 0.3 % or more also counts as growing.
  */
 export function growthTrend(series: GrowthPoint[], window = 6): { slope: number, verdict: 'growing' | 'stalled' | 'declining' | 'unknown' } {
   if (series.length < window * 2) return { slope: 0, verdict: 'unknown' }
   const recent = series.slice(-window)
   const prior = series.slice(-window * 2, -window)
   const mean = (p: GrowthPoint[]) => p.reduce((s, x) => s + x.green, 0) / p.length
-  const slope = mean(recent) - mean(prior)
-  if (slope > 0.01) return { slope, verdict: 'growing' }
+  const recentMean = mean(recent)
+  const priorMean = mean(prior)
+  const slope = recentMean - priorMean
+  const sprouting = recent.slice(-3).every(p => p.green >= 0.003) && recentMean >= 2 * priorMean
+  if (slope > 0.01 || sprouting) return { slope, verdict: 'growing' }
   if (slope < -0.02) return { slope, verdict: 'declining' }
   return { slope, verdict: 'stalled' }
 }

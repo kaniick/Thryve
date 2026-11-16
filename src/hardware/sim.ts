@@ -25,7 +25,8 @@ export interface SimHalOptions {
 
 // As hald ships: a cap of 100, so an owner may choose full power; a start that names no level runs at 30.
 const SIM_DEFAULT_DUTY = 30
-const DEFAULT_LIMITS: SystemInfo['limits'] = { pumpMaxRunS: 900, pumpMaxDuty: 100, waterLowCm: 16 }
+/** A stock hal.toml: no current cutoff yet, so hald guards on the tank level alone. */
+const DEFAULT_LIMITS: SystemInfo['limits'] = { pumpMaxRunS: 900, pumpMaxDuty: 100, waterLowCm: 16, pumpDryGuard: 'level', pumpDryGraceMs: 1000, pumpDryGraceMinMs: 300, pumpDryGraceMaxMs: 5000, pumpBrownoutV: 10.8, pumpBrownoutMs: 300, pumpBrownoutPi: false }
 
 /** What hald can add at runtime: the same descriptors hald publishes (the fixture is checked against hald's `SensorKind`s). */
 const ADDABLE = DeviceKindInfo.array().parse(kindsFixture)
@@ -185,6 +186,15 @@ export class SimHal implements HalClient {
   private publishCaps(): void {
     this.emit({ type: 'system', system: { ...this.system, caps: { ...this.system.caps, sensors: [...this.system.caps.sensors] } } })
     this.emit({ type: 'devices', devices: this.inventory() })
+  }
+
+  /** Mirrors hald: held to the bounds, never refused, and reported in `system`. */
+  async setPumpDryGrace(ms: number): Promise<SystemInfo['limits']> {
+    const min = this.limits.pumpDryGraceMinMs ?? 0
+    const max = Math.max(min, this.limits.pumpDryGraceMaxMs ?? Number.POSITIVE_INFINITY)
+    this.limits.pumpDryGraceMs = clamp(Math.round(ms), min, max)
+    this.emit({ type: 'system', system: this.system })
+    return { ...this.limits }
   }
 
   async acknowledgeAlert(kind: AlertKind): Promise<void> {

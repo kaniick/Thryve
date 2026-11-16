@@ -9,7 +9,7 @@ import type { SensorId } from '../hardware/contract'
 import type { AutomationRule } from '../autopilot/types'
 import * as t from '../db/schema'
 import { downsample } from './memory'
-import type { AlertRow, Automation, AutomationRun, AnalysisPoint, AnalysisRow, AnalyzerStats, BackupRecord, Capture, CustomPlant, DeviceSettings, FlashSample, GrowCycle, GrowProtocolState, GrowStage, LightSpec, PlanRow, PlantProfile, Pod, PodCodePair, PodCodeRead, PodLabel, PodLabelCursor, PodLabelValue, PumpSpec, SavedCycle, SavedSchedule, Schedule, ScheduleRun, Store, TankAction, TankActionKind, TelemetryPoint } from './types'
+import type { AlertRow, Automation, AutomationRun, AnalysisPoint, AnalysisRow, AnalyzerStats, BackupRecord, Capture, CustomPlant, DeviceSettings, FlashSample, GrowCycle, GrowProtocolState, GrowStage, LightSpec, PlanRow, PlantProfile, Pod, PodCodePair, PodCodeRead, PodLabel, PodLabelCursor, PodLabelInput, PodLabelSource, PodLabelValue, PumpSpec, SavedCycle, SavedSchedule, Schedule, ScheduleRun, Store, SuggestionDismissal, TankAction, TankActionKind, TelemetryPoint } from './types'
 import { DEFAULT_SETTINGS, POD_LABELS, profileKey } from './types'
 
 export interface SqliteStoreOptions {
@@ -99,6 +99,9 @@ export class SqliteStore implements Store {
     recordRun: (run: ScheduleRun): boolean => {
       const r = this.db.insert(t.scheduleRuns).values(run).onConflictDoNothing().run()
       return r.changes > 0
+    },
+    setRunResult: (key: string, result: string): void => {
+      this.db.update(t.scheduleRuns).set({ result }).where(eq(t.scheduleRuns.key, key)).run()
     },
     recentRuns: (limit = 50): ScheduleRun[] =>
       this.db.select({ scheduleId: t.scheduleRuns.scheduleId, key: t.scheduleRuns.key, firedAt: t.scheduleRuns.firedAt, result: t.scheduleRuns.result })
@@ -371,18 +374,25 @@ export class SqliteStore implements Store {
   }
 
   podLabels = {
-    set: (l: PodLabel): PodLabel => rowToLabel(this.db.insert(t.podLabels).values(l).onConflictDoUpdate({
-      target: [t.podLabels.captureId, t.podLabels.slot],
-      // The right-hand sides read the row as it was, so a kept snapshot keeps its date too.
-      set: {
-        label: l.label,
-        labelledAt: l.labelledAt,
-        ts: l.ts,
-        camera: l.camera,
-        plant: sql`coalesce(${t.podLabels.plant}, excluded.plant)`,
-        plantedAt: sql`CASE WHEN ${t.podLabels.plant} IS NULL THEN excluded.plantedAt ELSE ${t.podLabels.plantedAt} END`,
-      },
-    }).returning().get() as typeof t.podLabels.$inferSelect),
+    set: (input: PodLabelInput): PodLabel => {
+      const l: PodLabel = { source: 'picked', suggested: null, suggestedBy: null, suggestedConfidence: null, ...input }
+      return rowToLabel(this.db.insert(t.podLabels).values(l).onConflictDoUpdate({
+        target: [t.podLabels.captureId, t.podLabels.slot],
+        // The right-hand sides read the row as it was, so a kept snapshot keeps its date too.
+        set: {
+          label: l.label,
+          labelledAt: l.labelledAt,
+          ts: l.ts,
+          camera: l.camera,
+          source: l.source,
+          suggested: l.suggested,
+          suggestedBy: l.suggestedBy,
+          suggestedConfidence: l.suggestedConfidence,
+          plant: sql`coalesce(${t.podLabels.plant}, excluded.plant)`,
+          plantedAt: sql`CASE WHEN ${t.podLabels.plant} IS NULL THEN excluded.plantedAt ELSE ${t.podLabels.plantedAt} END`,
+        },
+      }).returning().get() as typeof t.podLabels.$inferSelect)
+    },
     remove: (captureId: string, slot: number): boolean =>
       this.db.delete(t.podLabels).where(and(eq(t.podLabels.captureId, captureId), eq(t.podLabels.slot, slot))).run().changes > 0,
     forCapture: (captureId: string): PodLabel[] =>
@@ -403,9 +413,32 @@ export class SqliteStore implements Store {
       for (const r of this.db.select({ label: t.podLabels.label, n: sql<number>`count(*)` }).from(t.podLabels).groupBy(t.podLabels.label).all()) out[r.label] = r.n
       return out
     },
+    bySource: (): Array<{ source: PodLabelSource, suggestedBy: string | null, n: number }> =>
+      this.db.select({ source: t.podLabels.source, suggestedBy: t.podLabels.suggestedBy, n: sql<number>`count(*)` }).from(t.podLabels)
+        .groupBy(t.podLabels.source, t.podLabels.suggestedBy).orderBy(asc(t.podLabels.source), asc(t.podLabels.suggestedBy)).all(),
+    lastBefore: (ts: string): PodLabel[] => {
+      const newest = this.db.select({ slot: t.podLabels.slot, ts: sql<string>`max(${t.podLabels.ts})`.as('newest') }).from(t.podLabels)
+        .where(lt(t.podLabels.ts, ts)).groupBy(t.podLabels.slot).as('newest')
+      return this.db.select({ l: t.podLabels }).from(t.podLabels).innerJoin(newest, and(eq(t.podLabels.slot, newest.slot), eq(t.podLabels.ts, newest.ts)))
+        .orderBy(asc(t.podLabels.slot), asc(t.podLabels.captureId)).all().map(r => rowToLabel(r.l))
+        .filter((l, i, all) => all[i - 1]?.slot !== l.slot)
+    },
     captures: (limit = 50): Array<{ captureId: string, ts: string, camera: 'upper' | 'lower', pods: number }> =>
       this.db.select({ captureId: t.podLabels.captureId, ts: t.podLabels.ts, camera: t.podLabels.camera, pods: sql<number>`count(*)` }).from(t.podLabels)
         .groupBy(t.podLabels.captureId).orderBy(desc(t.podLabels.ts), asc(t.podLabels.captureId)).limit(limit).all(),
+  }
+
+  dismissals = {
+    dismiss: (d: SuggestionDismissal): SuggestionDismissal =>
+      this.db.insert(t.suggestionDismissals).values(d)
+        .onConflictDoUpdate({ target: [t.suggestionDismissals.captureId, t.suggestionDismissals.slot], set: { ts: d.ts } }).returning().get(),
+    restore: (captureId: string, slot: number): boolean =>
+      this.db.delete(t.suggestionDismissals).where(and(eq(t.suggestionDismissals.captureId, captureId), eq(t.suggestionDismissals.slot, slot))).run().changes > 0,
+    forCapture: (captureId: string): SuggestionDismissal[] =>
+      this.db.select().from(t.suggestionDismissals).where(eq(t.suggestionDismissals.captureId, captureId)).orderBy(asc(t.suggestionDismissals.slot)).all(),
+    range: (fromTs: string, toTs: string): SuggestionDismissal[] =>
+      this.db.select().from(t.suggestionDismissals).where(and(gte(t.suggestionDismissals.ts, fromTs), lte(t.suggestionDismissals.ts, toTs)))
+        .orderBy(asc(t.suggestionDismissals.ts), asc(t.suggestionDismissals.captureId), asc(t.suggestionDismissals.slot)).all(),
   }
 
   podCodes = {
@@ -525,7 +558,10 @@ function rowToAnalysis(r: typeof t.analysisResults.$inferSelect): AnalysisRow {
 }
 
 function rowToLabel(r: typeof t.podLabels.$inferSelect): PodLabel {
-  return { captureId: r.captureId, ts: r.ts, camera: r.camera, slot: r.slot, label: r.label, labelledAt: r.labelledAt, plant: r.plant, plantedAt: r.plantedAt }
+  return {
+    captureId: r.captureId, ts: r.ts, camera: r.camera, slot: r.slot, label: r.label, labelledAt: r.labelledAt, plant: r.plant, plantedAt: r.plantedAt,
+    source: r.source, suggested: r.suggested, suggestedBy: r.suggestedBy, suggestedConfidence: r.suggestedConfidence,
+  }
 }
 
 function automationColumns(r: Partial<Omit<AutomationRule, 'id'>>) {

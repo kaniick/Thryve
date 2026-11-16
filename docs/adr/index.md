@@ -10,7 +10,7 @@ Format follows [sleepypod/core](https://sleepypod.github.io/) (`# ADR NNNN: Titl
 - [0006 Rust for the hardware daemon](0006-rust-for-the-hal.md)
 - [0007 HAL contract v1](0007-hal-contract.md)
 - 0008 Target controller per topology — *after Phase 1*
-- [0009 Pump safety guard and latched faults](0009-pump-safety-guard.md)
+- [0009 Pump safety guard and latched faults](0009-pump-safety-guard.md) — amended 2026-11-14 (full duty by default, brown-out and current guards, guard settings in hal.toml only)
 - [0010 Drizzle ORM + SQLite behind a Store interface](0010-drizzle-sqlite-store.md)
 - [0011 MCP tool design and MHS alignment](0011-mcp-and-mhs.md)
 - [0012 Deployment and trust model](0012-deployment-and-trust.md)
@@ -20,7 +20,7 @@ Format follows [sleepypod/core](https://sleepypod.github.io/) (`# ADR NNNN: Titl
 - [0016 Shared design language with sleepypod](0016-shared-design-language.md)
 - [0017 iOS client — reuse sleepypod's transport, not its app](0017-ios-client.md) — proposed
 - [0018 Runtime sensor inventory](0018-runtime-sensor-inventory.md)
-- [0019 Pluggable capture analysis](0019-pluggable-capture-analysis.md)
+- [0019 Pluggable capture analysis](0019-pluggable-capture-analysis.md) — amended 2026-11-14: suggested labels and label provenance
 - [0020 Autopilot — reactive automations](0020-autopilot-reactive-automations.md)
 - [0021 SD card wear and fast recovery](0021-sd-card-wear-and-recovery.md) — phases 1–3 accepted, phase 4 (SD image) built as amended
 - [0022 Harvest outlook from the camera, with optional plant profiles](0022-harvest-outlook.md)
@@ -32,3 +32,4 @@ Format follows [sleepypod/core](https://sleepypod.github.io/) (`# ADR NNNN: Titl
 - [0028 Camera capture format for image analysis](0028-camera-capture-format.md) — proposed
 - [0029 Care engine and agent boundary](0029-care-engine-and-agent-boundary.md) — proposed
 - [0030 Grow protocols](0030-grow-protocols.md) — proposed
+- [0031 Shared pod codes](0031-shared-pod-codes.md)
