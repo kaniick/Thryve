@@ -25,6 +25,11 @@ pub trait Sensor: Send {
     /// (Re)initialise. Called lazily and again after a read failure.
     fn probe(&mut self) -> Result<(), DeviceError>;
     fn read(&mut self) -> Result<Reading, DeviceError>;
+    /// A read that skips any cache in front of the device, for the pump guard's
+    /// fast reads. Most sensors have no cache, so it's [`Sensor::read`].
+    fn read_fresh(&mut self) -> Result<Reading, DeviceError> {
+        self.read()
+    }
     /// Store a calibration point; returns how many points the probe now holds,
     /// if it reports that. Only probes that calibrate in-circuit (EZO) override this.
     fn calibrate(&mut self, _cmd: &CalibrationCommand) -> Result<Option<u8>, DeviceError> {
@@ -139,6 +144,13 @@ impl Sensor for Facet {
             .find(|m| m.id == id)
             .ok_or_else(|| DeviceError::Other(format!("{id:?} missing from measurement")))?;
         Ok(Reading::new(m.value, m.unit))
+    }
+    /// A new transaction now; the other facets then share it as usual.
+    fn read_fresh(&mut self) -> Result<Reading, DeviceError> {
+        if let Ok(mut c) = self.source.lock() {
+            c.at = None;
+        }
+        self.read()
     }
 }
 
@@ -284,6 +296,10 @@ mod tests {
         // Probe invalidates the cache.
         facets[0].probe().unwrap();
         assert_eq!(facets[0].read().unwrap().value, 14.0);
+        // A fresh read skips it, and the next cached read shares that transaction.
+        assert_eq!(facets[1].read_fresh().unwrap().value, 0.5);
+        assert_eq!(facets[0].read().unwrap().value, 15.0);
+        assert_eq!(facets[0].read_fresh().unwrap().value, 16.0);
     }
 
     #[test]

@@ -11,6 +11,7 @@ import { appRouter } from '../routers/app'
 import { createCallerFactory } from '../trpc'
 import { DEFAULT_REGIONS } from '../../vision/regions'
 import type { CodeReader } from '../../vision/podCodes'
+import { unitFingerprint } from '../../vision/shareCodes'
 
 async function scored(n = 3) {
   const sink = new MemorySink()
@@ -58,6 +59,16 @@ describe('vision router (ADR-0019)', () => {
     expect((await c.vision.podTrends({ analyzer: 'green-threshold' }))[0]?.samples).toBe(3)
   })
 
+  it('gives every scored pod\'s series from the primary analyser, newest last, up to the limit', async () => {
+    const { c } = await scored()
+    const all = await c.vision.allPodSeries()
+    expect(all.map(s => s.slot)).toEqual(Array.from({ length: 15 }, (_, i) => i + 1))
+    expect(all[0]?.points.map(p => p.ts)).toEqual(['2026-01-01T00:00:00Z', '2026-01-02T00:00:00Z', '2026-01-03T00:00:00Z'])
+    expect((await c.vision.allPodSeries({ limit: 2 }))[0]?.points.map(p => p.ts)).toEqual(['2026-01-02T00:00:00Z', '2026-01-03T00:00:00Z'])
+    const { c: none } = await scored(0)
+    expect(await none.vision.allPodSeries()).toEqual([])
+  })
+
   it('re-runs an analyser in the background and refuses remote ones', async () => {
     const { ctx, c } = await scored()
     expect(await c.vision.rerun({ analyzer: 'exg-otsu', limit: 10 })).toEqual({ captures: 3 })
@@ -94,6 +105,8 @@ describe('vision router (ADR-0019)', () => {
     const after = JSON.parse((labelled.content as Array<{ text: string }>)[0]?.text ?? '{}') as { labels: { counts: Record<string, number>, captures: unknown[] } }
     expect(after.labels.counts.sprouted).toBe(1)
     expect(after.labels.captures).toEqual([{ captureId: 'upper-1', ts: '2026-01-02T00:00:00Z', camera: 'upper', pods: 1 }])
+    // Broken down by how each was saved (#261).
+    expect(after.labels).toMatchObject({ sources: { picked: 1, accepted: 0, corrected: 0 }, suggesters: [] })
     await client.close()
   })
 
@@ -152,12 +165,15 @@ describe('vision router (ADR-0019)', () => {
     await c.vision.setLabel({ captureId: 'upper-0', slot: 3, label: 'growing' })
     expect(seen.filter(p => p === 'labels')).toHaveLength(4)
     expect(await c.vision.labels({ captureId: 'upper-0' })).toEqual([
-      { captureId: 'upper-0', ts: '2026-01-01T00:00:00Z', camera: 'upper', slot: 1, label: 'empty', labelledAt: now.toISOString(), plant: null, plantedAt: null },
-      { captureId: 'upper-0', ts: '2026-01-01T00:00:00Z', camera: 'upper', slot: 3, label: 'growing', labelledAt: now.toISOString(), plant: null, plantedAt: null },
+      { captureId: 'upper-0', ts: '2026-01-01T00:00:00Z', camera: 'upper', slot: 1, label: 'empty', labelledAt: now.toISOString(), plant: null, plantedAt: null, source: 'picked', suggested: null, suggestedBy: null, suggestedConfidence: null },
+      { captureId: 'upper-0', ts: '2026-01-01T00:00:00Z', camera: 'upper', slot: 3, label: 'growing', labelledAt: now.toISOString(), plant: null, plantedAt: null, source: 'picked', suggested: null, suggestedBy: null, suggestedConfidence: null },
     ])
     expect(await c.vision.labelStats()).toEqual({
       counts: { empty: 2, seeded: 0, sprouted: 0, growing: 1, ready: 0, unhealthy: 0 },
       pods: 3,
+      // Pod 1 on the second photo matched the label it carried from the first.
+      sources: { picked: 2, accepted: 1, corrected: 0 },
+      suggesters: [{ by: 'carry', accepted: 1, corrected: 0, right: 1 }],
       captures: [{ captureId: 'upper-1', ts: '2026-01-02T00:00:00Z', camera: 'upper', pods: 1 }, { captureId: 'upper-0', ts: '2026-01-01T00:00:00Z', camera: 'upper', pods: 2 }],
     })
     expect((await c.vision.labelStats({ limit: 1 })).captures).toHaveLength(1)
@@ -166,6 +182,127 @@ describe('vision router (ADR-0019)', () => {
     expect((await c.vision.labels({ captureId: 'upper-0' })).map(l => l.slot)).toEqual([3])
     await expect(c.vision.setLabel({ captureId: 'nope', slot: 1, label: 'ready' })).rejects.toThrow(/no capture nope/)
     await expect(c.vision.setLabel({ captureId: 'upper-0', slot: 16, label: 'ready' })).rejects.toThrow(/pod 16 is not on the upper camera/)
+  })
+
+  it('suggests each pod\'s label from its last one or a confident pod-state, and records how each was saved (#261)', async () => {
+    const { c, ctx } = await scored(3)
+    const seen: string[] = []
+    ctx.events.subscribe(e => e.kind === 'mutation' && seen.push(e.path))
+    const T1 = '2026-01-02T00:00:00Z'
+    const state = (slot: number, version: number, detail: Record<string, unknown> | null, metric = 'pod_state') =>
+      ctx.store.analyses.add([{ captureId: 'upper-1', ts: T1, camera: 'upper', analyzer: 'pod-state', version, source: 'device', slot, metric, value: 0, detail, artifact: null }])
+    const sow = (slot: number, plant: string, plantedAt: string, status: 'seeded' | 'growing') => ctx.store.pods.update(slot, { plant, plantedAt, status }, '2025-12-20T00:00:00Z')
+    expect(await c.vision.suggestions({ captureId: 'upper-1' })).toEqual([])
+
+    await c.vision.setLabel({ captureId: 'upper-0', slot: 1, label: 'sprouted' })
+    await c.vision.setLabel({ captureId: 'upper-0', slot: 2, label: 'growing' })
+    // Only the newest version that scored the photo speaks.
+    state(3, 1, { state: 'sprouted', confidence: 0.95 })
+    state(2, 2, { state: 'ready', confidence: 0.86 })
+    state(3, 2, { state: 'growing', confidence: 0.9 })
+    state(4, 2, { state: 'growing', confidence: 0.6 })
+    state(5, 2, null)
+    state(7, 2, { state: 'ready' })
+    state(5, 2, { state: 'ready', confidence: 0.99 }, 'pod_state_confidence')
+    sow(6, 'Kale', '2026-01-01', 'seeded')
+    state(6, 2, { state: 'empty', confidence: 0.9 })
+    expect(await c.vision.suggestions({ captureId: 'upper-1' })).toEqual([
+      { slot: 1, label: 'sprouted', by: 'carry', confidence: null, from: '2026-01-01T00:00:00Z' },
+      { slot: 2, label: 'ready', by: 'pod-state@2', confidence: 0.86, from: null },
+      { slot: 3, label: 'growing', by: 'pod-state@2', confidence: 0.9, from: null },
+      { slot: 6, label: 'seeded', by: 'record', confidence: null, from: null },
+    ])
+    // Looking stores nothing.
+    expect(await c.vision.labels({ captureId: 'upper-1' })).toEqual([])
+
+    await c.vision.setLabel({ captureId: 'upper-1', slot: 1, label: 'sprouted' })
+    await c.vision.setLabel({ captureId: 'upper-1', slot: 2, label: 'growing' })
+    await c.vision.setLabel({ captureId: 'upper-1', slot: 4, label: 'growing' })
+    const how = async () => (await c.vision.labels({ captureId: 'upper-1' })).map(l => [l.slot, l.label, l.source, l.suggested, l.suggestedBy, l.suggestedConfidence])
+    expect(await how()).toEqual([
+      [1, 'sprouted', 'accepted', 'sprouted', 'carry', null],
+      [2, 'growing', 'corrected', 'ready', 'pod-state@2', 0.86],
+      [4, 'growing', 'picked', null, null, null],
+    ])
+
+    // Accept the rest saves only the unlabelled pods that have a suggestion; the others stay untouched.
+    seen.length = 0
+    expect(await c.vision.acceptSuggestions({ captureId: 'upper-1' })).toEqual({ captureId: 'upper-1', slots: [3, 6] })
+    expect(seen).toEqual(['labels'])
+    expect(await how()).toEqual([
+      [1, 'sprouted', 'accepted', 'sprouted', 'carry', null],
+      [2, 'growing', 'corrected', 'ready', 'pod-state@2', 0.86],
+      [3, 'growing', 'accepted', 'growing', 'pod-state@2', 0.9],
+      [4, 'growing', 'picked', null, null, null],
+      [6, 'seeded', 'accepted', 'seeded', 'record', null],
+    ])
+    expect((await c.vision.labels({ captureId: 'upper-1' })).find(l => l.slot === 6)).toMatchObject({ plant: 'Kale', plantedAt: '2026-01-01' })
+    expect(await c.vision.acceptSuggestions({ captureId: 'upper-1' })).toEqual({ captureId: 'upper-1', slots: [] })
+    expect(seen).toEqual(['labels'])
+
+    // Only reviewed labels score a suggester.
+    expect(await c.vision.labelStats()).toMatchObject({
+      sources: { picked: 3, accepted: 3, corrected: 1 },
+      suggesters: [{ by: 'carry', accepted: 1, corrected: 0, right: 1 }, { by: 'pod-state@2', accepted: 1, corrected: 1, right: 0.5 }, { by: 'record', accepted: 1, corrected: 0, right: 1 }],
+    })
+
+    // A replant stops a label carrying: pod 1 was sown again after its last label.
+    sow(1, 'Dill', '2026-01-03', 'seeded')
+    expect((await c.vision.suggestions({ captureId: 'upper-2' })).map(s => [s.slot, s.label, s.by])).toEqual([[2, 'growing', 'carry'], [3, 'growing', 'carry'], [4, 'growing', 'carry'], [6, 'seeded', 'carry']])
+    await expect(c.vision.suggestions({ captureId: 'nope' })).rejects.toThrow(/no capture nope/)
+    await expect(c.vision.acceptSuggestions({ captureId: 'nope' })).rejects.toThrow(/no capture nope/)
+  })
+
+  it('dismisses a pod\'s suggestion on one photo, leaves it out of suggestions and Accept the rest, and restores it (#261)', async () => {
+    const { c, ctx } = await scored(3)
+    const seen: string[] = []
+    ctx.events.subscribe(e => e.kind === 'mutation' && seen.push(e.path))
+    ctx.now = () => new Date('2026-01-05T08:00:00.000Z')
+    for (const slot of [1, 2, 3]) await c.vision.setLabel({ captureId: 'upper-0', slot, label: 'seeded' })
+    const slots = async (captureId = 'upper-1') => (await c.vision.suggestions({ captureId })).map(s => s.slot)
+    expect(await slots()).toEqual([1, 2, 3])
+
+    seen.length = 0
+    expect(await c.vision.dismissSuggestion({ captureId: 'upper-1', slot: 2 })).toEqual({ captureId: 'upper-1', slot: 2, dismissedAt: '2026-01-05T08:00:00.000Z' })
+    expect(seen).toEqual(['labels'])
+    expect(await slots()).toEqual([1, 3])
+    // Only on that photo.
+    expect(await slots('upper-2')).toEqual([1, 2, 3])
+    expect(await c.vision.dismissals({ captureId: 'upper-1' })).toEqual([{ slot: 2, dismissedAt: '2026-01-05T08:00:00.000Z' }])
+    // Dismissing again keeps the first time.
+    ctx.now = () => new Date('2026-01-06T00:00:00.000Z')
+    expect(await c.vision.dismissSuggestion({ captureId: 'upper-1', slot: 2 })).toMatchObject({ dismissedAt: '2026-01-05T08:00:00.000Z' })
+
+    // A dismissal is not a label: nothing counts it.
+    expect(await c.vision.labels({ captureId: 'upper-1' })).toEqual([])
+    expect(await c.vision.labelStats()).toMatchObject({ pods: 3, sources: { picked: 3, accepted: 0, corrected: 0 } })
+    expect((await c.vision.labelList({ limit: 60 })).labels).toHaveLength(3)
+
+    // The server skips it on Accept the rest, whatever the UI sent.
+    expect(await c.vision.acceptSuggestions({ captureId: 'upper-1' })).toEqual({ captureId: 'upper-1', slots: [1, 3] })
+    expect((await c.vision.labels({ captureId: 'upper-1' })).map(l => l.slot)).toEqual([1, 3])
+    // A label picked on a dismissed pod had no suggestion.
+    await c.vision.setLabel({ captureId: 'upper-1', slot: 2, label: 'empty' })
+    expect((await c.vision.labels({ captureId: 'upper-1' })).find(l => l.slot === 2)).toMatchObject({ label: 'empty', source: 'picked', suggested: null })
+    await c.vision.setLabel({ captureId: 'upper-1', slot: 2, label: null })
+
+    seen.length = 0
+    expect(await c.vision.restoreSuggestion({ captureId: 'upper-1', slot: 2 })).toEqual({ captureId: 'upper-1', slot: 2, restored: true })
+    expect(seen).toEqual(['labels'])
+    expect(await c.vision.dismissals({ captureId: 'upper-1' })).toEqual([])
+    expect((await c.vision.suggestions({ captureId: 'upper-1' })).find(s => s.slot === 2)).toMatchObject({ label: 'seeded', by: 'carry' })
+    // Restoring one that isn't dismissed changes nothing.
+    expect(await c.vision.restoreSuggestion({ captureId: 'upper-1', slot: 2 })).toEqual({ captureId: 'upper-1', slot: 2, restored: false })
+    expect(seen).toEqual(['labels'])
+
+    // Without a clock of its own, the unit stamps it now.
+    delete ctx.now
+    const before = Date.now()
+    const { dismissedAt } = await c.vision.dismissSuggestion({ captureId: 'upper-2', slot: 1 })
+    expect(Date.parse(dismissedAt)).toBeGreaterThanOrEqual(before)
+
+    await expect(c.vision.dismissSuggestion({ captureId: 'upper-1', slot: 16 })).rejects.toThrow(/pod 16 is not on the upper camera/)
+    await expect(c.vision.dismissSuggestion({ captureId: 'nope', slot: 2 })).rejects.toThrow(/no capture nope/)
   })
 
   it('keeps a sown pod\'s plant with each label, but not a planned one or one sown after the photo\'s day', async () => {
@@ -256,10 +393,31 @@ describe('pod codes (#224)', () => {
     ])
     expect(events).toContain('podCodes')
     const got = await c.vision.podCodes()
-    expect(got.pods).toEqual([{ slot: 6, camera: 'upper', code: 'oo||', confidence: 0.9, ts: '2026-11-11T21:00:00.000Z', confirmed: null, recorded: 'Green Bok Choy' }])
+    // Whether or not the shipped table knows the code, the guess is the same here.
+    expect(got.pods).toMatchObject([{ slot: 6, camera: 'upper', code: 'oo||', confidence: 0.9, ts: '2026-11-11T21:00:00.000Z', confirmed: null, recorded: 'Green Bok Choy', guess: 'Green Bok Choy', disagrees: false }])
     // No capture was added, and nothing was confirmed by reading.
     expect(await c.camera.list({ limit: 10 })).toEqual([])
     expect(ctx.store.podCodes.pairs()).toEqual([])
+  })
+
+  it('builds the Share pod codes link from the catalog pairs, for the browser to open (#259)', async () => {
+    const { c, ctx } = codesCore(async () => answer([{ slot: 6, code: 'oo||' }, { slot: 7, code: 'o|hh' }, { slot: 8, code: null }]))
+    expect(await c.vision.podCodeShare()).toEqual({ url: null, pairs: [], skipped: [], crops: [] })
+    await c.vision.readPodCodes()
+    ctx.store.podCodes.confirm('oo||', 'green bok choy', 't')
+    ctx.store.podCodes.confirm('o|hh', 'Genovese Basil', 't')
+    const got = await c.vision.podCodeShare()
+    expect(got.pairs).toEqual([{ code: 'oo||', plant: 'Green Bok Choy' }])
+    expect(got.skipped).toEqual([{ code: 'o|hh', plant: 'Genovese Basil' }])
+    expect(got.crops).toEqual([{ slot: 6, code: 'oo||', plant: 'Green Bok Choy' }])
+    const q = new URL(got.url as string).searchParams
+    expect(q.get('pairs')).toBe('oo|| → Green Bok Choy')
+    expect(q.get('version')).toBe('test')
+    expect(q.get('fingerprint')).toBe(await unitFingerprint(ctx.hal.snapshot().system?.unitId as string))
+    // Without a unit id there is no fingerprint, and nothing else stands in for it.
+    const snapshot = ctx.hal.snapshot.bind(ctx.hal)
+    ctx.hal.snapshot = () => ({ ...snapshot(), system: null })
+    expect(new URL((await c.vision.podCodeShare()).url as string).searchParams.has('fingerprint')).toBe(false)
   })
 
   it('confirms and corrects a pair without touching the pod records', async () => {

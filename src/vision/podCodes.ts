@@ -2,8 +2,9 @@
  * yCube dot codes (#224): each camera's full-size pod-ID still, read by
  * `podvision --codes`, gives a four-mark code per pod where the dots are
  * readable. Core keeps the latest read of every pod. Which code is which plant
- * is learnt only from the owner's confirmations: an unconfirmed pair is never
- * stored or trusted.
+ * is learnt from the owner's confirmations, with the shared table that ships
+ * with each release (sharedPodCodes.ts) as a stronger guess: an unconfirmed
+ * pair is never stored.
  *
  * This runs in the browser demo too, so podvision itself (node-only) is
  * passed in as a `CodeReader`: `podvisionCodeReader` in nativeExecutor.ts.
@@ -11,6 +12,7 @@
 import { localTime } from '../scheduler/time'
 import type { PodCodePair, PodCodeRead, Store } from '../store/types'
 import { CAMERAS, podRegions, type Camera, type PodRegions } from './regions'
+import { lookupCode, sharedPairs, type CodeSource } from './sharedPodCodes'
 
 /** The local hour of the daily read: midday, when the grow light is most likely on. */
 export const DAILY_READ_HOUR = 12
@@ -38,13 +40,26 @@ export interface PodCodeView extends PodCodeRead {
   confirmed: string | null
   /** The pod record's plant, which is the guess to confirm when the code is new. */
   recorded: string | null
+  /** The shared table's confirmed plant for this code (#259), or null. */
+  shared: string | null
+  /** The plant to show: the owner's pair, else the shared table's, else the record's. */
+  guess: string | null
+  from: CodeSource | null
+  /** The owner's pair and the shared table name different plants. */
+  disagrees: boolean
 }
 
 /** Every pod a code was read under, with its confirmed plant and its record's. Unread pods are left out. */
-export function podCodeViews(store: Pick<Store, 'podCodes' | 'pods'>): PodCodeView[] {
+export function podCodeViews(store: Pick<Store, 'podCodes' | 'pods'>, shared: Map<string, string> = sharedPairs()): PodCodeView[] {
   const pairs = new Map(store.podCodes.pairs().map(p => [p.code, p.plant]))
   const pods = new Map(store.pods.list().map(p => [p.slot, p.plant]))
-  return store.podCodes.reads().flatMap(r => r.code ? [{ ...r, confirmed: pairs.get(r.code) ?? null, recorded: pods.get(r.slot) ?? null }] : [])
+  return store.podCodes.reads().flatMap((r) => {
+    if (!r.code) return []
+    const confirmed = pairs.get(r.code) ?? null
+    const recorded = pods.get(r.slot) ?? null
+    const l = lookupCode(confirmed, shared.get(r.code) ?? null, recorded)
+    return [{ ...r, code: r.code, confirmed, recorded, shared: l.shared, guess: l.plant, from: l.from, disagrees: l.disagrees }]
+  })
 }
 
 export interface PodCodeServiceOptions {

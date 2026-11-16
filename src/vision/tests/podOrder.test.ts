@@ -65,6 +65,20 @@ describe('podOrder (#224)', () => {
     expect(podOrder(store)).toMatchObject({ slots: [{ slot: 7 }], recordSwaps: [], recordsUnresolved: [7] })
   })
 
+  it('also knows a pod by a confirmed shared code, but the owner\'s pair wins (#259)', () => {
+    const store = unit({ records: { 2: 'Thyme', 7: 'Basil', 9: 'Kale' }, reads: { 2: 'hhhh', 7: 'o|hh', 9: 'oo||' }, pairs: PAIRS })
+    const shared = new Map([['hhhh', 'Basil'], ['oo||', 'Kale']])
+    const o = podOrder(store, shared)
+    expect(o?.slots).toEqual([
+      { slot: 2, code: 'hhhh', tower: 'Basil', from: 'shared', record: 'Thyme', plan: null },
+      { slot: 7, code: 'o|hh', tower: 'Thyme', from: 'own', record: 'Basil', plan: null },
+      { slot: 9, code: 'oo||', tower: 'Basil', from: 'own', record: 'Kale', plan: null },
+    ])
+    // Pod 9's own pair says Basil; the shared table's Kale would match the record, but the owner's pair wins.
+    expect(o?.recordsUnresolved).toEqual([9])
+    expect(o?.recordSwaps).toEqual([[2, 7]])
+  })
+
   it('checks the plan separately: records right, tower off plan, gives only moves', () => {
     const store = unit({ records: { 1: 'Basil', 4: 'Thyme', 9: 'Oregano' }, reads: { 1: 'oo||', 4: 'o|hh', 9: 'o||o' }, pairs: PAIRS, plan: { 1: 'Thyme', 4: 'Basil', 9: 'Kale' } })
     const o = podOrder(store)

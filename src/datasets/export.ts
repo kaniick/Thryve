@@ -4,7 +4,9 @@
  * as a tar of JSON/JSONL files. It is the thing you pull to a laptop to
  * measure, recalibrate or train — thryve's counterpart of sleepypod's
  * sleep-stage dataset script. The grower's pod labels (#184) ride along with
- * each pod's crop, so a trainer sees exactly what the analysers see.
+ * each pod's crop, so a trainer sees exactly what the analysers see, and the
+ * owner's confirmed dot code → plant pairs (#259) go with the archive whole.
+ * Suggestions the grower dismissed (#261) go in their own file, never as labels.
  */
 import { SensorId } from '../hardware/contract'
 import { daysSinceSowing } from '../scheduler/pumpPlan'
@@ -30,8 +32,12 @@ export interface DatasetSummary extends ExportWindow {
   imageBytes: number
 }
 
-/** Version 2: `labels.jsonl` gained the `seeded` label and `plant`, `plantedAt` and `daysSinceSowing`. */
-export const DATASET_FORMAT = { name: 'thryve-dataset', version: 2 }
+/**
+ * Version 2: `labels.jsonl` gained the `seeded` label and `plant`, `plantedAt` and `daysSinceSowing`.
+ * Version 3: `labels.jsonl` gained `source`, `suggested`, `suggestedBy` and `suggestedConfidence` (#261), and `pod_codes.json` came in (#259).
+ * Version 4: `suggestion_dismissals.json` came in (#261).
+ */
+export const DATASET_FORMAT = { name: 'thryve-dataset', version: 4 }
 
 const DAY = 86_400_000
 const enc = new TextEncoder()
@@ -130,6 +136,8 @@ export async function* datasetEntries(ctx: Context, w: ExportWindow): AsyncGener
   const telemetry = telemetryIn(ctx, w)
   const labels = ctx.store.podLabels.range(w.from, w.to)
   const regions = regionsOf(ctx)
+  const podCodes = ctx.store.podCodes.pairs()
+  const dismissals = ctx.store.dismissals.range(w.from, w.to)
   const system = ctx.hal.snapshot().system
 
   yield file('manifest.json', json({
@@ -140,7 +148,7 @@ export async function* datasetEntries(ctx: Context, w: ExportWindow): AsyncGener
     core: ctx.version,
     primaryAnalyzer: settings.primaryAnalyzer,
     analyzers: ctx.analysis.list().map(({ primary, ...a }) => ({ ...a, primary })),
-    counts: { captures: captures.length, analyses: analyses.length, telemetry: telemetry.length, labels: labels.length },
+    counts: { captures: captures.length, analyses: analyses.length, telemetry: telemetry.length, labels: labels.length, podCodes: podCodes.length, dismissals: dismissals.length },
     images: w.images,
   }))
   yield file('README.md', enc.encode(README))
@@ -152,6 +160,8 @@ export async function* datasetEntries(ctx: Context, w: ExportWindow): AsyncGener
   yield file('regions.json', json(regions))
   yield file('pods.json', json(ctx.store.pods.list()))
   yield file('grow_cycles.json', json(ctx.store.grow.history()))
+  yield file('pod_codes.json', json(podCodes))
+  yield file('suggestion_dismissals.json', json(dismissals))
 
   if (!w.images) return
   for (const c of captures) {
@@ -171,11 +181,13 @@ Exported from a thryve unit (ADR-0019). Every file covers the window in
 | \`manifest.json\` | Format version, window, unit, core version, analysers and which one is primary, row counts |
 | \`captures.jsonl\` | One still per line: \`id\`, \`camera\` (upper/lower), \`ts\`, \`bytes\`, \`image\` (path in this archive, or null) |
 | \`analyses.jsonl\` | One result per line: \`captureId\`, \`ts\`, \`camera\`, \`analyzer\`, \`version\`, \`source\` (device/remote), \`slot\`, \`metric\`, \`value\`, \`detail\`, \`artifact\` |
-| \`labels.jsonl\` | One labelled pod per line: \`captureId\`, \`ts\`, \`camera\`, \`slot\`, \`label\` (see below), \`labelledAt\`, \`plant\` and \`plantedAt\` (the pod's plant and sowing date when it was labelled, or null), \`daysSinceSowing\` (whole days from \`plantedAt\` to \`ts\`, or null), \`image\` (path in this archive, or null), \`width\` and \`height\` of the still, \`region\` (the pod's crop in the still's pixels: \`x\`, \`y\`, \`w\`, \`h\`; null without the still), \`box\` (the same box as fractions of the frame) |
+| \`labels.jsonl\` | One labelled pod per line: \`captureId\`, \`ts\`, \`camera\`, \`slot\`, \`label\` (see below), \`labelledAt\`, \`plant\` and \`plantedAt\` (the pod's plant and sowing date when it was labelled, or null), \`daysSinceSowing\` (whole days from \`plantedAt\` to \`ts\`, or null), \`source\`, \`suggested\`, \`suggestedBy\` and \`suggestedConfidence\` (how the label was saved, see below), \`image\` (path in this archive, or null), \`width\` and \`height\` of the still, \`region\` (the pod's crop in the still's pixels: \`x\`, \`y\`, \`w\`, \`h\`; null without the still), \`box\` (the same box as fractions of the frame) |
 | \`regions.json\` | Every pod's box per camera as fractions of the frame, \`{"upper": {"1": {"x", "y", "w", "h"}, …}, "lower": {…}}\`: the boxes the analysers score on |
 | \`telemetry.jsonl\` | One reading per line, thinned to one per 15 minutes past 90 days: \`ts\`, \`sensor\`, \`value\` (canonical units, see the HAL contract) |
 | \`pods.json\` | The 30 pods: plant, planted date, status, notes |
 | \`grow_cycles.json\` | Grow cycles with start/end and stage |
+| \`pod_codes.json\` | The yCube dot codes the owner confirmed: \`code\`, \`plant\`, \`confirmedAt\`, whenever they were confirmed |
+| \`suggestion_dismissals.json\` | Pods whose suggestion the grower dismissed on a photo, because the pod can't be seen there or its box isn't on a pod: \`captureId\`, \`ts\` (the photo's time), \`slot\`, \`dismissedAt\`. Not labels: nothing in \`labels.jsonl\` comes from them |
 | \`images/<id>.jpg\` | The stills, when exported with images |
 
 Labels are \`empty\` (capped, no yCube), \`seeded\` (a yCube in, nothing
@@ -184,6 +196,18 @@ pod-state model's classes are the same minus \`seeded\`, which came later:
 to train the current model, map \`seeded\` to \`empty\` (nothing visible
 yet). A six-class model needs the unit's model loader extended first, since
 it only accepts the five.
+
+The tagger suggests a label for each pod: the pod's last label on an
+earlier photo (\`suggestedBy\` \`carry\`), pod-state when it names a later
+stage with confidence 0.8 or more (\`pod-state@<version>\`, with its
+\`suggestedConfidence\`), or \`seeded\` from a seeded pod record where the
+suggestion was \`empty\` (\`record\`). \`source\` says what the grower did:
+\`picked\` a label with no suggestion, \`accepted\` the suggestion (then
+\`label\` equals \`suggested\`) or \`corrected\` it. Accepted and corrected
+labels were reviewed; score a model only on those. A model trained on
+labels accepted from its own suggestions can learn its mistakes back, so
+drop or down-weight those when training it, and weight corrected labels
+up.
 
 Pods 1–15 are seen by the upper camera, 16–30 by the lower. A pod's crop is
 \`image[region.y : region.y + region.h, region.x : region.x + region.w]\`,

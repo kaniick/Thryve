@@ -200,3 +200,35 @@ describe('MqttHalClient', () => {
     expect(events).toEqual(['button'])
   })
 })
+
+describe('the dry-run grace', () => {
+  const system = (limits: Record<string, unknown>) => ({ contract: 1, unitId: U, model: 'gardyn 3.0', halVersion: '0.1.0', caps: { sensors: ['pump_a'], actuators: ['light', 'pump'], cameras: [] }, limits: { pumpMaxRunS: 900, pumpMaxDuty: 30, waterLowCm: 16, ...limits } })
+  const guarded = { pumpDryGuard: 'both', pumpDryGraceMs: 1000, pumpDryGraceMinMs: 300, pumpDryGraceMaxMs: 5000 }
+
+  it('asks hald for a grace and resolves with the limits it republishes', async () => {
+    const { mqtt, client } = make()
+    mqtt.msg(`thryve/${U}/system`, system(guarded))
+    const p = client.setPumpDryGrace(10_000)
+    expect(mqtt.published.at(-1)).toMatchObject({ topic: `thryve/${U}/pump/guard/set`, payload: JSON.stringify({ dryGraceMs: 10_000 }), opts: { qos: 1 } })
+    // hald holds it to its bounds; core takes what hald reports.
+    mqtt.msg(`thryve/${U}/system`, system({ ...guarded, pumpDryGraceMs: 5000 }))
+    await expect(p).resolves.toMatchObject({ pumpDryGraceMs: 5000, pumpDryGuard: 'both' })
+    expect(client.snapshot().system?.limits.pumpDryGraceMs).toBe(5000)
+  })
+
+  it('refuses for a hald that has no grace to set, and times out on one that never answers', async () => {
+    const { mqtt, client } = make()
+    await expect(client.setPumpDryGrace(1000)).rejects.toBeInstanceOf(HalRefused)
+    mqtt.msg(`thryve/${U}/system`, system({}))
+    await expect(client.setPumpDryGrace(1000)).rejects.toThrow(/update it/)
+    expect(mqtt.published).toHaveLength(0)
+    mqtt.msg(`thryve/${U}/system`, system(guarded))
+    const late = client.setPumpDryGrace(1000)
+    // Some other publish in between isn't the answer.
+    mqtt.msg(`thryve/${U}/availability`, 'online')
+    await expect(late).rejects.toThrow(/did not report the dry-run grace within 50 ms/)
+    // Only the grace goes on the wire: no mode, no cutoff.
+    expect(() => client.setPumpDryGrace(-1)).toThrow()
+    expect(Object.keys(JSON.parse(mqtt.published.at(-1)?.payload ?? '{}'))).toEqual(['dryGraceMs'])
+  })
+})

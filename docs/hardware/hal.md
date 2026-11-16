@@ -65,11 +65,14 @@ prints every key with its default; the important ones:
 | `[pins]` | `button`, `over_temp_alert` | 13, 25 | |
 | `[i2c]` | `bus`, `pct2075`, `ina219`, `dht20`, `am2320` | 1, 0x48, 0x40, 0x38, 0x5C | |
 | `[i2c]` | `ezo_ph`, `ezo_ec`, `ezo_rtd` | 0x63, 0x64, 0x66 | Only used by explicit `[[sensor]]` entries. |
-| `[i2c]` | `ina219_shunt_ohms`, `ina219_max_amps` | 0.08, 3.2 | Calibration register derived from these. |
-| `[limits]` | `pump_max_run_s`, `pump_max_duty`, `pump_default_duty` | 900, 100, 30 | ADR-0009. `pump_max_duty` caps every run; it allows 100 % so an owner can choose the stock firmware's level (plain on). A start that names no level (the button, HA without a speed) runs at `pump_default_duty`. Core names a level for every run: its duty cycle in Settings → Pump, 30 % by default. |
-| `[limits]` | `pump_soft_start_ms` | 1500 | Each start ramps from 15 % of its level to all of it over this long, in 50 ms steps, so the pump's inrush doesn't brown the Pi out. 0–10000; 0 switches straight on, as stock does. A command's `softStartMs` overrides it for that run (core sends Settings → Pump's soft start, 0 when it's off). A stop or trip still cuts the pump at once. If the Pi reboots when the pump starts, lengthen this or lower the power. |
+| `[i2c]` | `ina219_shunt_ohms`, `ina219_max_amps` | 0.08, 3.2 | Calibration register derived from these. The driver sets the INA219 to average 128 shunt samples (68 ms, about 3.4 periods of the 50 Hz pump PWM) and 16 bus samples: config `0x3E7F`. A single sample would land anywhere in the PWM cycle. |
+| `[limits]` | `pump_max_run_s`, `pump_max_duty`, `pump_default_duty` | 900, 100, 30 | ADR-0009. `pump_max_duty` caps every run; at 100 % the pin is held high with no software PWM, as the stock firmware drives it; below that it pulses at `pump_hz`. A start that names no level (the button, HA without a speed) runs at `pump_default_duty`. Core names a level for every run: its duty cycle in Settings → Pump, 30 % by default. Lower the cap only for a board that browns out: pumps differ between units, and below 100 a weak one may not lift water to the top. |
+| `[limits]` | `pump_soft_start_ms` | 1500 | Each start ramps from 15 % of its level to all of it over this long, in 50 ms steps, so the pump's inrush doesn't brown the Pi out. 0–10000; 0 switches straight on, as stock does. A command's `softStartMs` overrides it for that run (core sends Settings → Pump's soft start, 0 when it's off). A stop or trip still cuts the pump at once. The dry-run and brown-out grace is lengthened by this ramp. If the Pi reboots when the pump starts, lengthen this or lower the power. |
+| `[limits]` | `pump_brownout_v`, `pump_brownout_ms`, `pump_brownout_pi` | 10.8, 300, true | The brown-out guard. Past the spin-up grace, at least three reads in a row of the pump supply (the INA219's bus voltage, read with the current every 100 ms) below `pump_brownout_v`, covering `pump_brownout_ms`, stop the pump and latch `brown-out: supply fell to 10.2 V for 0.3 s` until acknowledged. The supply idles at about 12.6 V; 10.8 V is a 12 V supply 10 % low. A missing read never trips it. `pump_brownout_v` may be 6–12, or 0 for off, and the ms 100–10000; without an INA219 it's off. With `pump_brownout_pi`, hald also reads the Pi's under-voltage flag (`/sys/devices/platform/soc/soc:firmware/get_throttled`, bit 0) once a second while the pump runs, if it can be read, and two reads in a row that report it trip the same fault. `hald --check` prints `pump_brownout_guard`; `system.limits` reports `pumpBrownoutV`, `pumpBrownoutMs` and `pumpBrownoutPi`. |
 | `[limits]` | `water_low_cm`, `over_temp_c` | 16, 65 | Comment out to disable an interlock. |
-| `[limits]` | `pump_dry_current_a`, `pump_dry_after_s`, `pump_dry_grace_s` | **unset**, 5, 3 | The pump current guard (#220): off until a cutoff is set, and off without an INA219. Past the grace (plus the soft start) after a start, a pump that reads below the cutoff for `pump_dry_after_s` is pulling air and stops with a dry-run. Set the cutoff below the wet current at the lowest duty you run; the one reading so far is 1.87 A wet at 30 %. |
+| `[limits]` | `pump_dry_current_a`, `pump_dry_after_ms`, `pump_dry_grace_ms` | **unset**, 300, 1000 | The pump current guard (#220): off until a cutoff is set, and off without an INA219. While the pump runs, `hald` reads its current every 100 ms (skipping the INA219's 500 ms cache). Past the grace after a start (plus the soft-start ramp), at least three reads in a row below the cutoff, covering `pump_dry_after_ms`, mean it's pulling air, and it stops with a dry-run: about 0.3 s. The after may be 100–10000 ms. `pump_dry_grace_ms` is the default grace: the app may set it (the one guard setting it may), held to the bounds below, and hald keeps it in `state.json` and uses it at boot without waiting on core. The older `pump_dry_after_s` / `pump_dry_grace_s`, in seconds, still load (not both forms of one). Set the cutoff below the wet current at the lowest duty you run; the one reading so far is 1.87 A wet at 30 %. |
+| `[limits]` | `pump_dry_grace_min_ms`, `pump_dry_grace_max_ms` | 300, 5000 | The bounds of the grace the app may set: min ≤ `pump_dry_grace_ms` ≤ max ≤ 10000, or `--check` fails. A request outside them is held to the nearer one and logged, never refused; a kept grace outside narrowed bounds is held to them at boot. |
+| `[limits]` | `pump_dry_guard` | `"both"` | Which dry-run guard stops a running pump: `"level"` (the tank level only), `"current"` (the pump current only) or `"both"` (either). hal.toml only: no app, API or MCP route sets it, and core shows it read-only. `"current"` needs `pump_dry_current_a` and an INA219, or hald warns and runs `"level"`; `"both"` without them is `"level"` too, with a warning. It never runs with no dry guard it can run. In `"level"` and `"both"` a low tank refuses a start; in `"current"` it doesn't, and a pump monitor with no reading for 2 s stops the pump with `monitor-lost: …`, latched for an acknowledge. `hald --check` prints the guard in effect (`limits.pump_dry_guard`), why (`limits.pump_dry_guard_why`) and any fallback under `warnings`. |
 | `[limits]` | `distance_samples`, `distance_timeout_ms`, `distance_gap_ms`, `distance_max_cm` | 5, 60, 60, empty × 1.5 | Median of N pings, taken `distance_gap_ms` apart so one ping doesn't hear the last one's echo. With an even count of answers the lower middle one counts, since stray echoes only read long. A ping further than `distance_max_cm` (the tank's empty depth plus half again by default) is a stray echo and counts as no answer. Fewer than two answers within 3 cm of the median marks the distance, and the level from it, `suspect`; two that agree are a reading however many pings were dropped. |
 | `[tank]` | `full_cm`, `empty_cm` | 5, 20 | Geometry for `water_level_pct`. |
 | `[button]` | `debounce_ms`, `double_window_ms`, `long_press_ms`, `setup_hold_ms`, `active_low`, `pump_run_s` | 30, 400, 1000, 10000, true, 300 | |
@@ -122,7 +125,8 @@ QoS 1 throughout. Client id `hald-<unit-id>`.
 | Topic | Dir | Retained | Payload |
 |---|---|---|---|
 | `availability` | → | yes | `online` on connect; `offline` on shutdown and as the LWT |
-| `system` | → | yes | `SystemInfo` |
+| `system` | → | yes | `SystemInfo`; its `limits` report the dry-run guard in effect (`pumpDryGuard`) and the grace with its bounds (`pumpDryGraceMs`, `pumpDryGraceMinMs`, `pumpDryGraceMaxMs`), republished when the grace changes |
+| `pump/guard/set` | ← | — | `PumpGuardCommand {dryGraceMs}`: the current guard's spin-up grace, held to hal.toml's bounds and kept in `state.json`. Any other field is refused: the guard and its cutoff are hal.toml only |
 | `sensor/<id>` | → | no | `Reading {ts, value, unit, quality}` — on change, and at least every `telemetry_interval_s` |
 | `sensor/<id>/calibrate` | ← | — | `CalibrationCommand {point, value?}` — see *Calibration* below |
 | `sensor/<id>/calibration` | → | yes | `CalibrationResult {ts, point, ok, points, detail}` for the last calibrate command |
@@ -148,11 +152,19 @@ Semantics worth knowing:
   when the PCB is ≥ `over_temp_c`, when the board's GPIO25 alert line is
   asserted, or while a fault is latched. A running pump that trips latches
   `fault` (`dry-run`, `over-temp`) until `alert/pump_fault/ack`. `{"on":false}`
-  always works. With `pump_dry_current_a` set, a pump drawing less than that
-  trips a dry-run that says so: `dry-run: pump drew 0.4 A, below 1.2 A for 5 s:
-  it's pulling air`. A failed INA219 read restarts the count and never trips it.
+  always works. While the pump runs, and for 2 s after, `hald` reads the pump
+  current every 100 ms and the ranger once a second, between telemetry rounds;
+  these reads feed the guard in memory only, so telemetry, MQTT and core stay on
+  `telemetry_interval_s`. Two trusted readings at `water_low_cm`, 0.5 s or more
+  apart, stop it with a dry-run; `suspect` readings neither confirm the water low
+  nor say it's back, and 3 s with no trusted reading counts as the ranger gone.
+  With `pump_dry_current_a` set, a pump drawing less than that trips a dry-run
+  that says so: `dry-run: pump drew 0.4 A, below 1.2 A for 0.3 s: it's pulling
+  air`. A failed INA219 read restarts the count and never trips it.
   Either dry-run clears itself after a minute of good water; one from the current
-  waits a whole minute after the trip, as the tank read full all along.
+  waits a whole minute after the trip, as the tank read full all along. A stop
+  the pump driver refuses latches `stop-failed: …` and is retried on every read
+  until it takes; it waits for an acknowledge.
 - **`water_low`** is debounced over the last 6 telemetry rounds, so a ranger
   on stray echoes doesn't raise a new alert every few seconds. A reading at
   `water_low_cm` raises it at once, no reading raises it on the third such round
@@ -394,7 +406,8 @@ PWM overlay (`dtoverlay=pwm,pin=18,func=2`, reboot required once), installs
 (`/etc/udev/rules.d/70-thryve-cameras.rules`, see [Camera names](#camera-names)), installs Mosquitto with a listener on
 `127.0.0.1:1883` and no password (`/etc/mosquitto/conf.d/thryve.conf`,
 written once), and installs/enables `hald.service` (`Restart=always`,
-`After=mosquitto.service`, hardened). `--binary ./hald` installs a local
+`After=mosquitto.service`, hardened, with a [watchdog](#watchdog) and the pump
+pin driven low after every stop). `--binary ./hald` installs a local
 build; `--version vX.Y.Z` pins a release; `--no-enable` skips starting it.
 `--mqtt-lan` adds a password-protected listener on port 1884 for Home
 Assistant on another machine and prints the `homeassistant` password once;
@@ -458,6 +471,64 @@ A rerun only touches what changed: apt runs for a package that's missing,
 unit or group. A rerun with the same binary leaves a running pump alone. A restart
 that's owed is recorded in `/var/lib/thryve/.restart-hald` first, so an install
 that dies part way still restarts hald on the rerun.
+
+## Watchdog
+
+`hald.service` is `Type=notify` with `WatchdogSec=10`. hald sends `READY=1` once
+the engine has booted (the light restored, the fader running), and `WATCHDOG=1`
+from the engine loop itself, once per tick, so pings stop when the loop hangs.
+There's no side thread to keep pinging a stuck loop. 10 s without one and systemd
+kills hald (`SIGABRT`) and starts it again 3 s later, as for a crash.
+
+The loop ticks once a second, and a tick takes longer on a telemetry round, every
+10 s. The stock sensors take well under a second (the ultrasonic median is about
+0.3 s, at most 0.6 s), but an EZO probe blocks 0.9 s per read, 1.8 s when it asks
+for more time, so three of them make a round of about 7 s. `WatchdogSec=3` would
+kill a unit with EZO probes on every round; 10 s leaves room for them and still
+catches a hang. The watchdog arms at `READY=1`, so a slow start isn't counted
+against it. `TimeoutStartSec=120` covers the 30 s hardware wait and a slow Pi Zero
+start.
+
+`ExecStopPost=-/usr/local/lib/thryve/pump-off` runs after every stop: `systemctl
+stop` or `restart`, a crash, a watchdog kill. The pump is software PWM, so a hald
+that dies mid-run can leave its pin high. The script drives the pump pin low with
+`pinctrl set <pin> op dl`, or `raspi-gpio`, sysfs GPIO, then libgpiod's `gpioset`,
+whichever the OS has, and logs which in `journalctl -u hald`. It never touches the
+light, which stays as it is across a restart. The `-` means it never fails the unit.
+
+The script asks `hald --config /etc/thryve/hal.toml --pump-pin` for the pin, so
+hal.toml (`pump_pwm` under `[pins]`, or an `[[actuator]]` with `id = "pump"`) stays
+the only place it's set, and an edit since the install is followed. If hald can't
+answer (a hal.toml it can't parse), the script uses the pin hald gave at install,
+which is written into the script. `--pump-pin` prints nothing for a pump that low
+doesn't turn off (not `pwm_pump`) or one on a light's pin, and then nothing is
+driven.
+
+A hald from before the watchdog never pings, so `install-hal` only adds
+`Type=notify` and `WatchdogSec` when the binary it installs has `--pump-pin`, which
+came with it. An older hald under the watchdog unit (say, after going back to an
+older release by hand) would be killed every 10 s: rerun `install-hal`, which writes
+the unit for the hald it finds.
+
+The web updater swaps the binary but doesn't install units, so this needs
+`sudo scripts/install-hal` run once on the unit.
+
+### Hardware watchdog (off)
+
+The Pi's BCM2835 watchdog can reboot the board when systemd itself stops
+responding, through `RuntimeWatchdogSec=` in `/etc/systemd/system.conf.d/`. It's
+**not** enabled. The chip allows at most about 15 s, and a Pi Zero 2 W in memory
+pressure can stall PID 1 that long; a reboot there takes the light and cameras with
+it, and a slow boot that stalls again would loop. It would also spend the USB hub's
+reboot budget on reboots that aren't for the hub. hald's own watchdog covers the
+common case, a hung or crashed hald. To try it on a unit anyway:
+
+```sh
+sudo mkdir -p /etc/systemd/system.conf.d
+printf '[Manager]\nRuntimeWatchdogSec=15\n' | sudo tee /etc/systemd/system.conf.d/50-thryve-watchdog.conf
+sudo systemctl daemon-reexec      # dmesg shows bcm2835-wdt in use
+# to undo: sudo rm /etc/systemd/system.conf.d/50-thryve-watchdog.conf && sudo systemctl daemon-reexec
+```
 
 ## USB recovery
 
@@ -536,6 +607,8 @@ matched the commanded duty, fades ran smoothly, and the level held across
 `hald` restarts and reboots; both UVC cameras took stills. Still **unverified
 on a unit**, because its tank is empty: the pump driver, the INA219 pump-power
 calibration and dry-run detection, and the ultrasonic level against water. The
+[watchdog](#watchdog) and the pump-off script are tested against a fake notify
+socket and stub GPIO tools, not yet on a unit. The
 button is unverified too, and the cameras' USB hub comes up on only some boots
 ([handoff](../HANDOFF.md#the-usb-hub-the-one-open-fault)). The
 [hardware map](pin-map.md) has the per-row status.

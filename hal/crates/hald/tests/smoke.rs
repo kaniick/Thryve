@@ -80,7 +80,80 @@ fn check_validates_and_reports_unknown_kinds() {
     assert_eq!(v["actuators"], serde_json::json!(["light", "pump"]));
     // The pump current guard ships off until a baseline is measured.
     assert!(v["limits"]["pump_dry_current_a"].is_null());
-    assert_eq!(v["limits"]["pump_dry_after_s"], 5);
+    assert_eq!(v["limits"]["pump_dry_after_ms"], 300);
+    assert_eq!(v["limits"]["pump_dry_grace_ms"], 1000);
+    assert_eq!(v["limits"]["pump_dry_grace_min_ms"], 300);
+    assert_eq!(v["limits"]["pump_dry_grace_max_ms"], 5000);
+    // Both asked, no cutoff yet: the tank level alone, and a warning that says so.
+    assert_eq!(v["limits"]["pump_dry_guard_asked"], "both");
+    assert_eq!(v["limits"]["pump_dry_guard"], "level");
+    assert_eq!(
+        v["limits"]["pump_dry_guard_why"],
+        "tank level only: no pump_dry_current_a"
+    );
+    assert_eq!(
+        v["warnings"],
+        serde_json::json!(["tank level only: no pump_dry_current_a"])
+    );
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn check_prints_the_dry_run_guard_in_effect_and_why() {
+    let dir = tmp("check-guard");
+    let cfg = dir.join("hal.toml");
+    let check = |toml: &str| {
+        std::fs::write(&cfg, toml).unwrap();
+        let out = hald().args(["--check", "--config"]).arg(&cfg).output().unwrap();
+        serde_json::from_slice::<serde_json::Value>(&out.stdout).unwrap()
+    };
+    let v = check("[limits]\npump_dry_guard = \"current\"\npump_dry_current_a = 1.2\n");
+    assert_eq!(v["limits"]["pump_dry_guard"], "current");
+    assert_eq!(v["warnings"], serde_json::json!([]));
+    let v = check("[limits]\npump_dry_current_a = 1.2\n");
+    assert_eq!(v["limits"]["pump_dry_guard"], "both");
+    assert_eq!(v["limits"]["pump_dry_guard_why"], "tank level + pump current");
+    // Current without a monitor falls back to the tank, never to no guard.
+    let v = check(
+        "[limits]\npump_dry_guard = \"current\"\npump_dry_current_a = 1.2\n[[sensor]]\nkind = \"pct2075\"\naddr = 0x48\n[[sensor]]\nkind = \"dyp_a01\"\ntrigger = 26\necho = 19\n",
+    );
+    assert_eq!(v["limits"]["pump_dry_guard"], "level");
+    assert_eq!(
+        v["warnings"][0],
+        "pump_dry_guard = \"current\" needs a pump monitor (ina219): falling back to the tank level"
+    );
+    // The brown-out guard: on by default against the INA219's bus voltage.
+    let v = check("");
+    assert_eq!(v["limits"]["pump_max_duty"], 100.0);
+    assert_eq!(v["limits"]["pump_brownout_v"], 10.8);
+    assert_eq!(v["limits"]["pump_brownout_ms"], 300);
+    assert_eq!(v["limits"]["pump_brownout_pi"], true);
+    // Off a Pi there's no get_throttled to read.
+    let guard = v["limits"]["pump_brownout_guard"].as_str().unwrap();
+    assert!(guard.starts_with("supply below 10.8 V for 0.3 s"), "{guard}");
+    assert_eq!(
+        v["limits"]["pump_brownout_pi_readable"],
+        std::path::Path::new("/sys/devices/platform/soc/soc:firmware/get_throttled").exists()
+    );
+    let v = check("[limits]\npump_brownout_v = 0\npump_brownout_pi = false\n");
+    assert!(v["limits"]["pump_brownout_v"].is_null());
+    assert!(v["warnings"]
+        .as_array()
+        .unwrap()
+        .contains(&serde_json::json!("off: pump_brownout_v = 0")));
+    let v = check("[limits]\npump_brownout_v = 13\n");
+    assert_eq!(v["ok"], false);
+    assert!(v["errors"][0]
+        .as_str()
+        .unwrap()
+        .contains("pump_brownout_v must be 6–12 V"));
+    // Bounds the default sits outside of are refused.
+    let v = check("[limits]\npump_dry_grace_ms = 6000\n");
+    assert_eq!(v["ok"], false);
+    assert!(v["errors"][0]
+        .as_str()
+        .unwrap()
+        .contains("pump_dry_grace_max_ms (5000)"));
     let _ = std::fs::remove_dir_all(dir);
 }
 

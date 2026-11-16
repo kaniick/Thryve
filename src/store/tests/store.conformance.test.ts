@@ -43,6 +43,9 @@ for (const [name, make] of impls) {
       expect(store.schedules.recordRun({ scheduleId: 'l1', key: 'l1:2026-10-31:420', firedAt: 't', result: 'ok' })).toBe(true)
       expect(store.schedules.recordRun({ scheduleId: 'l1', key: 'l1:2026-10-31:420', firedAt: 't', result: 'ok' })).toBe(false)
       expect(store.schedules.recentRuns()).toHaveLength(1)
+      store.schedules.setRunResult('l1:2026-10-31:420', 'refused: water low')
+      store.schedules.setRunResult('never-recorded', 'fired')
+      expect(store.schedules.recentRuns()).toEqual([{ scheduleId: 'l1', key: 'l1:2026-10-31:420', firedAt: 't', result: 'refused: water low' }])
       expect(store.schedules.remove('l1')).toBe(true)
       expect(store.schedules.list()).toHaveLength(0)
     })
@@ -385,7 +388,39 @@ for (const [name, make] of impls) {
       expect(store.podLabels.captures(1)).toHaveLength(1)
       expect(store.podLabels.remove('upper-b', 2)).toBe(true)
       expect(store.podLabels.remove('upper-b', 2)).toBe(false)
-      expect(store.podLabels.forCapture('upper-b')).toEqual([{ captureId: 'upper-b', ts: '2026-11-02T00:00:00.000Z', camera: 'upper', slot: 4, label: 'unhealthy', labelledAt: '2026-11-09T00:00:00.000Z', plant: null, plantedAt: null }])
+      expect(store.podLabels.forCapture('upper-b')).toEqual([{ captureId: 'upper-b', ts: '2026-11-02T00:00:00.000Z', camera: 'upper', slot: 4, label: 'unhealthy', labelledAt: '2026-11-09T00:00:00.000Z', plant: null, plantedAt: null, source: 'picked', suggested: null, suggestedBy: null, suggestedConfidence: null }])
+    })
+
+    it('pod labels keep how they were saved, count by source and find each pod\'s last label (#261)', () => {
+      store = make()
+      const base = { camera: 'upper' as const, labelledAt: '2026-11-09T00:00:00.000Z', plant: null, plantedAt: null }
+      const set = (captureId: string, ts: string, slot: number, label: PodLabelValue, s: Partial<PodLabel> = {}) =>
+        store.podLabels.set({ ...base, captureId, ts, slot, label, ...s })
+      expect(store.podLabels.bySource()).toEqual([])
+      expect(store.podLabels.lastBefore('2026-11-05T00:00:00.000Z')).toEqual([])
+      // Saved without a suggestion, a label is picked.
+      expect(set('upper-a', '2026-11-01T00:00:00.000Z', 3, 'seeded')).toMatchObject({ source: 'picked', suggested: null, suggestedBy: null, suggestedConfidence: null })
+      const model = { source: 'corrected' as const, suggested: 'empty' as const, suggestedBy: 'pod-state@1', suggestedConfidence: 0.91 }
+      expect(set('upper-b', '2026-11-02T00:00:00.000Z', 3, 'sprouted', model)).toMatchObject(model)
+      set('upper-b', '2026-11-02T00:00:00.000Z', 4, 'growing', { source: 'accepted', suggested: 'growing', suggestedBy: 'carry' })
+      set('upper-c', '2026-11-03T00:00:00.000Z', 4, 'growing', { source: 'accepted', suggested: 'growing', suggestedBy: 'carry' })
+      set('upper-c', '2026-11-03T00:00:00.000Z', 5, 'ready', { source: 'accepted', suggested: 'ready', suggestedBy: 'pod-state@1', suggestedConfidence: 0.88 })
+      expect(store.podLabels.forCapture('upper-c').map(l => [l.slot, l.source, l.suggestedBy, l.suggestedConfidence])).toEqual([[4, 'accepted', 'carry', null], [5, 'accepted', 'pod-state@1', 0.88]])
+      expect(store.podLabels.bySource()).toEqual([
+        { source: 'accepted', suggestedBy: 'carry', n: 2 },
+        { source: 'accepted', suggestedBy: 'pod-state@1', n: 1 },
+        { source: 'corrected', suggestedBy: 'pod-state@1', n: 1 },
+        { source: 'picked', suggestedBy: null, n: 1 },
+      ])
+      // Relabelling replaces how it was saved.
+      expect(set('upper-b', '2026-11-02T00:00:00.000Z', 3, 'growing')).toMatchObject({ label: 'growing', source: 'picked', suggested: null, suggestedBy: null, suggestedConfidence: null })
+      // Only photos before the time count; each pod's newest wins, the first capture by id on a tie.
+      expect(store.podLabels.lastBefore('2026-11-03T00:00:00.000Z').map(l => [l.slot, l.captureId, l.label])).toEqual([[3, 'upper-b', 'growing'], [4, 'upper-b', 'growing']])
+      set('upper-a2', '2026-11-02T00:00:00.000Z', 4, 'sprouted')
+      set('upper-b2', '2026-11-02T00:00:00.000Z', 4, 'ready')
+      expect(store.podLabels.lastBefore('2026-11-03T00:00:00.000Z').map(l => [l.slot, l.captureId])).toEqual([[3, 'upper-b'], [4, 'upper-a2']])
+      expect(store.podLabels.lastBefore('2026-12-01T00:00:00.000Z').map(l => [l.slot, l.captureId])).toEqual([[3, 'upper-b'], [4, 'upper-c'], [5, 'upper-c']])
+      expect(store.podLabels.lastBefore('2026-11-01T00:00:00.000Z')).toEqual([])
     })
 
     it('pod labels keep the plant from the first labelling, unless it had none', () => {
@@ -403,6 +438,25 @@ for (const [name, make] of impls) {
       expect(store.podLabels.remove('upper-a', 3)).toBe(true)
       expect(set('seeded', 'Kale', '2026-11-08')).toMatchObject({ plant: 'Kale', plantedAt: '2026-11-08' })
       expect(store.podLabels.counts()).toMatchObject({ seeded: 1, growing: 0 })
+    })
+
+    it('suggestion dismissals upsert per photo and pod, keep the first time, and never count as labels (#261)', () => {
+      store = make()
+      const d = (captureId: string, ts: string, slot: number, dismissedAt = '2026-11-09T00:00:00.000Z') => store.dismissals.dismiss({ captureId, ts, slot, dismissedAt })
+      expect(store.dismissals.forCapture('lower-b')).toEqual([])
+      expect(d('lower-b', '2026-11-02T00:00:00.000Z', 28)).toEqual({ captureId: 'lower-b', ts: '2026-11-02T00:00:00.000Z', slot: 28, dismissedAt: '2026-11-09T00:00:00.000Z' })
+      expect(d('lower-b', '2026-11-02T00:00:00.000Z', 28, '2026-11-10T00:00:00.000Z')).toMatchObject({ dismissedAt: '2026-11-09T00:00:00.000Z' })
+      d('lower-b', '2026-11-02T00:00:00.000Z', 22)
+      d('lower-a', '2026-11-01T00:00:00.000Z', 25)
+      expect(store.dismissals.forCapture('lower-b').map(r => r.slot)).toEqual([22, 28])
+      expect(store.dismissals.range('2026-11-01T00:00:00.000Z', '2026-11-03T00:00:00.000Z').map(r => `${r.captureId}:${r.slot}`)).toEqual(['lower-a:25', 'lower-b:22', 'lower-b:28'])
+      expect(store.dismissals.range('2026-11-02T00:00:00.000Z', '2026-11-03T00:00:00.000Z')).toHaveLength(2)
+      expect(store.podLabels.forCapture('lower-b')).toEqual([])
+      expect(store.podLabels.counts()).toEqual({ empty: 0, seeded: 0, sprouted: 0, growing: 0, ready: 0, unhealthy: 0 })
+      expect(store.podLabels.captures()).toEqual([])
+      expect(store.dismissals.restore('lower-b', 28)).toBe(true)
+      expect(store.dismissals.restore('lower-b', 28)).toBe(false)
+      expect(store.dismissals.forCapture('lower-b')).toEqual([{ captureId: 'lower-b', ts: '2026-11-02T00:00:00.000Z', slot: 22, dismissedAt: '2026-11-09T00:00:00.000Z' }])
     })
 
     it('pod codes keep only confirmed pairs, and each camera\'s latest reads (#224)', () => {
@@ -520,10 +574,58 @@ describe('SqliteStore on disk', () => {
       db.prepare('INSERT INTO pod_labels (captureId, ts, camera, slot, label, labelledAt) VALUES (?, ?, ?, ?, ?, ?)').run('upper-1', '2026-11-01T00:00:00.000Z', 'upper', 2, 'growing', '2026-11-09T00:00:00.000Z')
       db.close()
       const store = new SqliteStore({ url })
-      expect(store.podLabels.forCapture('upper-1')).toEqual([{ captureId: 'upper-1', ts: '2026-11-01T00:00:00.000Z', camera: 'upper', slot: 2, label: 'growing', labelledAt: '2026-11-09T00:00:00.000Z', plant: null, plantedAt: null }])
+      expect(store.podLabels.forCapture('upper-1')).toEqual([{ captureId: 'upper-1', ts: '2026-11-01T00:00:00.000Z', camera: 'upper', slot: 2, label: 'growing', labelledAt: '2026-11-09T00:00:00.000Z', plant: null, plantedAt: null, source: 'picked', suggested: null, suggestedBy: null, suggestedConfidence: null }])
       // Relabelling it fills the snapshot in.
       store.podLabels.set({ captureId: 'upper-1', ts: '2026-11-01T00:00:00.000Z', camera: 'upper', slot: 2, label: 'seeded', labelledAt: '2026-11-10T00:00:00.000Z', plant: 'Basil', plantedAt: '2026-10-31' })
       expect(store.podLabels.forCapture('upper-1')).toMatchObject([{ label: 'seeded', plant: 'Basil', plantedAt: '2026-10-31' }])
+      store.close()
+    }
+    finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('reads labels made before suggestions as picked, with no suggestion (#261)', () => {
+    const root = mkdtempSync(join(tmpdir(), 'store-'))
+    try {
+      // A database at migration 0021, with a label in it.
+      const url = join(root, 'old.db')
+      const journal = JSON.parse(readFileSync(join(defaultMigrationsFolder(), 'meta/_journal.json'), 'utf8')) as { entries: { tag: string }[] }
+      const old = join(root, 'migrations-0021')
+      cpSync(defaultMigrationsFolder(), old, { recursive: true })
+      writeFileSync(join(old, 'meta/_journal.json'), JSON.stringify({ ...journal, entries: journal.entries.filter(e => e.tag < '0022') }))
+      const db = new Database(url)
+      migrate(drizzle(db), { migrationsFolder: old })
+      db.prepare('INSERT INTO pod_labels (captureId, ts, camera, slot, label, labelledAt, plant, plantedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run('upper-1', '2026-11-01T00:00:00.000Z', 'upper', 2, 'growing', '2026-11-09T00:00:00.000Z', 'Basil', '2026-10-20')
+      db.close()
+      const store = new SqliteStore({ url })
+      expect(store.podLabels.forCapture('upper-1')).toEqual([{ captureId: 'upper-1', ts: '2026-11-01T00:00:00.000Z', camera: 'upper', slot: 2, label: 'growing', labelledAt: '2026-11-09T00:00:00.000Z', plant: 'Basil', plantedAt: '2026-10-20', source: 'picked', suggested: null, suggestedBy: null, suggestedConfidence: null }])
+      expect(store.podLabels.bySource()).toEqual([{ source: 'picked', suggestedBy: null, n: 1 }])
+      store.close()
+    }
+    finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('adds suggestion dismissals to a database at 0023, leaving its labels alone (#261)', () => {
+    const root = mkdtempSync(join(tmpdir(), 'store-'))
+    try {
+      const url = join(root, 'old.db')
+      const journal = JSON.parse(readFileSync(join(defaultMigrationsFolder(), 'meta/_journal.json'), 'utf8')) as { entries: { tag: string }[] }
+      const old = join(root, 'migrations-0023')
+      cpSync(defaultMigrationsFolder(), old, { recursive: true })
+      writeFileSync(join(old, 'meta/_journal.json'), JSON.stringify({ ...journal, entries: journal.entries.filter(e => e.tag < '0024') }))
+      const db = new Database(url)
+      migrate(drizzle(db), { migrationsFolder: old })
+      expect(db.prepare('SELECT name FROM sqlite_master WHERE name = ?').get('suggestion_dismissals')).toBeUndefined()
+      db.prepare('INSERT INTO pod_labels (captureId, ts, camera, slot, label, labelledAt, source) VALUES (?, ?, ?, ?, ?, ?, ?)').run('lower-1', '2026-11-01T00:00:00.000Z', 'lower', 22, 'seeded', '2026-11-09T00:00:00.000Z', 'accepted')
+      db.close()
+      const store = new SqliteStore({ url })
+      expect(store.dismissals.forCapture('lower-1')).toEqual([])
+      store.dismissals.dismiss({ captureId: 'lower-1', ts: '2026-11-01T00:00:00.000Z', slot: 28, dismissedAt: '2026-11-10T00:00:00.000Z' })
+      expect(store.dismissals.forCapture('lower-1').map(d => d.slot)).toEqual([28])
+      expect(store.podLabels.forCapture('lower-1')).toMatchObject([{ slot: 22, label: 'seeded', source: 'accepted' }])
       store.close()
     }
     finally {

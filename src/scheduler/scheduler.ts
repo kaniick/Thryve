@@ -5,15 +5,49 @@
  * time (interpolated setpoints, so sunrise/sunset ramps are free), and pump
  * runs are bounded events that must fire at most once per (schedule, day,
  * minute) even if the process restarts — the Store's run log is the
- * idempotency key. All inputs are injected so it is testable to the minute.
+ * idempotency key. A run the HAL refuses (one lost tank reading leaves the
+ * level unknown, which refuses a start) is tried again a minute apart, through
+ * the same guarded HAL call, and raises an alert if none is accepted. All
+ * inputs are injected so it is testable to the minute.
  */
 import type { LightArbiter } from '../control/light'
-import type { HalClient } from '../hardware/types'
+import type { ActuatorState } from '../hardware/contract'
+import type { HalClient, HalSnapshot } from '../hardware/types'
 import type { EventBus } from '../lib/eventBus'
 import type { LightSpec, PumpSpec, Schedule, Store } from '../store/types'
 import type { SunHours } from './lightPlan'
 import { followSun } from './sun'
-import { dayEnabled, localTime } from './time'
+import { dayEnabled, localTime, minuteToHHMM } from './time'
+
+/** How many times a refused scheduled pump run is tried again, a minute apart, after its first try. */
+export const PUMP_RETRIES = 15
+
+/** Raised when a scheduled pump run was refused on every try; cleared when a scheduled run next fires. Core-only. */
+export const MISSED_ALERT = 'pump_schedule_missed'
+
+/** A refused scheduled run still being tried. */
+interface Retry {
+  key: string
+  /** Its tries so far, the first included. */
+  tries: number
+  /** The minute (since the epoch) of its last try: the next waits for a later one. */
+  lastMinute: number
+}
+
+/**
+ * Why hald didn't start the pump. A refusal with a latched fault rejects with
+ * it; a start refused on the tank level comes back as the pump's state, off and
+ * with no fault, so the reason is read from what core last heard.
+ */
+export function refusalReason(snap: HalSnapshot, e?: unknown, state?: ActuatorState): string {
+  if (e) return (e as Error).message.replace(/^refused:\s*/i, '')
+  if (state?.fault) return state.fault
+  if (snap.alerts.water_low?.active) return 'water low'
+  if (snap.alerts.over_temp?.active) return 'board over temperature'
+  const level = snap.sensors.water_distance
+  if (!level || level.quality === 'suspect') return 'tank level unavailable'
+  return 'the unit refused the start'
+}
 
 export interface SchedulerDeps {
   store: Store
@@ -87,6 +121,8 @@ export class Scheduler {
   private lastLightApplied: number | null = null
   private readonly now: () => Date
   private readonly log: (msg: string) => void
+  /** Refused scheduled pump runs being tried again, by schedule id. */
+  private readonly retries = new Map<string, Retry>()
 
   constructor(private readonly deps: SchedulerDeps) {
     this.now = deps.now ?? (() => new Date())
@@ -143,19 +179,59 @@ export class Scheduler {
       }
       const key = `${s.id}:${lt.date}:${lt.minute}`
       if (!store.schedules.recordRun({ scheduleId: s.id, key, firedAt: now.toISOString(), result: 'pending' })) continue
-      try {
-        await hal.setActuator('pump', { on: true, level: s.spec.level, durationS: s.spec.durationS })
-        pumpFired.push(s.id)
-        this.deps.events.emit({ kind: 'schedule', action: 'fired', id: s.id })
-        this.log(`pump schedule ${s.name} fired for ${s.spec.durationS}s`)
+      // Its next run is due: an earlier one still being retried gives way to it.
+      this.retries.delete(s.id)
+      if (await this.runPump(s, key, 1, now)) pumpFired.push(s.id)
+    }
+    // A refused run is tried again once a minute, through the same HAL call: hald's guard still decides.
+    for (const [id, r] of [...this.retries]) {
+      if (Math.floor(now.getTime() / 60_000) <= r.lastMinute || this.deps.clockTrusted?.() === false) continue
+      const s = store.schedules.get(id)
+      if (s?.kind !== 'pump' || !s.enabled) {
+        this.retries.delete(id)
+        continue
       }
-      catch (e) {
-        // The HAL refused (dry tank, latched fault). The run stays recorded so
-        // we don't hammer it every minute; the alert surfaces the reason.
-        this.log(`pump schedule ${s.name} refused: ${(e as Error).message}`)
-      }
+      if (await this.runPump(s as Schedule & { spec: PumpSpec }, r.key, r.tries + 1, now)) pumpFired.push(id)
     }
     return { lightTarget, pumpFired }
+  }
+
+  /** One try of a scheduled run; true when hald started the pump. */
+  private async runPump(s: Schedule & { spec: PumpSpec }, key: string, tries: number, now: Date): Promise<boolean> {
+    const { store, hal, events } = this.deps
+    let reason: string | null = null
+    try {
+      const state = await hal.setActuator('pump', { on: true, level: s.spec.level, durationS: s.spec.durationS })
+      if (!state.on) reason = refusalReason(hal.snapshot(), undefined, state)
+    }
+    catch (e) {
+      reason = refusalReason(hal.snapshot(), e)
+    }
+    const at = minuteToHHMM(s.spec.minute)
+    if (reason === null) {
+      this.retries.delete(s.id)
+      store.schedules.setRunResult(key, 'fired')
+      events.emit({ kind: 'schedule', action: 'fired', id: s.id })
+      this.log(`pump schedule ${s.name} fired for ${s.spec.durationS}s${tries > 1 ? ` on try ${tries}` : ''}`)
+      if (store.alerts.list({ activeOnly: true }).some(a => a.kind === MISSED_ALERT)) {
+        store.alerts.clear(MISSED_ALERT, now.toISOString())
+        events.emit({ kind: 'mutation', path: `alerts.${MISSED_ALERT}` })
+      }
+      return true
+    }
+    store.schedules.setRunResult(key, `refused: ${reason}`)
+    // console.warn reaches the unit's journal; the routine log doesn't.
+    const left = PUMP_RETRIES + 1 - tries
+    console.warn(`pump schedule ${s.name} (${at}) refused on try ${tries}: ${reason}${left > 0 ? `; trying again in a minute (${left} left)` : '; giving up'}`)
+    if (left > 0) {
+      this.retries.set(s.id, { key, tries, lastMinute: Math.floor(now.getTime() / 60_000) })
+      return false
+    }
+    this.retries.delete(s.id)
+    const last = minuteToHHMM(localTime(now, store.settings.get().timezone).minute)
+    store.alerts.raise(MISSED_ALERT, `Scheduled watering at ${at} didn't run: the pump was refused ${tries} times, through ${last}. Last reason: ${reason}.`, now.toISOString())
+    events.emit({ kind: 'mutation', path: `alerts.${MISSED_ALERT}` })
+    return false
   }
 }
 

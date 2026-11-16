@@ -145,7 +145,7 @@ export function createMcpServer(ctx: Context): McpServer {
   }, async i => text(await caller.camera.list({ camera: i.camera, limit: i.limit ?? 10 })))
 
   server.registerTool('list_analyses', {
-    description: 'Camera analysers and what they have produced: every on-device analyser (id, version, metrics it emits, which one is primary for pod_health) plus any off-device worker that posted results, with row and capture counts and time span, and the analysis queue status. labels: the grower\'s pod labels for training (empty, seeded, sprouted, growing, ready, unhealthy): how many pods carry each, and the labelled captures newest first with how many pods each has labelled. Pass slot to also get that pod\'s series from every analyser@version side by side, to see which ones agree. Read-only: choosing the primary analyser, re-running analysers and labelling pods are done in the app.',
+    description: 'Camera analysers and what they have produced: every on-device analyser (id, version, metrics it emits, which one is primary for pod_health) plus any off-device worker that posted results, with row and capture counts and time span, and the analysis queue status. labels: the grower\'s pod labels for training (empty, seeded, sprouted, growing, ready, unhealthy): how many pods carry each; sources, how many were picked with no suggestion, accepted from the tagger\'s suggestion or corrected from it (#261); suggesters, each suggestion source (carry = the pod\'s last label, record = the pod record, pod-state@<version> = the model) with how often it was accepted or corrected on reviewed labels and the share right, to tell whether the model beats "same as last time"; and the labelled captures newest first with how many pods each has labelled. Pass slot to also get that pod\'s series from every analyser@version side by side, to see which ones agree. Read-only: choosing the primary analyser, re-running analysers and labelling pods are done in the app.',
     inputSchema: { slot: z.number().int().min(1).max(30).optional(), metric: z.string().optional() },
   }, async (i) => {
     const analyzers = await caller.vision.analyzers()
@@ -175,7 +175,7 @@ export function createMcpServer(ctx: Context): McpServer {
   })
 
   server.registerTool('list_labels', {
-    description: 'The grower\'s pod labels, the training data for pod-state models. Labels: empty (capped, no yCube), seeded (yCube in, nothing visible yet), sprouted, growing, ready, unhealthy. With no arguments: how many pods carry each label and the labelled captures, newest first. With capture_id: that capture\'s label for each pod, all of them in one list; capture_id wins over label, camera, limit and cursor, which are then ignored. With label and/or camera (upper or lower): the labelled pods themselves, newest photo first, each with the pod\'s plant and plantedAt when it was labelled, daysSinceSowing at the photo and the photo\'s url (null once pruned); pass next back as cursor for the next page. Read-only: labelling, relabelling and clearing a label (Analysis → Label pods, tap again or use Clear, or All labels → Remove) are done in the app.',
+    description: 'The grower\'s pod labels, the training data for pod-state models. Labels: empty (capped, no yCube), seeded (yCube in, nothing visible yet), sprouted, growing, ready, unhealthy. With no arguments: how many pods carry each label and the labelled captures, newest first. With capture_id: that capture\'s label for each pod, all of them in one list; capture_id wins over label, camera, limit and cursor, which are then ignored. With label and/or camera (upper or lower): the labelled pods themselves, newest photo first, each with the pod\'s plant and plantedAt when it was labelled, source (picked, accepted or corrected) with the suggestion (suggested, suggestedBy, suggestedConfidence), daysSinceSowing at the photo and the photo\'s url (null once pruned); pass next back as cursor for the next page. Read-only: labelling, relabelling and clearing a label (Analysis → Label pods, tap again or use Clear, or All labels → Remove) are done in the app.',
     inputSchema: {
       capture_id: z.string().optional(),
       label: z.enum(POD_LABELS).optional(),
@@ -336,6 +336,11 @@ export function createMcpServer(ctx: Context): McpServer {
   }, async i => text(await caller.pump.setPower({ power: i.power, softStart: i.soft_start, softStartMs: i.soft_start_ms })))
 
   server.registerTool('stop_pump', { description: 'Stop the pump immediately.', inputSchema: {} }, async () => text(await caller.pump.stop()))
+
+  server.registerTool('set_pump_dry_grace', {
+    description: 'Set the spin-up grace of the pump\'s dry-run current check: how long after a start (ms) the pump current isn\'t judged, while it primes. The unit holds it to the bounds in its hal.toml (system.limits.pumpDryGraceMinMs to pumpDryGraceMaxMs in status) and returns its limits. Too short can stop a pump that is only priming; too long lets a dry one run longer. It is the only dry-run setting that can be changed here: which guard runs (tank level, pump current or both) and the current cutoff are set on the unit only.',
+    inputSchema: { ms: z.number().int().min(0).max(10_000) },
+  }, async i => text(await caller.pump.setDryGrace({ ms: i.ms })))
 
   server.registerTool('acknowledge_alert', {
     description: 'Acknowledge an alert by id (from status). For latched hardware faults (pump_fault, dose_fault) this re-enables the actuator — only do it after the cause is fixed (e.g. tank refilled, dosing checked). For reminders it marks the chore done.',

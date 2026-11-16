@@ -11,7 +11,7 @@ use rppal::i2c::I2c;
 use rppal::pwm::{Channel, Polarity, Pwm};
 
 use crate::bus::{DigitalIn, DigitalOut, I2cBus, PwmOut};
-use crate::pwm::{found_duty, retry_while};
+use crate::pwm::{found_duty, pin_drive, retry_while, PinDrive};
 
 fn bus_err<E: std::fmt::Display>(e: E) -> DeviceError {
     DeviceError::Bus(e.to_string())
@@ -142,8 +142,9 @@ impl PwmOut for HwPwm {
     }
 }
 
-/// Software PWM on any GPIO: rppal times it on a dedicated thread. 0 and 100 %
-/// are plain off and on, with no thread.
+/// Software PWM on any GPIO: rppal times it on a dedicated thread. At duty 1
+/// there's no thread: the pin is simply held high, as the stock firmware drives
+/// the pump; at 0 it's held low.
 pub struct SoftPwm {
     pin: OutputPin,
     hz: f64,
@@ -162,22 +163,18 @@ impl SoftPwm {
 
 impl PwmOut for SoftPwm {
     fn set_duty(&mut self, duty: f64) -> Result<(), DeviceError> {
-        if duty <= 0.0 {
-            self.pin.clear_pwm().map_err(bus_err)?;
-            self.pin.set_low();
-            Ok(())
-        } else if duty >= 1.0 {
-            // Full power is the pin held high, as the stock firmware drives the pump: no
-            // PWM thread busy-waiting on a single-core Zero, and none of its per-period
-            // low glitch (rppal drops the pin low at the end of every period, even at 100 %).
-            self.pin.clear_pwm().map_err(bus_err)?;
-            self.pin.set_high();
-            Ok(())
-        } else {
-            self.pin
-                .set_pwm_frequency(self.hz, duty.min(1.0))
-                .map_err(bus_err)
+        match pin_drive(duty) {
+            PinDrive::Low => {
+                self.pin.clear_pwm().map_err(bus_err)?;
+                self.pin.set_low();
+            }
+            PinDrive::High => {
+                self.pin.clear_pwm().map_err(bus_err)?;
+                self.pin.set_high();
+            }
+            PinDrive::Pwm(d) => self.pin.set_pwm_frequency(self.hz, d).map_err(bus_err)?,
         }
+        Ok(())
     }
 }
 

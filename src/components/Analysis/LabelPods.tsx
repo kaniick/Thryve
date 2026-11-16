@@ -15,10 +15,11 @@ import { PodOrder } from './PodOrder'
 type Camera = 'upper' | 'lower'
 type Shown = Camera | 'both'
 type Tab = 'tag' | 'all'
-/** What a tap does: set a label, or take it off. */
+/** What a tap does: set a label, or take it (or a suggestion) off. */
 type Brush = PodLabelValue | 'clear'
 type Frame = inferRouterOutputs<AppRouter>['camera']['list'][number]
 type Entry = inferRouterOutputs<AppRouter>['vision']['labelList']['labels'][number]
+type Hint = inferRouterOutputs<AppRouter>['vision']['suggestions'][number]
 
 /** Each label's colour, from the pod and growth-stage tokens. */
 export const LABEL_COLOR: Record<PodLabelValue, string> = {
@@ -33,11 +34,12 @@ export const LABEL_COLOR: Record<PodLabelValue, string> = {
 export const LABEL_MEANING: Record<PodLabelValue, string> = {
   empty: 'Capped, no yCube',
   seeded: 'A yCube in, nothing visible yet',
-  sprouted: 'First leaves showing',
-  growing: 'Leafy, not ready yet',
+  sprouted: 'Only seed leaves: the first pair of small, rounded leaves',
+  growing: 'True leaves showing (the plant\'s own leaf shape), not ready yet',
   ready: 'Ready to harvest',
   unhealthy: 'Yellowing, wilting or damaged',
 }
+const EMPTY_COUNTS = Object.fromEntries(POD_LABELS.map(l => [l, 0])) as Record<PodLabelValue, number>
 const name = (l: PodLabelValue) => l[0]?.toUpperCase() + l.slice(1)
 const SHOWN = [{ value: 'upper', label: 'Upper' }, { value: 'lower', label: 'Lower' }, { value: 'both', label: 'Both' }] as const
 const TABS = [{ value: 'tag', label: 'Tag photos' }, { value: 'all', label: 'All labels' }] as const
@@ -49,6 +51,13 @@ export const PAGE = 60
 const ROUND_MS = 5 * 60_000
 const at = (n: number) => `${n * 100}%`
 const srcOf = (path: string, url: string) => (path.startsWith('data:') ? path : `${apiBase()}${url}`)
+
+/** Where a suggestion came from, for its tooltip: `last labelled sprouted on 13 Nov`, `pod-state 86%`. */
+export function suggestionTip(h: Hint): string {
+  if (h.by === 'carry') return `last labelled ${h.label} on ${new Date(String(h.from)).toLocaleDateString([], { day: 'numeric', month: 'short' })}`
+  if (h.by === 'record') return `the pod record says ${h.label}`
+  return `${h.by.split('@')[0]} ${Math.round(Number(h.confidence) * 100)}%`
+}
 
 /** One round of captures: its newest still's time, and each camera's still in it, if it took one. */
 export interface Round { ts: string, upper?: Frame, lower?: Frame }
@@ -72,18 +81,19 @@ function Dot({ label }: { label: PodLabelValue }) {
   return <span aria-hidden className="size-2 shrink-0 rounded-full" style={{ background: LABEL_COLOR[label] }} />
 }
 
-/** One chip per label, and Clear when `clear` is set. */
-function LabelChips({ value, onPick, clear, ariaLabel }: { value: Brush | null, onPick: (b: Brush) => void, clear?: boolean, ariaLabel: string }) {
+/** One chip per label, with how many pods carry it when `counts` is given, and Clear when `clear` is set. */
+function LabelChips({ value, onPick, clear, counts, ariaLabel }: { value: Brush | null, onPick: (b: Brush) => void, clear?: boolean, counts?: Record<PodLabelValue, number>, ariaLabel: string }) {
   return (
     <div role="group" aria-label={ariaLabel} className="flex flex-wrap gap-1.5">
       {POD_LABELS.map(l => (
-        <Pill key={l} selected={value === l} title={LABEL_MEANING[l]} className="flex items-center gap-1.5 px-2.5 py-1 text-xs" onClick={() => onPick(l)}>
+        <Pill key={l} selected={value === l} title={LABEL_MEANING[l]} aria-label={counts ? `${name(l)}, ${counts[l]} labelled` : undefined} className="flex items-center gap-1.5 px-2.5 py-1 text-xs" onClick={() => onPick(l)}>
           <Dot label={l} />
           {name(l)}
+          {counts && <span className="font-mono text-[11px] text-fg-3">{counts[l]}</span>}
         </Pill>
       ))}
       {clear && (
-        <Pill selected={value === 'clear'} title="Taps take a pod's label off" className="flex items-center gap-1.5 px-2.5 py-1 text-xs" onClick={() => onPick('clear')}>
+        <Pill selected={value === 'clear'} title="Taps take a pod's label off, or dismiss its suggestion" className="flex items-center gap-1.5 px-2.5 py-1 text-xs" onClick={() => onPick('clear')}>
           <Eraser size={12} aria-hidden className="text-fg-3" />
           Clear
         </Pill>
@@ -92,12 +102,18 @@ function LabelChips({ value, onPick, clear, ariaLabel }: { value: Brush | null, 
   )
 }
 
-/** One camera's still with a tappable box per pod. */
-function Photo({ camera, frame, regions, labelOf, onTap, compact, empty }: {
+/** What a suggestion's tooltip says to do when the pod can't be seen, or the box isn't on one. */
+export const NOT_VISIBLE = 'Not visible here? Pick Clear and tap to dismiss the suggestion on this photo. A box that doesn\'t sit on a pod should be moved in Analysis → Latest photos → Pod bounds → Edit boxes.'
+
+/** One camera's still with a tappable box per pod: solid when labelled, dashed with `?` when only suggested. */
+function Photo({ camera, frame, regions, labelOf, suggestionOf, dismissedOf, onTap, compact, empty }: {
   camera: Camera
   frame: Frame | undefined
   regions: PodRegions
   labelOf: (slot: number) => PodLabelValue | null
+  suggestionOf: (slot: number) => Hint | null
+  /** The pod's suggestion was dismissed on this photo. */
+  dismissedOf: (slot: number) => boolean
   onTap: (slot: number) => void
   /** Side by side, where the label's word won't fit a box. */
   compact?: boolean
@@ -125,24 +141,32 @@ function Photo({ camera, frame, regions, labelOf, onTap, compact, empty }: {
                   const r = regions[s]
                   if (!r) return null
                   const l = labelOf(s)
+                  // A saved label replaces its suggestion.
+                  const hint = l ? null : suggestionOf(s)
+                  const dismissed = !l && dismissedOf(s)
                   return (
                     <button
                       key={s}
                       type="button"
                       data-slot={s}
+                      data-suggested={hint?.label}
+                      data-dismissed={dismissed || undefined}
                       aria-pressed={l !== null}
-                      aria-label={`Pod ${s}: ${l ?? 'not labelled'}`}
-                      className={cn('absolute cursor-pointer rounded-[3px] border-[1.5px] p-0 outline-none focus-visible:border-fg', l ? 'border-solid' : 'border-dashed border-fg-2/70 bg-transparent hover:bg-fg/10')}
-                      style={{ left: at(r.x), top: at(r.y), width: at(r.w), height: at(r.h), ...(l ? { borderColor: LABEL_COLOR[l], background: `color-mix(in oklab, ${LABEL_COLOR[l]} 18%, transparent)` } : null) }}
+                      aria-label={`Pod ${s}: ${l ?? (hint ? `suggested ${hint.label}` : dismissed ? 'suggestion dismissed' : 'not labelled')}`}
+                      title={hint ? `Suggested ${hint.label}: ${suggestionTip(hint)}. ${NOT_VISIBLE}` : dismissed ? 'Suggestion dismissed on this photo. Tap with Clear to bring it back.' : undefined}
+                      className={cn('absolute cursor-pointer rounded-[3px] border-[1.5px] p-0 outline-none focus-visible:border-fg', l ? 'border-solid' : 'border-dashed bg-transparent hover:bg-fg/10', !l && !hint && 'border-fg-2/70')}
+                      style={{ left: at(r.x), top: at(r.y), width: at(r.w), height: at(r.h), ...(l ? { borderColor: LABEL_COLOR[l], background: `color-mix(in oklab, ${LABEL_COLOR[l]} 18%, transparent)` } : hint ? { borderColor: LABEL_COLOR[hint.label] } : null) }}
                       onClick={() => onTap(s)}
                     >
                       <span
-                        className={cn('absolute left-0 top-0 whitespace-nowrap rounded-br-[4px] px-1 font-mono text-[10px] leading-[14px]', l ? 'text-inverse' : 'bg-code/80 text-fg-2')}
-                        style={l ? { background: LABEL_COLOR[l] } : undefined}
+                        className={cn('absolute left-0 top-0 whitespace-nowrap rounded-br-[4px] px-1 font-mono text-[10px] leading-[14px]', l ? 'text-inverse' : 'bg-code/80', !l && !hint && 'text-fg-2', hint && 'border border-dashed')}
+                        style={l ? { background: LABEL_COLOR[l] } : hint ? { borderColor: LABEL_COLOR[hint.label], color: LABEL_COLOR[hint.label] } : undefined}
                       >
                         {s}
                         {/* The fill says which label on a phone, where the word won't fit the box. */}
                         {l && !compact && <span className="hidden sm:inline">{` · ${l}`}</span>}
+                        {hint && !compact && <span className="hidden sm:inline">{` · ${hint.label}`}</span>}
+                        {hint && '?'}
                       </span>
                     </button>
                   )
@@ -157,23 +181,35 @@ function Photo({ camera, frame, regions, labelOf, onTap, compact, empty }: {
 
 /**
  * Tag what each pod shows in a capture (#184), the ground truth a pod
- * classifier is trained on (ADR-0019). Pick a label, then tap pods: one tap
- * sets it, tapping a pod that already has it (or tapping with Clear) clears
- * it, and a pod can be retagged at any time. Both shows the two cameras'
+ * classifier is trained on (ADR-0019). Each pod may carry a suggestion (#261),
+ * dashed with a `?`: with no label picked, a tap accepts it, and Accept the
+ * rest accepts every remaining one on a photo. Pick a label, then tap pods:
+ * one tap sets it (correcting any suggestion), tapping a pod that already has
+ * it (or tapping with Clear) clears it, and a pod can be retagged at any time.
+ * Clear on a pod with only a suggestion dismisses it on that photo (the pod
+ * can't be seen, or its box isn't on a pod); Clear again brings it back.
+ * An untouched pod is never saved. Both shows the two cameras'
  * stills from one round together. All labels lists every tagged pod as its
  * crop, to check, change or remove. Labels go into the dataset export with
  * each pod's crop.
  */
-export function LabelPods({ boxes }: { boxes: (camera: Camera) => PodRegions }) {
+export function LabelPods({ boxes, onEditBoxes }: {
+  boxes: (camera: Camera) => PodRegions
+  /** Show the pod boxes to edit, for a box that isn't on a pod. */
+  onEditBoxes?: () => void
+}) {
   const utils = trpc.useUtils()
   const [tab, setTab] = useState<Tab>('tag')
   const [shown, setShown] = useState<Shown>('upper')
   const [index, setIndex] = useState(0)
   // A capture opened from All labels, shown until the grower steps away from it.
   const [opened, setOpened] = useState<string | null>(null)
-  const [brush, setBrush] = useState<Brush>('growing')
+  // No label picked: a tap accepts the pod's suggestion.
+  const [brush, setBrush] = useState<Brush | null>(null)
   // Taps show at once; the server's answer replaces them when it comes back.
   const [local, setLocal] = useState<Record<string, PodLabelValue | null>>({})
+  // Dismissals tapped, by the same key, shown until the server's list catches up.
+  const [gone, setGone] = useState<Record<string, boolean>>({})
   const upperList = trpc.camera.list.useQuery({ camera: 'upper', limit: HISTORY }, { enabled: shown !== 'lower' })
   const lowerList = trpc.camera.list.useQuery({ camera: 'lower', limit: HISTORY }, { enabled: shown !== 'upper' })
   const lists: Record<Camera, Frame[]> = { upper: upperList.data ?? [], lower: lowerList.data ?? [] }
@@ -193,12 +229,39 @@ export function LabelPods({ boxes }: { boxes: (camera: Camera) => PodRegions }) 
     upper: trpc.vision.labels.useQuery({ captureId: frames.upper?.id ?? '' }, { enabled: !!frames.upper }),
     lower: trpc.vision.labels.useQuery({ captureId: frames.lower?.id ?? '' }, { enabled: !!frames.lower }),
   }
+  const hints = {
+    upper: trpc.vision.suggestions.useQuery({ captureId: frames.upper?.id ?? '' }, { enabled: !!frames.upper }),
+    lower: trpc.vision.suggestions.useQuery({ captureId: frames.lower?.id ?? '' }, { enabled: !!frames.lower }),
+  }
+  const dismissals = {
+    upper: trpc.vision.dismissals.useQuery({ captureId: frames.upper?.id ?? '' }, { enabled: !!frames.upper }),
+    lower: trpc.vision.dismissals.useQuery({ captureId: frames.lower?.id ?? '' }, { enabled: !!frames.lower }),
+  }
   const stats = trpc.vision.labelStats.useQuery()
   const set = trpc.vision.setLabel.useMutation({
     onSuccess: () => {
       void utils.vision.invalidate()
     },
     onError: (_e, v) => setLocal(m => Object.fromEntries(Object.entries(m).filter(([k]) => k !== `${v.captureId}#${v.slot}`))),
+  })
+  const accept = trpc.vision.acceptSuggestions.useMutation({
+    onSuccess: () => {
+      void utils.vision.invalidate()
+    },
+    onError: (_e, v) => setLocal(m => Object.fromEntries(Object.entries(m).filter(([k]) => !k.startsWith(`${v.captureId}#`)))),
+  })
+  const ungone = (_e: unknown, v: { captureId: string, slot: number }) => setGone(m => Object.fromEntries(Object.entries(m).filter(([k]) => k !== `${v.captureId}#${v.slot}`)))
+  const dismiss = trpc.vision.dismissSuggestion.useMutation({
+    onSuccess: () => {
+      void utils.vision.invalidate()
+    },
+    onError: ungone,
+  })
+  const restore = trpc.vision.restoreSuggestion.useMutation({
+    onSuccess: () => {
+      void utils.vision.invalidate()
+    },
+    onError: ungone,
   })
 
   const labelOf = (camera: Camera, slot: number): PodLabelValue | null => {
@@ -207,19 +270,52 @@ export function LabelPods({ boxes }: { boxes: (camera: Camera) => PodRegions }) 
     if (k in local) return local[k] ?? null
     return saved[camera].data?.find(l => l.slot === slot)?.label ?? null
   }
+  const dismissedOf = (camera: Camera, slot: number): boolean => {
+    const k = `${frames[camera]?.id}#${slot}`
+    return k in gone ? !!gone[k] : !!dismissals[camera].data?.some(d => d.slot === slot)
+  }
+  const suggestionOf = (camera: Camera, slot: number): Hint | null => (dismissedOf(camera, slot) ? null : hints[camera].data?.find(h => h.slot === slot) ?? null)
+  /** The pods on a camera's photo with a suggestion and no label yet. */
+  const rest = (camera: Camera) => Object.keys(boxes(camera)).map(Number).filter(s => labelOf(camera, s) === null && suggestionOf(camera, s))
   const tap = (camera: Camera, slot: number) => {
     const frame = frames[camera]
     if (!frame) return
     const was = labelOf(camera, slot)
-    const next = brush === 'clear' || was === brush ? null : brush
+    if (brush === 'clear' && was === null) {
+      // Clear on a pod with no label dismisses its suggestion, or brings a dismissed one back.
+      const k = `${frame.id}#${slot}`
+      if (dismissedOf(camera, slot)) {
+        setGone(m => ({ ...m, [k]: false }))
+        restore.mutate({ captureId: frame.id, slot })
+      }
+      else if (suggestionOf(camera, slot)) {
+        setGone(m => ({ ...m, [k]: true }))
+        dismiss.mutate({ captureId: frame.id, slot })
+      }
+      return
+    }
+    let next: PodLabelValue | null
+    if (brush === null) {
+      // With no label picked, only an unlabelled pod's suggestion can be saved.
+      const hint = suggestionOf(camera, slot)
+      if (was !== null || !hint) return
+      next = hint.label
+    }
+    else next = brush === 'clear' || was === brush ? null : brush
     if (next === was) return
     setLocal(m => ({ ...m, [`${frame.id}#${slot}`]: next }))
     set.mutate({ captureId: frame.id, slot, label: next })
+  }
+  const acceptRest = (camera: Camera, frame: Frame) => {
+    const slots = rest(camera)
+    setLocal(m => ({ ...m, ...Object.fromEntries(slots.map(s => [`${frame.id}#${s}`, (suggestionOf(camera, s) as Hint).label])) }))
+    accept.mutate({ captureId: frame.id })
   }
   const go = (i: number) => {
     setIndex(i)
     setOpened(null)
     setLocal({})
+    setGone({})
   }
   const open = (l: Entry) => {
     setTab('tag')
@@ -227,6 +323,7 @@ export function LabelPods({ boxes }: { boxes: (camera: Camera) => PodRegions }) 
     setOpened(l.captureId)
     setIndex(0)
     setLocal({})
+    setGone({})
   }
   const cameras: Camera[] = single ? [single] : ['upper', 'lower']
   const pictured = cameras.filter(c => frames[c])
@@ -234,6 +331,7 @@ export function LabelPods({ boxes }: { boxes: (camera: Camera) => PodRegions }) 
   const done = slots.filter(([c, s]) => labelOf(c, s) !== null).length
   const counts = stats.data?.counts
   const total = stats.data?.pods ?? 0
+  const tally = stats.data
   // A capture opened from All labels that is gone: say so rather than show another one silently.
   const missed = beyond && !!fetched.error
 
@@ -266,19 +364,27 @@ export function LabelPods({ boxes }: { boxes: (camera: Camera) => PodRegions }) 
         ? <AllLabels boxes={boxes} counts={counts} total={total} onOpen={open} />
         : (
             <>
-              <div className="flex flex-wrap gap-x-4 gap-y-1.5 font-mono text-[11px] text-fg-3" aria-label="Label counts">
-                {POD_LABELS.map(l => (
-                  <span key={l} className="flex items-center gap-1.5" data-testid={`count-${l}`}>
-                    <Dot label={l} />
-                    {`${name(l)} ${counts?.[l] ?? 0}`}
-                  </span>
-                ))}
-                <span className="ml-auto">{`${total} pod${total === 1 ? '' : 's'} labelled`}</span>
-              </div>
-
               <div className="flex flex-col gap-1.5">
-                <LabelChips ariaLabel="Label to apply" value={brush} onPick={setBrush} clear />
-                <span className="text-xs text-fg-3">Tap a pod to tag it; tap again with the same label, or use Clear, to remove it.</span>
+                <LabelChips ariaLabel="Label to apply" value={brush} onPick={b => setBrush(brush === b ? null : b)} clear counts={counts ?? EMPTY_COUNTS} />
+                <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-fg-3">
+                  <span className="flex-1">
+                    {'Tap a dashed pod with no label picked to accept its suggestion. Pick a label and tap pods to set it; tap again with the same label, or use Clear, to remove it. Clear also removes a suggestion from a pod that can\'t be seen, on that photo only; tap again with Clear to bring it back.'}
+                    {onEditBoxes && (
+                      <>
+                        {' '}
+                        <button type="button" className="cursor-pointer border-0 bg-transparent p-0 text-xs text-fg-2 underline hover:text-fg" onClick={onEditBoxes}>Box not on a pod? Move it in Pod bounds</button>
+                      </>
+                    )}
+                  </span>
+                  <span className="font-mono text-[11px]">{`${total} pod${total === 1 ? '' : 's'} labelled`}</span>
+                </div>
+                {tally?.sources && (
+                  // How the labels were saved, and how often each suggester was right on the reviewed ones.
+                  <span className="font-mono text-[11px] text-fg-3" data-testid="label-sources">
+                    {`${tally.sources.picked} picked · ${tally.sources.accepted} accepted · ${tally.sources.corrected} corrected`}
+                    {tally.suggesters.map(s => ` · ${s.by} ${Math.round(s.right * 100)}% right`).join('')}
+                  </span>
+                )}
               </div>
 
               <figure className="m-0 flex min-w-0 flex-col gap-1.5">
@@ -296,10 +402,17 @@ export function LabelPods({ boxes }: { boxes: (camera: Camera) => PodRegions }) 
                         frame={frames[c]}
                         regions={boxes(c)}
                         labelOf={s => labelOf(c, s)}
+                        suggestionOf={s => suggestionOf(c, s)}
+                        dismissedOf={s => dismissedOf(c, s)}
                         onTap={s => tap(c, s)}
                         compact={!single}
                         empty={single || !moment ? 'No photos from this camera yet.' : `No ${c} still this round.`}
                       />
+                      {frames[c] && rest(c).length > 0 && (
+                        <Button size="sm" variant="ghost" className="self-start px-2 py-1" aria-label={`Accept the rest on the ${c} photo`} disabled={accept.isPending} onClick={() => acceptRest(c, frames[c] as Frame)}>
+                          {`Accept the rest (${rest(c).length})`}
+                        </Button>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -326,6 +439,9 @@ export function LabelPods({ boxes }: { boxes: (camera: Camera) => PodRegions }) 
             </>
           )}
       {set.error && <InlineError>{set.error.message}</InlineError>}
+      {accept.error && <InlineError>{accept.error.message}</InlineError>}
+      {dismiss.error && <InlineError>{dismiss.error.message}</InlineError>}
+      {restore.error && <InlineError>{restore.error.message}</InlineError>}
     </div>
   )
 }

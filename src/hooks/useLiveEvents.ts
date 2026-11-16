@@ -42,6 +42,8 @@ const TOUCHES = new Map<string, readonly Area[]>([
   // yCube dot codes (#224): Label pods' code list.
   ['podCodes', ['vision']],
   ['pods', ['grow', 'planner', 'vision', 'protocol']],
+  // The dry-run grace lives in hald's limits.
+  ['pump.dryGrace', ['system']],
   // Pod boxes on the stills: the Analysis overlay and the Grow crops.
   ['regions', ['vision']],
   // Your schedules: the library and which of them the grow protocol sees on the pump.

@@ -16,7 +16,8 @@ export function orderSummary(order: Order): string {
 }
 
 /**
- * Pods out of order (#224): where a pod's confirmed dot code says it holds
+ * Pods out of order (#224): where a pod's known dot code (the owner's pair,
+ * else the shared table's, #259) says it holds
  * something other than its record or the plan. Two fixes, and nothing changes
  * until the owner picks one: update the records to match the tower (record
  * swaps that keep each plant's sowing date and status), or move the pods to
@@ -45,7 +46,7 @@ export function PodOrder() {
         {o.slots.map(s => (
           <li key={s.slot} data-testid={`order-${s.slot}`}>
             <span className="font-mono text-[11px] text-fg-3">{`Pod ${s.slot}`}</span>
-            {` holds ${s.tower} by its code · the record says ${s.record ?? 'nothing'}`}
+            {` holds ${s.tower} by ${s.from === 'shared' ? 'a known code other units confirmed' : 'its code'} · the record says ${s.record ?? 'nothing'}`}
             {o.plan && ` · the plan says ${s.plan ?? 'nothing'}`}
           </li>
         ))}
@@ -79,7 +80,7 @@ export function PodOrder() {
         {o.plan && o.movesUnresolved.length > 0 && <span className="text-xs text-fg-3">{`${pods(o.movesUnresolved)}: the plant the plan puts there isn't in another read pod.`}</span>}
       </div>
 
-      {o.unknown > 0 && <span className="text-xs text-fg-3">{`${o.unknown} pod${o.unknown === 1 ? '' : 's'} without a confirmed code ${o.unknown === 1 ? 'is' : 'are'} left alone.`}</span>}
+      {o.unknown > 0 && <span className="text-xs text-fg-3">{`${o.unknown} pod${o.unknown === 1 ? '' : 's'} without a known code ${o.unknown === 1 ? 'is' : 'are'} left alone.`}</span>}
       {fix.error && <InlineError>{fix.error.message}</InlineError>}
     </section>
   )

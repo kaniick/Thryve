@@ -14,6 +14,7 @@ import type { Context } from '../src/server/context'
 import { appRouter } from '../src/server/routers/app'
 import { IngestBatch, IngestRefused, ingestResults } from '../src/vision/ingest'
 import { MAX_MODEL_BYTES, ModelRefused } from '../src/vision/registry'
+import { podCrop } from '../src/vision/shareCodes'
 import { apiKeyGuard, timingSafeEqual } from './auth'
 
 export interface CreateAppOptions {
@@ -116,6 +117,14 @@ export function createApp({ ctx, staticRoot }: CreateAppOptions) {
     if (!got) return c.text('no pod-ID still yet', 404)
     const body = new Uint8Array(got.bytes).buffer as ArrayBuffer
     return c.body(body, 200, { 'content-type': 'image/jpeg', 'cache-control': 'no-cache', 'last-modified': new Date(got.still.ts).toUTCString() })
+  })
+
+  // A pod's crop for Share pod codes (#259): the owner drags it into the issue form; core uploads nothing.
+  app.get('/api/vision/pod-codes/crops/:file', async (c) => {
+    const slot = /^pod-(\d+)\.jpg$/.exec(c.req.param('file'))?.[1]
+    const crop = slot ? await podCrop({ podId: cam => ctx.captures.podId(cam), latest: cam => ctx.captures.latest(cam) }, Number(slot), ctx.store.settings.get().podRegions) : null
+    if (!crop) return c.text('no still to crop', 404)
+    return c.body(new Uint8Array(crop).buffer as ArrayBuffer, 200, { 'content-type': 'image/jpeg', 'cache-control': 'no-cache', 'content-disposition': `attachment; filename="pod-${slot}.jpg"` })
   })
 
   // Dataset export (ADR-0019): a tar streamed entry by entry, so a month of stills never sits in memory.

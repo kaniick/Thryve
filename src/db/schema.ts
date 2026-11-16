@@ -237,9 +237,31 @@ export const podLabels = sqliteTable('pod_labels', {
   /** The pod's plant and sowing date when it was first labelled, so its history keeps them after a replant. */
   plant: text(),
   plantedAt: text(),
+  /** Picked with no suggestion, a suggestion accepted, or one corrected (#261). */
+  source: text({ enum: ['picked', 'accepted', 'corrected'] }).notNull().default('picked'),
+  suggested: text({ enum: ['empty', 'seeded', 'sprouted', 'growing', 'ready', 'unhealthy'] }),
+  /** `carry`, `record` or `pod-state@<version>`. */
+  suggestedBy: text(),
+  /** The model's confidence, when the model made the suggestion. */
+  suggestedConfidence: real(),
 }, t => [
   uniqueIndex('pod_labels_key').on(t.captureId, t.slot),
   index('pod_labels_ts').on(t.ts),
+])
+
+/**
+ * Suggestions the grower dismissed (#261), per capture and pod: the pod can't be
+ * seen there, or its box isn't on a pod. Not labels, so label counts never see them.
+ */
+export const suggestionDismissals = sqliteTable('suggestion_dismissals', {
+  captureId: text().notNull(),
+  /** Capture timestamp, denormalised so the export's window never joins. */
+  ts: text().notNull(),
+  slot: integer().notNull(),
+  dismissedAt: text().notNull(),
+}, t => [
+  uniqueIndex('suggestion_dismissals_key').on(t.captureId, t.slot),
+  index('suggestion_dismissals_ts').on(t.ts),
 ])
 
 /** Owner-confirmed yCube dot code → plant pairs (#224). Unconfirmed pairs are never stored. */

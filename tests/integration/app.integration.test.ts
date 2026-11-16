@@ -6,6 +6,7 @@ import { SimHal } from '../../src/hardware/sim'
 import { createEventBus } from '../../src/lib/eventBus'
 import { createCore } from '../../src/server/bootstrap'
 import { MemoryStore } from '../../src/store/memory'
+import { jpeg } from '../../src/vision/tests/fixtures'
 
 let base = ''
 let close: () => void = () => undefined
@@ -70,6 +71,23 @@ describe('core HTTP surface', () => {
     expect(r.headers.get('content-type')).toBe('image/jpeg')
     expect(r.headers.get('last-modified')).toBe(new Date(taken.ts).toUTCString())
     expect(await fetch(`${base}/api/captures?camera=upper`).then(x => x.json())).toEqual(before)
+  })
+
+  it('serves a pod\'s crop for Share pod codes, from the pod-ID still, else the newest still (#259)', async () => {
+    const own = new SimHal({ tickMs: 0 })
+    const core = createCore({ hal: own, store: new MemoryStore(), events: createEventBus(), version: 'test', captureMinBytes: 1 })
+    const app = createApp({ ctx: core.ctx }).app
+    const get = (file: string) => app.fetch(new Request(`http://unit/api/vision/pod-codes/crops/${file}`))
+    expect((await get('pod-6.jpg')).status).toBe(404)
+    expect((await get('pod-x.jpg')).status).toBe(404)
+    own.captureFull = async () => jpeg(320, 240, true)
+    await core.ctx.captures.capturePodId('upper')
+    const r = await get('pod-6.jpg')
+    expect(r.status).toBe(200)
+    expect(r.headers.get('content-type')).toBe('image/jpeg')
+    expect(r.headers.get('content-disposition')).toBe('attachment; filename="pod-6.jpg"')
+    expect(new Uint8Array(await r.arrayBuffer()).slice(0, 2)).toEqual(new Uint8Array([0xFF, 0xD8]))
+    await own.close()
   })
 
   it('serves the boot log as a download when hald has written one', async () => {

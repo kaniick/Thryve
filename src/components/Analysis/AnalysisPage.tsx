@@ -14,14 +14,17 @@ import { apiBase, trpc } from '@/src/utils/trpc'
 import type { PodRect } from '@/src/vision/greenArea'
 import { POD_STATES } from '@/src/vision/podState'
 import { podRegions, type PodRegions } from '@/src/vision/regions'
+import { AllPods } from './AllPods'
 import { LabelPods } from './LabelPods'
 import { LeafCover } from './LeafCover'
 import { PodBounds } from './PodBounds'
+import { PodCard, PodHits, stateGuess, type Pod, type Reading, type Trend } from './PodCard'
 
 const pct = (v: number) => `${Math.round(v * 100)}%`
 const key = (a: { analyzer: string, version: number }) => `${a.analyzer}@${a.version}`
 const listingKey = (a: Listing) => key({ analyzer: a.id, version: a.version })
-const SLOTS = Array.from({ length: 30 }, (_, i) => ({ value: i + 1, label: `Pod ${i + 1}` }))
+/** `0` is every pod at once. */
+const SLOTS = [{ value: 0, label: 'All pods' }, ...Array.from({ length: 30 }, (_, i) => ({ value: i + 1, label: `Pod ${i + 1}` }))]
 /** Each analyser's mark in the legend, the per-pod bars and the chart, in listing order. */
 const COLORS = ['var(--meter)', 'var(--pod-ok)', 'var(--pod-ready)', 'var(--pod-attention)']
 const colorAt = (i: number) => COLORS[i % COLORS.length] as string
@@ -37,8 +40,8 @@ const SHOWN = [{ value: 'both', label: 'Both' }, { value: 'upper', label: 'Upper
 const VIEWS = [{ value: 'photo', label: 'Photo' }, { value: 'bounds', label: 'Pod bounds' }] as const
 const title = (c: Camera) => (c === 'upper' ? 'Upper' : 'Lower')
 
-function Panel({ className, children }: { className?: string, children: ReactNode }) {
-  return <div className={cn('flex min-w-0 flex-col gap-4 rounded-[14px] border border-line bg-surface p-4 sm:p-5', className)}>{children}</div>
+function Panel({ id, className, children }: { id?: string, className?: string, children: ReactNode }) {
+  return <div id={id} className={cn('flex min-w-0 flex-col gap-4 rounded-[14px] border border-line bg-surface p-4 sm:p-5', className)}>{children}</div>
 }
 
 /** `rows` are green fractions; `states` are a learned analyser's pod states (#185). */
@@ -68,10 +71,14 @@ export function AnalysisPage() {
   const analyzers = trpc.vision.analyzers.useQuery()
   const status = trpc.vision.status.useQuery(undefined, { refetchInterval: 5000 })
   const pods = trpc.grow.pods.useQuery()
+  const trends = trpc.vision.podTrends.useQuery()
   const [exporting, setExporting] = useState(false)
   const [picked, setPicked] = useState<string | null>(null)
   const [shown, setShown] = useState<Shown>('both')
   const [view, setView] = useState<View>('photo')
+  // The pod picked on a photo: its card stays open and the chart below follows it.
+  const [pinned, setPinned] = useState<number | null>(null)
+  const [slot, setSlot] = useState(0)
   const latest = [useLatest('upper'), useLatest('lower')]
   const calibration = useCalibration()
   const st = status.data
@@ -101,7 +108,7 @@ export function AnalysisPage() {
         </p>
       )}
 
-      <Panel>
+      <Panel id="latest-photos">
         <div className="flex flex-wrap items-center gap-2.5">
           <span className="mr-auto text-[15px] font-medium">Latest photos</span>
           {list.length > 0 && selected && (
@@ -119,6 +126,16 @@ export function AnalysisPage() {
               view={view}
               analyzer={selected && listingKey(selected)}
               empty={slot => pod(slot)?.status === 'empty'}
+              pod={pod}
+              trend={s => trends.data?.find(t => t.slot === s)}
+              analyzers={list}
+              colorOf={colorOf}
+              pinned={pinned}
+              onPick={(s) => {
+                setPinned(p => (p === s ? null : s))
+                setSlot(s)
+              }}
+              onUnpin={() => setPinned(null)}
               boxes={calibration.boxes(l.camera)}
               calibrated={calibration.calibrated(l.camera)}
               onChange={calibration.draft ? (slot, r) => calibration.move(l.camera, slot, r) : undefined}
@@ -130,9 +147,15 @@ export function AnalysisPage() {
       </Panel>
 
       <LeafCover capturedAt={latest.map(l => l.frame?.ts).filter((t): t is string => !!t).sort().at(-1) ?? null} />
-      <LabelPods boxes={calibration.boxes} />
+      <LabelPods
+        boxes={calibration.boxes}
+        onEditBoxes={() => {
+          setView('bounds')
+          document.getElementById('latest-photos')?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
+        }}
+      />
       <PerPod analyzers={list} latest={cameras} colorOf={colorOf} plant={slot => pod(slot)?.plant ?? '—'} empty={slot => pod(slot)?.status === 'empty'} />
-      <ComparePod colorOf={colorOf} />
+      <ComparePod colorOf={colorOf} slot={slot} onSlot={setSlot} pods={pods.data ?? []} trends={trends.data ?? []} />
 
       {exporting && (
         <Modal open onClose={() => setExporting(false)} title="Export a dataset" icon={Download}>
@@ -143,12 +166,23 @@ export function AnalysisPage() {
   )
 }
 
-/** One camera's still, with the pod bounds and the chosen analyser's reading per pod drawn over it on request. */
-function Still({ latest, view, analyzer, empty, boxes, calibrated, onChange }: {
+/**
+ * One camera's still, with the pod bounds and the chosen analyser's reading
+ * per pod drawn over it on request, and a card of everything known about a
+ * pod when it is hovered or picked.
+ */
+function Still({ latest, view, analyzer, empty, pod, trend, analyzers, colorOf, pinned, onPick, onUnpin, boxes, calibrated, onChange }: {
   latest: Latest
   view: View
   analyzer?: string
   empty: (slot: number) => boolean
+  pod: (slot: number) => Pod | undefined
+  trend: (slot: number) => Trend | undefined
+  analyzers: Listing[]
+  colorOf: (k: string) => string
+  pinned: number | null
+  onPick: (slot: number) => void
+  onUnpin: () => void
   boxes: PodRegions
   calibrated: boolean
   onChange?: (slot: number, r: PodRect) => void
@@ -156,6 +190,16 @@ function Still({ latest, view, analyzer, empty, boxes, calibrated, onChange }: {
   const { camera, frame, rows, states } = latest
   // The box takes the still's own shape once it loads, so the bounds sit where the analysers put them.
   const [ratio, setRatio] = useState(4 / 3)
+  const [hovered, setHovered] = useState<number | null>(null)
+  const shown = onChange ? null : hovered ?? pinned
+  const box = shown === null ? undefined : boxes[shown]
+  const order = analyzers.map(listingKey)
+  const labels = Object.fromEntries(analyzers.map(a => [listingKey(a), a.label]))
+  const rank = (k: string) => (order.includes(k) ? order.indexOf(k) : order.length)
+  const readings = (slot: number): Reading[] => [...rows, ...states]
+    .filter(r => r.slot === slot)
+    .sort((a, b) => rank(key(a)) - rank(key(b)))
+    .map(r => ({ key: key(r), label: labels[key(r)] ?? key(r), color: colorOf(key(r)), text: r.metric === 'pod_state' ? stateGuess(r) : pct(r.value) }))
   const reading = (slot: number) => {
     const state = states.find(r => r.slot === slot && key(r) === analyzer)
     if (state) return stateText(state).split(' · ')[0]
@@ -165,13 +209,14 @@ function Still({ latest, view, analyzer, empty, boxes, calibrated, onChange }: {
   }
   return (
     <figure className="m-0 flex min-w-0 flex-col gap-1.5">
-      <div className="relative overflow-hidden rounded-[10px] bg-code" style={{ aspectRatio: ratio }}>
+      {/* Not clipped, so a pod's card can reach past the photo's edge. */}
+      <div className="relative rounded-[10px] bg-code" style={{ aspectRatio: ratio }}>
         {frame
           ? (
               <img
                 src={frame.path.startsWith('data:') ? frame.path : `${apiBase()}${frame.url}`}
                 alt={`${camera} camera at ${frame.ts}`}
-                className="absolute inset-0 size-full"
+                className="absolute inset-0 size-full rounded-[10px]"
                 onLoad={(e) => {
                   const { naturalWidth: w, naturalHeight: h } = e.currentTarget
                   if (w > 0 && h > 0) setRatio(w / h)
@@ -180,6 +225,10 @@ function Still({ latest, view, analyzer, empty, boxes, calibrated, onChange }: {
             )
           : <div className="flex size-full items-center justify-center p-4 text-center text-[13px] text-fg-3">No photos from this camera yet.</div>}
         {frame && view === 'bounds' && <PodBounds boxes={boxes} label={reading} onChange={onChange} />}
+        {frame && !onChange && <PodHits boxes={boxes} shown={shown} onHover={setHovered} onPick={onPick} />}
+        {frame && shown !== null && box && (
+          <PodCard slot={shown} box={box} pod={pod(shown)} trend={trend(shown)} readings={readings(shown)} pinned={shown === pinned} onClose={onUnpin} />
+        )}
       </div>
       <figcaption className="flex flex-wrap gap-x-2 text-xs text-fg-3">
         <span className="text-fg-2">{title(camera)}</span>
@@ -418,17 +467,27 @@ function Calibrate({ c, cameras }: { c: Calibration, cameras: Camera[] }) {
   )
 }
 
-function ComparePod({ colorOf }: { colorOf: (k: string) => string }) {
-  const [slot, setSlot] = useState(1)
-  const cmp = trpc.vision.compare.useQuery({ slot, metric: 'green_fraction', limit: 200 })
-  const states = trpc.vision.compare.useQuery({ slot, metric: 'pod_state', limit: 1 })
+/** One pod's series from every analyser, or every planted pod side by side. */
+function ComparePod({ colorOf, slot, onSlot, pods, trends }: { colorOf: (k: string) => string, slot: number, onSlot: (slot: number) => void, pods: Pod[], trends: Trend[] }) {
+  const one = slot > 0
+  const cmp = trpc.vision.compare.useQuery({ slot: Math.max(1, slot), metric: 'green_fraction', limit: 200 }, { enabled: one })
+  const states = trpc.vision.compare.useQuery({ slot: Math.max(1, slot), metric: 'pod_state', limit: 1 }, { enabled: one })
   const series = (cmp.data ?? []).map(s => ({ name: key(s), color: colorOf(key(s)), points: s.points.map(p => ({ x: Date.parse(p.ts), y: p.value })) }))
+  const head = (
+    <div className="flex flex-wrap items-center gap-3">
+      <span className="flex-1 text-[15px] font-medium">{one ? 'One pod over time' : 'All pods over time'}</span>
+      <SelectValue label="Pod" value={slot} options={SLOTS} onChange={onSlot} />
+    </div>
+  )
+  if (!one) return (
+    <Panel>
+      {head}
+      <AllPods pods={pods} trends={trends} onPick={onSlot} />
+    </Panel>
+  )
   return (
     <Panel>
-      <div className="flex flex-wrap items-center gap-3">
-        <span className="flex-1 text-[15px] font-medium">One pod over time</span>
-        <SelectValue label="Pod" value={slot} options={SLOTS} onChange={setSlot} />
-      </div>
+      {head}
       <TimeChart series={series} height={180} yMin={0} yMax={1} formatY={pct} formatX={x => new Date(x).toLocaleDateString()} />
       {series.length > 0 && (
         <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm">
