@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.1.1 — 2026-11-16
+
+- Settings → Home Assistant bridge: **Test connection** uses the saved broker
+  URL, credentials and TLS settings in a short-lived MQTT connection, with no
+  discovery or command messages. Save any MQTT edits first; the result is
+  actionable and does not expose raw broker errors (PR #15).
+- Light: a switched-off curve, including Auto when it is off, can be removed
+  from the list (with confirmation). Curves that will resume after Auto, and
+  enabled curves, stay protected; the server rechecks before deleting (PR #16).
+
 ## 2.1.0 — 2026-11-16
 
 Merges upstream seedypod/core work (PRs #255–#272) into Thryve, rebranded, on
