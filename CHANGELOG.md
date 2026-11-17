@@ -2,15 +2,23 @@
 
 ## Unreleased
 
+## 2.2.0 — 2026-11-16
+
 - Notifications: IF/THEN push rules for Pushover, Pushbullet, and an external
   Apprise API server (the unit does not install Python Apprise). Settings →
   Notifications holds the kill switch and quiet hours; the Notifications page
   edits channels and rules. Secrets are stored on the unit, returned masked,
   and kept out of logs and dataset exports. Starter rules (pump fault, tank
-  low, unit offline) save disabled. See `docs/NOTIFICATIONS.md`.
+  low, unit offline) save disabled. See `docs/NOTIFICATIONS.md` (PR #22).
+- Thryve iPhone app channel: APNs push (Key ID, Team ID, bundle ID, and a
+  write-only `.p8` key) and watering Live Activity updates when the pump
+  runs. Registered devices and activity tokens stay on the unit; a LAN
+  notification feed works without an Apple key. Migration
+  `0026_ios_notifications` (PR #24).
 - Analysis → Pod bounds: opening the view lets you move and resize the boxes
   immediately, with **Save boxes**, **Reset to measured** and **Discard** in
-  the toolbar, an unsaved-changes mark, and a toast on success or failure.
+  the toolbar, an unsaved-changes mark, and a toast on success or failure
+  (PR #26).
 - Settings → Home Assistant bridge: the existing **Test connection** button
   now tests the broker URL, credentials and TLS options entered in the form
   (an empty password keeps the saved one) and reports connected, auth
@@ -22,9 +30,10 @@
   helper, **Use this broker for hardware** writes the URL and credentials
   to `/etc/thryve/hal.toml`, points core at the same broker, and restarts
   hald. A unit updated from an earlier release needs a one-time
-  `sudo scripts/install` before that button appears. Saving other settings no longer clears a stored MQTT password.
-  After an update, `index.html` is served with `Cache-Control: no-cache,
-  no-store, must-revalidate` so the browser does not keep a stale UI.
+  `sudo scripts/install` before that button appears. Saving other settings
+  no longer clears a stored MQTT password. After an update, `index.html`
+  is served with `Cache-Control: no-cache, no-store, must-revalidate` so
+  the browser does not keep a stale UI (PR #27).
 
 ## 2.1.1 — 2026-11-16
 
