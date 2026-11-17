@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+/* eslint-disable @typescript-eslint/no-require-imports */
 // Write mqtt_url / mqtt_username / mqtt_password into /etc/thryve/hal.toml and
 // point core at the same broker (HAL_MQTT_URL in a 0600 env file + a systemd
 // drop-in), then restart hald. Core is restarted a few seconds later so the

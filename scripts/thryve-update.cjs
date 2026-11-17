@@ -427,7 +427,6 @@ function markBusy(on) {
   }
 }
 
-
 /** Lets core run the hardware-broker helper with no arguments (secrets on stdin). */
 function installHalMqttSudoers() {
   const dest = process.env.THRYVE_UPDATE_HAL_MQTT_SUDOERS ?? '/etc/sudoers.d/thryve-hal-mqtt'
@@ -436,7 +435,8 @@ function installHalMqttSudoers() {
   let user
   try {
     user = coreAccount().user
-  } catch (e) {
+  }
+  catch (e) {
     log(`couldn't resolve core's account for thryve-hal-mqtt sudoers: ${e.message}`)
     return
   }
@@ -447,9 +447,10 @@ function installHalMqttSudoers() {
   if (isRoot) fs.chownSync(tmp, 0, 0)
   try {
     execFileSync('visudo', ['-cf', tmp], { encoding: 'utf8' })
-  } catch {
+  }
+  catch {
     fs.rmSync(tmp, { force: true })
-    log("couldn't validate sudoers for thryve-hal-mqtt")
+    log('couldn\'t validate sudoers for thryve-hal-mqtt')
     return
   }
   fs.renameSync(tmp, dest)
