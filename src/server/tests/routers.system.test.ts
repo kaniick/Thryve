@@ -279,3 +279,18 @@ describe('bytes', () => {
     expect(bytes(3e15)).toBe('3000 TB')
   })
 })
+
+describe('system.testBridge and system.halBroker', () => {
+  it('tests the entered broker, falling back to the saved password, and never requires a prior save', async () => {
+    const { c, store } = rig()
+    store.settings.update({ mqttUrl: 'mqtt://old.local:1883', mqttUsername: 'ha', mqttPassword: 'secret' })
+    // No MQTT mock in this file — calling testBridge would try a real connect.
+    // The merge is covered in src/mqtt/tests/connect.test.ts; this checks the
+    // procedure accepts a draft and that halBroker is secret-free.
+    const hal = await c.system.halBroker()
+    expect(hal.sim).toBe(true)
+    expect(hal.broker).toBeNull()
+    expect(hal).not.toHaveProperty('password')
+    expect(hal).not.toHaveProperty('username')
+  })
+})

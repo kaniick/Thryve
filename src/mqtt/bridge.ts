@@ -49,7 +49,7 @@ export interface BridgeStatus {
   error: string | null
 }
 
-function brokerHost(url: string): string {
+export function brokerHost(url: string): string {
   try {
     return new URL(url).host || url
   }
@@ -275,10 +275,50 @@ function brokerOptions(s: BrokerSettings) {
   }
 }
 
-/** Check that the broker accepts a fresh client using the saved credentials. */
+/**
+ * Merge a Test connection request with the saved settings. An omitted
+ * `mqttPassword` keeps the saved one, so the form can leave a masked password
+ * blank; `null` or `''` tests with no password.
+ */
+export function resolveBrokerTest(saved: BrokerSettings, input?: Partial<BrokerSettings> | null): BrokerSettings {
+  if (!input) return saved
+  const password = Object.prototype.hasOwnProperty.call(input, 'mqttPassword')
+    ? input.mqttPassword
+    : saved.mqttPassword
+  return {
+    mqttUrl: input.mqttUrl ?? saved.mqttUrl,
+    mqttUsername: input.mqttUsername === undefined ? saved.mqttUsername : input.mqttUsername,
+    mqttPassword: password ?? null,
+    mqttTlsEnabled: input.mqttTlsEnabled ?? saved.mqttTlsEnabled,
+    mqttTlsInsecure: input.mqttTlsInsecure ?? saved.mqttTlsInsecure,
+  }
+}
+
+/** A short, secret-free reason a broker test failed. */
+export function describeConnectError(error: unknown): string {
+  const code = (error as { code?: string | number } | null)?.code
+  const message = error instanceof Error ? error.message : String(error ?? '')
+  if (code === 4 || code === 5 || code === 134 || code === 135 || code === 0x87) {
+    return 'The broker rejected the login. Check the MQTT username and password.'
+  }
+  if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') return 'Could not resolve the broker hostname.'
+  if (code === 'ECONNREFUSED') return 'Connection refused. Check the broker port and that MQTT is running.'
+  if (code === 'ETIMEDOUT' || message === 'connack timeout') {
+    return 'The MQTT connection timed out. Check the broker address, port, and network access.'
+  }
+  if (code === 'EHOSTUNREACH' || code === 'ENETUNREACH' || code === 'ECONNRESET') {
+    return 'The broker is unreachable. Check the address, port, and that this unit can reach that network.'
+  }
+  if ((typeof code === 'string' && /CERT|TLS|SSL|UNABLE_TO_VERIFY/i.test(code)) || /certificate|self[- ]signed|SSL|TLS/i.test(message)) {
+    return 'TLS verification or negotiation failed. Check the broker TLS settings and certificate.'
+  }
+  return 'Could not connect to the MQTT broker. Check its address, port, and TLS settings.'
+}
+
+/** Check that the broker accepts a fresh client using these credentials. */
 export async function testBroker(s: BrokerSettings): Promise<{ ok: boolean, detail: string }> {
   const broker = brokerOptions(s)
-  if (!broker) return { ok: false, detail: 'Save a broker URL first.' }
+  if (!broker) return { ok: false, detail: 'Enter a broker URL first.' }
   try {
     const url = new URL(broker.url)
     if (!url.hostname || !['mqtt:', 'mqtts:', 'ws:', 'wss:'].includes(url.protocol)) throw new Error()
@@ -297,14 +337,8 @@ export async function testBroker(s: BrokerSettings): Promise<{ ok: boolean, deta
       : { ok: false, detail: 'The broker closed the connection before accepting it.' }
   }
   catch (error) {
-    // Return known diagnostics only. Broker errors may contain configuration values.
-    const code = (error as { code?: string | number } | null)?.code
-    if (code === 4 || code === 5 || code === 134 || code === 135) return { ok: false, detail: 'The broker rejected the login. Check the MQTT username and password.' }
-    if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') return { ok: false, detail: 'Could not resolve the broker hostname.' }
-    if (code === 'ECONNREFUSED') return { ok: false, detail: 'Connection refused. Check the broker port and that MQTT is running.' }
-    if (code === 'ETIMEDOUT' || (error instanceof Error && error.message === 'connack timeout')) return { ok: false, detail: 'The MQTT connection timed out. Check the broker address, port, and network access.' }
-    if (typeof code === 'string' && /CERT|TLS|SSL/.test(code)) return { ok: false, detail: 'TLS verification or negotiation failed. Check the broker TLS settings and certificate.' }
-    return { ok: false, detail: 'Could not connect to the MQTT broker. Check its address, port, and TLS settings.' }
+    // Known diagnostics only. Broker errors may contain configuration values.
+    return { ok: false, detail: describeConnectError(error) }
   }
 }
 

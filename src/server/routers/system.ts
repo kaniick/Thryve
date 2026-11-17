@@ -1,7 +1,8 @@
 import { TRPCError } from '@trpc/server'
 import { z } from 'zod'
 import { SystemInfo } from '../../hardware/contract'
-import { bridgeStatus, testBroker } from '../../mqtt/bridge'
+import { bridgeStatus, resolveBrokerTest, testBroker } from '../../mqtt/bridge'
+import { halBrokerStatus } from '../../mqtt/halBroker'
 import { Check, systemChecks } from '../checks'
 import { LoginSummary, loginSummary } from '../loginSummary'
 import { publicProcedure, router } from '../trpc'
@@ -42,11 +43,33 @@ export const systemRouter = router({
     .output(z.object({ state: z.enum(['off', 'connected', 'disconnected']), broker: z.string().nullable(), since: z.string().nullable(), error: z.string().nullable() }))
     .query(({ ctx }) => ctx.bridge?.() ?? bridgeStatus(ctx.store.settings.get().mqttUrl, null, null)),
   testBridge: publicProcedure
-    .meta({ openapi: { method: 'POST', path: '/system/bridge/test', tags: ['system'], summary: 'Test the saved Home Assistant MQTT broker connection' } })
+    .meta({ openapi: { method: 'POST', path: '/system/bridge/test', tags: ['system'], summary: 'Test a Home Assistant MQTT broker connection using the entered or saved credentials; the password is write-only' } })
+    .input(z.object({
+      mqttUrl: z.string().min(1),
+      mqttUsername: z.string().nullable().optional(),
+      mqttPassword: z.string().nullable().optional(),
+      mqttTlsEnabled: z.boolean().optional(),
+      mqttTlsInsecure: z.boolean().optional(),
+    }).optional())
     .output(z.object({ ok: z.boolean(), detail: z.string() }))
-    .mutation(({ ctx }) => ctx.bridge
-      ? testBroker(ctx.store.settings.get())
+    .mutation(({ ctx, input }) => ctx.bridge
+      ? testBroker(resolveBrokerTest(ctx.store.settings.get(), input))
       : { ok: false, detail: 'MQTT connection testing is unavailable on this core.' }),
+  /** The hardware daemon's broker (hal.toml), not core's Home Assistant bridge. */
+  halBroker: publicProcedure
+    .meta({ openapi: { method: 'GET', path: '/system/hal-broker', tags: ['system'], summary: 'The hardware daemon\'s MQTT broker and whether hald is connected to it (no credentials)' } })
+    .output(z.object({
+      broker: z.string().nullable(),
+      url: z.string().nullable(),
+      connected: z.boolean().nullable(),
+      sim: z.boolean(),
+      configPath: z.string().nullable(),
+      usingDefault: z.boolean(),
+    }))
+    .query(({ ctx }) => {
+      const ver = ctx.hal.snapshot().system?.halVersion ?? ''
+      return halBrokerStatus({ sim: ver.includes('sim') })
+    }),
   logging: publicProcedure
     .meta({ openapi: { method: 'GET', path: '/system/logging', tags: ['system'], summary: 'How much core and hald log: quiet (warnings and errors), off, or debug until a time' } })
     .output(LoggingState.nullable())

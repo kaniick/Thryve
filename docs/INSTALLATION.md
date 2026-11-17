@@ -338,7 +338,9 @@ itself after 15 minutes.
 ## 4. Home Assistant
 
 `hald` publishes the unit to Home Assistant over MQTT discovery, so HA needs to
-reach the same broker. Pick one:
+reach the same broker. Settings → Home Assistant bridge is only for core's
+additive grow-event bridge (reminders, cycle, Water now); **Test connection**
+checks that broker. Lights, pump and sensors still come from hald. Pick one:
 
 - **HA on another machine, using the unit's broker.** Run
   `scripts/install-hal --mqtt-lan`. The broker then also listens on port

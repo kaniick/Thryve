@@ -11,6 +11,12 @@
 - Analysis → Pod bounds: opening the view lets you move and resize the boxes
   immediately, with **Save boxes**, **Reset to measured** and **Discard** in
   the toolbar, an unsaved-changes mark, and a toast on success or failure.
+- Settings → Home Assistant bridge: **Test connection** uses the broker URL,
+  credentials and TLS options entered in the form (an empty password keeps
+  the saved one) and reports connected, auth refused, unreachable, timeout,
+  DNS or TLS failures without exposing raw broker errors. The card explains
+  that this is only core's grow-event bridge, and shows the hardware
+  daemon's current broker and whether it is connected.
 
 ## 2.1.1 — 2026-11-16
 
