@@ -21,7 +21,8 @@
   When `scripts/install` (or a later web update) has installed the
   helper, **Use this broker for hardware** writes the URL and credentials
   to `/etc/thryve/hal.toml`, points core at the same broker, and restarts
-  hald. Saving other settings no longer clears a stored MQTT password.
+  hald. A unit updated from an earlier release needs a one-time
+  `sudo scripts/install` before that button appears. Saving other settings no longer clears a stored MQTT password.
   After an update, `index.html` is served with `Cache-Control: no-cache,
   no-store, must-revalidate` so the browser does not keep a stale UI.
 

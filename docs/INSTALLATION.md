@@ -356,9 +356,11 @@ checks that broker. Lights, pump and sensors still come from hald. Pick one:
   points core at the same broker (`HAL_MQTT_URL` in
   `/etc/thryve/core-mqtt.env`), restarts `hald`, and schedules a core
   restart a few seconds later so the app does not lose the hardware.
-  The helper is installed by `scripts/install`; an older unit needs a
-  one-time `sudo scripts/install` (or a web update that refreshes
-  helpers) before the button appears.
+  The helper is installed by `scripts/install`. After this release, a
+  unit that was installed earlier needs a one-time `sudo scripts/install`
+  before the button appears: a web update to this release still runs the
+  previous updater, which does not install the new helper. Later web
+  updates, running this release's updater, will refresh it.
 
   To do the same by hand:
   - In `/etc/thryve/hal.toml`, set `mqtt_url = "mqtt://homeassistant.local:1883"`
