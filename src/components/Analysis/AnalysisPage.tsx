@@ -128,12 +128,12 @@ export function AnalysisPage() {
           />
           {view === 'bounds' && !calibration.draft && <Button size="sm" onClick={calibration.edit}>Edit boxes</Button>}
           {view === 'bounds' && calibration.draft && (
-            <>
+            <div className="flex shrink-0 flex-nowrap items-center gap-3">
               {calibration.dirty && <span data-testid="unsaved-bounds" className="text-xs text-fg-2">Unsaved changes</span>}
               <Button size="sm" disabled={calibration.pending || !calibration.dirty} onClick={() => void calibration.save().catch(() => {})}>Save boxes</Button>
               <button type="button" className={CALIBRATE_ACTION} onClick={() => calibration.reset(cameras.map(l => l.camera))}>Reset to measured</button>
               <button type="button" className={CALIBRATE_ACTION} onClick={calibration.cancel}>Discard</button>
-            </>
+            </div>
           )}
         </div>
         <div className={cn('grid grid-cols-1 gap-3', cameras.length > 1 && 'sm:grid-cols-2')}>
