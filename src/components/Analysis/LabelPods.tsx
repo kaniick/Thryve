@@ -103,7 +103,7 @@ function LabelChips({ value, onPick, clear, counts, ariaLabel }: { value: Brush 
 }
 
 /** What a suggestion's tooltip says to do when the pod can't be seen, or the box isn't on one. */
-export const NOT_VISIBLE = 'Not visible here? Pick Clear and tap to dismiss the suggestion on this photo. A box that doesn\'t sit on a pod should be moved in Analysis → Latest photos → Pod bounds → Edit boxes.'
+export const NOT_VISIBLE = 'Not visible here? Pick Clear and tap to dismiss the suggestion on this photo. A box that doesn\'t sit on a pod should be moved in Analysis → Latest photos → Pod bounds, then saved.'
 
 /** One camera's still with a tappable box per pod: solid when labelled, dashed with `?` when only suggested. */
 function Photo({ camera, frame, regions, labelOf, suggestionOf, dismissedOf, onTap, compact, empty }: {

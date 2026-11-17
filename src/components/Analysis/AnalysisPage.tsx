@@ -1,10 +1,11 @@
-import { Download, RefreshCw, Star } from 'lucide-react'
+import { Check, Download, RefreshCw, Star, TriangleAlert } from 'lucide-react'
 import type { inferRouterOutputs } from '@trpc/server'
 import { useState, type ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 import { TimeChart } from '@/src/components/charts/TimeChart'
 import { Button, InlineError } from '@/src/components/ds/core'
 import { Modal } from '@/src/components/ds/feedback'
+import { useToast } from '@/src/components/ds/toast'
 import { SegmentedControl, SelectValue, Toggle } from '@/src/components/ds/forms'
 import { SettingRow } from '@/src/components/ds/layout'
 import { isDemo } from '@/src/demo/mode'
@@ -115,8 +116,25 @@ export function AnalysisPage() {
             <SelectValue label="Analyser" value={listingKey(selected)} options={list.map(a => ({ value: listingKey(a), label: listingKey(a) }))} onChange={setPicked} />
           )}
           <SegmentedControl ariaLabel="Camera" size="sm" options={SHOWN} value={shown} onChange={setShown} />
-          <SegmentedControl ariaLabel="View" size="sm" options={VIEWS} value={view} onChange={setView} />
+          <SegmentedControl
+            ariaLabel="View"
+            size="sm"
+            options={VIEWS}
+            value={view}
+            onChange={(v) => {
+              setView(v)
+              if (v === 'bounds') calibration.edit()
+            }}
+          />
           {view === 'bounds' && !calibration.draft && <Button size="sm" onClick={calibration.edit}>Edit boxes</Button>}
+          {view === 'bounds' && calibration.draft && (
+            <div className="flex shrink-0 flex-nowrap items-center gap-3">
+              {calibration.dirty && <span data-testid="unsaved-bounds" className="text-xs text-fg-2">Unsaved changes</span>}
+              <Button size="sm" disabled={calibration.pending || !calibration.dirty} onClick={() => void calibration.save().catch(() => {})}>Save boxes</Button>
+              <button type="button" className={CALIBRATE_ACTION} onClick={() => calibration.reset(cameras.map(l => l.camera))}>Reset to measured</button>
+              <button type="button" className={CALIBRATE_ACTION} onClick={calibration.cancel}>Discard</button>
+            </div>
+          )}
         </div>
         <div className={cn('grid grid-cols-1 gap-3', cameras.length > 1 && 'sm:grid-cols-2')}>
           {cameras.map(l => (
@@ -142,7 +160,7 @@ export function AnalysisPage() {
             />
           ))}
         </div>
-        {view === 'bounds' && <Calibrate c={calibration} cameras={cameras.map(l => l.camera)} />}
+        {view === 'bounds' && <Calibrate c={calibration} />}
         {selected && <AnalyzerDetail a={selected} color={colorOf(listingKey(selected))} busy={!!st?.backfill} />}
       </Panel>
 
@@ -151,6 +169,7 @@ export function AnalysisPage() {
         boxes={calibration.boxes}
         onEditBoxes={() => {
           setView('bounds')
+          calibration.edit()
           document.getElementById('latest-photos')?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
         }}
       />
@@ -401,11 +420,25 @@ type Calibration = ReturnType<typeof useCalibration>
 
 /**
  * The pod boxes on each camera (#143): the unit's, or a draft while they are
- * being edited. Saving sends each camera's boxes; the unit keeps only the ones
- * that moved from the measured defaults.
+ * being edited. A draft starts empty and is layered on the saved boxes, so
+ * entering edit before the query settles still shows the unit's calibration
+ * once it arrives. Saving sends each camera's boxes; the unit keeps only the
+ * ones that moved from the measured defaults.
  */
+function sameRegions(a: PodRegions, b: PodRegions): boolean {
+  const slots = new Set([...Object.keys(a), ...Object.keys(b)])
+  for (const key of slots) {
+    const slot = Number(key)
+    const x = a[slot]
+    const y = b[slot]
+    if (!x || !y || x.x !== y.x || x.y !== y.y || x.w !== y.w || x.h !== y.h || x.coreX !== y.coreX || x.coreY !== y.coreY) return false
+  }
+  return true
+}
+
 function useCalibration() {
   const utils = trpc.useUtils()
+  const { show } = useToast()
   const saved = trpc.vision.regions.useQuery()
   const save = trpc.vision.setRegions.useMutation({ onSuccess: () => utils.vision.invalidate() })
   const [draft, setDraft] = useState<Partial<Record<Camera, PodRegions>> | null>(null)
@@ -414,9 +447,11 @@ function useCalibration() {
     const row = saved.data?.find(r => r.camera === camera)
     return row ? Object.fromEntries(row.regions.map(({ slot, x, y, w, h, coreX, coreY }) => [slot, { x, y, w, h, coreX, coreY }])) : podRegions(camera)
   }
-  const boxes = (camera: Camera) => draft?.[camera] ?? stored(camera)
+  const boxes = (camera: Camera) => (draft ? { ...stored(camera), ...draft[camera] } : stored(camera))
+  const dirty = !!draft && (['upper', 'lower'] as const).some(camera => !sameRegions(boxes(camera), stored(camera)))
   return {
     draft,
+    dirty,
     done,
     error: save.error?.message,
     pending: save.isPending,
@@ -424,44 +459,45 @@ function useCalibration() {
     calibrated: (camera: Camera) => saved.data?.find(r => r.camera === camera)?.calibrated ?? false,
     edit: () => {
       setDone(false)
-      setDraft({ upper: stored('upper'), lower: stored('lower') })
+      // Keep an in-progress draft; don't snapshot the saved boxes so a late
+      // regions query still fills in unmoved slots.
+      setDraft(d => d ?? {})
     },
-    move: (camera: Camera, slot: number, r: PodRect) => setDraft(d => ({ ...d, [camera]: { ...boxes(camera), ...d?.[camera], [slot]: r } })),
+    move: (camera: Camera, slot: number, r: PodRect) => setDraft(d => ({ ...d, [camera]: { ...stored(camera), ...d?.[camera], [slot]: r } })),
     reset: (cameras: Camera[]) => setDraft(d => ({ ...d, ...Object.fromEntries(cameras.map(c => [c, podRegions(c)])) })),
     cancel: () => setDraft(null),
     save: async () => {
       if (!draft) return
-      for (const [camera, regions] of Object.entries(draft) as Array<[Camera, PodRegions]>) {
-        await save.mutateAsync({ camera, regions: Object.entries(regions).map(([slot, r]) => ({ slot: Number(slot), ...r })) })
+      try {
+        for (const camera of ['upper', 'lower'] as const) {
+          const regions = boxes(camera)
+          await save.mutateAsync({ camera, regions: Object.entries(regions).map(([slot, r]) => ({ slot: Number(slot), ...r })) })
+        }
+        setDraft(null)
+        setDone(true)
+        show({ id: 'pod-bounds-saved', kind: 'success', tone: 'ok', icon: Check, title: 'Pod boxes saved', detail: 'New photos use these boxes. Re-run an analyser to rescore stored ones.' })
       }
-      setDraft(null)
-      setDone(true)
+      catch (err) {
+        const detail = err instanceof Error ? err.message : String(err)
+        show({ id: 'pod-bounds-save-failed', kind: 'info', tone: 'danger', icon: TriangleAlert, title: 'Couldn\'t save pod boxes', detail })
+        throw err
+      }
     },
   }
 }
 
-/** Editing the boxes: how, and saving, resetting or dropping the changes. */
-function Calibrate({ c, cameras }: { c: Calibration, cameras: Camera[] }) {
-  const action = 'cursor-pointer border-0 bg-transparent p-0 text-xs text-fg-2 hover:text-fg disabled:cursor-default disabled:opacity-45'
+const CALIBRATE_ACTION = 'cursor-pointer border-0 bg-transparent p-0 text-xs text-fg-2 hover:text-fg disabled:cursor-default disabled:opacity-45'
+
+/** Editing the boxes: how, and a confirmation after they are saved. */
+function Calibrate({ c }: { c: Calibration }) {
   return (
     <div className="-mt-1 flex flex-col gap-2 text-xs text-fg-3">
       <p>
         {c.draft
-          ? 'Drag the outer box to move it, or drag its corner to resize it. Drag the dashed area over the pod opening. Arrow keys move the focused box. Hold Shift to resize or Alt to move the dashed area.'
+          ? 'Drag the outer box to move it, or drag its corner to resize it. Drag the dashed cup area over the pod opening. Arrow keys move the focused box. Hold Shift to resize or Alt to move the dashed area. Save boxes keeps the layout; Discard drops unsaved edits.'
           : 'The outer box sets the area scored for leaf cover. The dashed cup area helps attribute leaves to the pod they grow from.'}
       </p>
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-        {c.draft
-          ? (
-              <>
-                <Button size="sm" disabled={c.pending} onClick={() => void c.save().catch(() => {})}>Save boxes</Button>
-                <button type="button" className={action} onClick={() => c.reset(cameras)}>Reset to measured</button>
-                <button type="button" className={action} onClick={c.cancel}>Cancel</button>
-              </>
-            )
-          : null}
-        {c.done && !c.draft && <span>Saved. New photos use these boxes; Re-run an analyser to rescore stored ones.</span>}
-      </div>
+      {c.done && !c.draft && <span>Saved. New photos use these boxes; Re-run an analyser to rescore stored ones.</span>}
       {c.error && <InlineError>{c.error}</InlineError>}
     </div>
   )
