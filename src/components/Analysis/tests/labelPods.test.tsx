@@ -453,7 +453,7 @@ describe('LabelPods suggestions (#261)', () => {
     expect(pod(2).getAttribute('title')).toBe(`Suggested sprouted: last labelled sprouted on ${new Date(FROM).toLocaleDateString([], { day: 'numeric', month: 'short' })}. ${NOT_VISIBLE}`)
     expect(pod(3).getAttribute('title')).toBe(`Suggested growing: pod-state 86%. ${NOT_VISIBLE}`)
     expect(pod(4).getAttribute('title')).toBe(`Suggested seeded: the pod record says seeded. ${NOT_VISIBLE}`)
-    expect(NOT_VISIBLE).toContain('Analysis → Latest photos → Pod bounds → Edit boxes')
+    expect(NOT_VISIBLE).toContain('Analysis → Latest photos → Pod bounds')
     // A saved label replaces its suggestion.
     expect(pod(5).textContent).toBe('5 · growing')
     expect(pod(5).className).toContain('border-solid')

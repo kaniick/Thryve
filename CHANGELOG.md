@@ -8,6 +8,9 @@
   edits channels and rules. Secrets are stored on the unit, returned masked,
   and kept out of logs and dataset exports. Starter rules (pump fault, tank
   low, unit offline) save disabled. See `docs/NOTIFICATIONS.md`.
+- Analysis → Pod bounds: opening the view lets you move and resize the boxes
+  immediately, with **Save boxes**, **Reset to measured** and **Discard** in
+  the toolbar, an unsaved-changes mark, and a toast on success or failure.
 
 ## 2.1.1 — 2026-11-16
 
