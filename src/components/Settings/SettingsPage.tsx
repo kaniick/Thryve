@@ -181,6 +181,9 @@ function SettingsForm({ s, coreVersion, coreHost, system, onSave, saving }: {
     delete rest.pumpPower
     delete rest.pumpSoftStart
     delete rest.pumpSoftStartMs
+    // The password fields are write-only; a blank value would otherwise wipe the saved secret.
+    if (!str('mqttPassword')) delete rest.mqttPassword
+    if (!str('mirrorSecretAccessKey')) delete rest.mirrorSecretAccessKey
     onSave(rest)
   }
   const original = s as Record<string, unknown>
@@ -194,6 +197,7 @@ function SettingsForm({ s, coreVersion, coreHost, system, onSave, saving }: {
   const mirrorSaved = !!(s.mirrorEndpoint && s.mirrorBucket)
   const [bucketOpen, setBucketOpen] = useState(mirrorSaved)
   const mqttTest = trpc.system.testBridge.useMutation()
+  const applyHal = trpc.system.applyHalBroker.useMutation()
   const halBroker = trpc.system.halBroker.useQuery()
   const mqttUrl = str('mqttUrl').trim()
   const testMqtt = () => {
@@ -206,6 +210,15 @@ function SettingsForm({ s, coreVersion, coreHost, system, onSave, saving }: {
       mqttTlsEnabled: !!d.mqttTlsEnabled,
       mqttTlsInsecure: !!d.mqttTlsInsecure,
     })
+  }
+  const applyMqtt = () => {
+    if (!mqttUrl) return
+    const password = str('mqttPassword')
+    applyHal.mutate({
+      mqttUrl,
+      mqttUsername: str('mqttUsername') || null,
+      ...(password ? { mqttPassword: password } : {}),
+    }, { onSuccess: () => { void halBroker.refetch() } })
   }
 
   return (
@@ -341,7 +354,19 @@ function SettingsForm({ s, coreVersion, coreHost, system, onSave, saving }: {
               </div>
             </Row>
             <Row label="Hardware daemon" sub={halDaemonSub(halBroker.data)}>
-              <span className="text-[13px] text-fg-2" data-testid="hal-broker-status">{halDaemonStatus(halBroker.data)}</span>
+              <div className="flex flex-col items-end gap-1">
+                <span className="text-[13px] text-fg-2" data-testid="hal-broker-status">{halDaemonStatus(halBroker.data)}</span>
+                {halBroker.data?.canApply && (
+                  <>
+                    <Button size="sm" disabled={!mqttUrl || saving || applyHal.isPending} onClick={applyMqtt} data-testid="apply-hal-broker">
+                      {applyHal.isPending ? 'Applying…' : 'Use this broker for hardware'}
+                    </Button>
+                    <div role="status" className={`text-xs ${applyHal.data?.ok ? 'text-fg-2' : 'text-danger'}`}>
+                      {applyHal.data?.detail ?? applyHal.error?.message}
+                    </div>
+                  </>
+                )}
+              </div>
             </Row>
           </Section>
 
@@ -368,7 +393,7 @@ function About({ label, value }: { label: string, value: string }) {
   return <KeyValue label={label} value={value} size={13} className="flex flex-col gap-[3px] [&>div:first-child]:text-fg-3" valueClassName="whitespace-normal break-words font-medium" />
 }
 
-interface HalBroker { broker: string | null, connected: boolean | null, sim: boolean, usingDefault: boolean }
+interface HalBroker { broker: string | null, connected: boolean | null, sim: boolean, usingDefault: boolean, canApply?: boolean }
 
 function halDaemonStatus(h: HalBroker | undefined): string {
   if (!h) return '…'
@@ -380,10 +405,12 @@ function halDaemonStatus(h: HalBroker | undefined): string {
 
 function halDaemonSub(h: HalBroker | undefined): string {
   if (!h || h.sim) return 'The app talks to simulated hardware here, not to a hardware-daemon broker.'
-  const where = h.usingDefault
-    ? 'Default is the unit\'s local broker at 127.0.0.1:1883. To see lights, pump and sensors in Home Assistant, run scripts/install-hal --mqtt-lan and add MQTT in HA (thryve.local, port 1884). Pointing hald at HA\'s broker also requires core\'s HAL_MQTT_URL to match, or the app loses the hardware.'
-    : 'hald publishes lights, pump and sensors on this broker. The app also uses it to talk to the hardware. To use Home Assistant\'s broker for those, set mqtt_url in /etc/thryve/hal.toml and HAL_MQTT_URL on the core service to the same URL.'
-  return where
+  if (h.canApply) {
+    return 'hald publishes lights, pump and sensors on this broker, and the app talks to the hardware over the same one. Use this broker for hardware writes the URL and credentials above into /etc/thryve/hal.toml and points core at it too, then restarts hald. Saving this card alone does not do that — this card is only core\'s grow-event bridge.'
+  }
+  return h.usingDefault
+    ? 'Default is the unit\'s local broker at 127.0.0.1:1883. To see lights, pump and sensors in Home Assistant, run scripts/install-hal --mqtt-lan and add MQTT in HA (thryve.local, port 1884), or run scripts/install so this page can point hald at the broker above. Pointing only hal.toml at HA\'s broker, without HAL_MQTT_URL, makes the app lose the hardware.'
+    : 'hald publishes lights, pump and sensors on this broker. The app also uses it to talk to the hardware. To use the broker above, run scripts/install so this page can apply it, or set mqtt_url in /etc/thryve/hal.toml and HAL_MQTT_URL on the core service to the same URL (docs/INSTALLATION.md §4).'
 }
 
 const REMINDERS = [

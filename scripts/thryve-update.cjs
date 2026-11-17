@@ -427,6 +427,34 @@ function markBusy(on) {
   }
 }
 
+
+/** Lets core run the hardware-broker helper with no arguments (secrets on stdin). */
+function installHalMqttSudoers() {
+  const dest = process.env.THRYVE_UPDATE_HAL_MQTT_SUDOERS ?? '/etc/sudoers.d/thryve-hal-mqtt'
+  const helperPath = path.join(P.sbin, 'thryve-hal-mqtt')
+  if (!fs.existsSync(helperPath)) return
+  let user
+  try {
+    user = coreAccount().user
+  } catch (e) {
+    log(`couldn't resolve core's account for thryve-hal-mqtt sudoers: ${e.message}`)
+    return
+  }
+  if (!user) return
+  const tmp = `${dest}.new`
+  fs.mkdirSync(path.dirname(dest), { recursive: true })
+  fs.writeFileSync(tmp, `${user} ALL=(root) NOPASSWD: ${helperPath}\n`, { mode: 0o440 })
+  if (isRoot) fs.chownSync(tmp, 0, 0)
+  try {
+    execFileSync('visudo', ['-cf', tmp], { encoding: 'utf8' })
+  } catch {
+    fs.rmSync(tmp, { force: true })
+    log("couldn't validate sudoers for thryve-hal-mqtt")
+    return
+  }
+  fs.renameSync(tmp, dest)
+}
+
 /** Installs a root helper from the checked release, with this prefix written in. */
 function installHelper(from, name) {
   const dest = path.join(P.sbin, name)
@@ -736,7 +764,10 @@ async function apply() {
   // The helpers come from the checked release, before its files are handed to core's account.
   const helpers = path.join(DL, 'helpers')
   fs.mkdirSync(helpers, { recursive: true, mode: 0o700 })
-  for (const n of ['thryve-update.cjs', 'thryve-restore.cjs']) fs.copyFileSync(path.join(P.next, 'scripts', n), path.join(helpers, n))
+  for (const n of ['thryve-update.cjs', 'thryve-restore.cjs', 'thryve-hal-mqtt.cjs']) {
+    const from = path.join(P.next, 'scripts', n)
+    if (fs.existsSync(from)) fs.copyFileSync(from, path.join(helpers, n))
+  }
   for (const n of LOGIN_FILES) {
     const from = path.join(P.next, 'scripts/login-logo', n)
     if (fs.existsSync(from)) fs.copyFileSync(from, path.join(helpers, n))
@@ -817,9 +848,12 @@ async function apply() {
     await rollBack(meta, health.error)
     return { ok: false, code: 'rolled-back', error: health.error }
   }
-  for (const n of ['thryve-update.cjs', 'thryve-restore.cjs']) {
+  for (const n of ['thryve-update.cjs', 'thryve-restore.cjs', 'thryve-hal-mqtt.cjs']) {
+    const from = path.join(helpers, n)
+    if (!fs.existsSync(from)) continue
     try {
-      installHelper(path.join(helpers, n), n.replace(/\.cjs$/, ''))
+      installHelper(from, n.replace(/\.cjs$/, ''))
+      if (n === 'thryve-hal-mqtt.cjs') installHalMqttSudoers()
     }
     catch (e) {
       log(`couldn't refresh ${n}: ${e.message}`)

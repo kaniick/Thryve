@@ -349,13 +349,23 @@ checks that broker. Lights, pump and sensors still come from hald. Pick one:
   integration → MQTT** and enter host `thryve.local`, port 1884, user
   `homeassistant` and that password. Port 1883 stays local to the Pi.
 - **HA's own broker** (the Mosquitto add-on). Install `hald` with
-  `--no-broker`, then point both sides at HA's broker:
+  `--no-broker`, then point both sides at HA's broker. From Settings →
+  Home Assistant bridge, enter the broker URL and credentials, click
+  **Test connection**, then **Use this broker for hardware**. That writes
+  `mqtt_url` / `mqtt_username` / `mqtt_password` in `/etc/thryve/hal.toml`,
+  points core at the same broker (`HAL_MQTT_URL` in
+  `/etc/thryve/core-mqtt.env`), restarts `hald`, and schedules a core
+  restart a few seconds later so the app does not lose the hardware.
+  The helper is installed by `scripts/install`; an older unit needs a
+  one-time `sudo scripts/install` (or a web update that refreshes
+  helpers) before the button appears.
+
+  To do the same by hand:
   - In `/etc/thryve/hal.toml`, set `mqtt_url = "mqtt://homeassistant.local:1883"`
     plus `mqtt_username` and `mqtt_password`.
-  - In `/etc/systemd/system/thryve-core.service`, set
+  - In `/etc/systemd/system/thryve-core.service` (or a drop-in), set
     `HAL_MQTT_URL=mqtt://USER:PASS@homeassistant.local:1883`.
-
-  Then run `sudo systemctl daemon-reload && sudo systemctl restart hald thryve-core`.
+  - Then run `sudo systemctl daemon-reload && sudo systemctl restart hald thryve-core`.
 
 Either way the device appears in HA with no further setup. See
 `docs/homeassistant/` for an example dashboard.

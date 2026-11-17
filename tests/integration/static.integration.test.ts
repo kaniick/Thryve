@@ -91,14 +91,18 @@ describe('static files', () => {
     for (const path of ['/', '/index.html', '/light']) {
       const r = await get(path, 'gzip')
       expect(r.status).toBe(200)
-      expect(r.headers.get('cache-control')).toBe('no-cache')
+      expect(r.headers.get('cache-control')).toBe('no-cache, no-store, must-revalidate')
+      expect(r.headers.get('pragma')).toBe('no-cache')
+      expect(r.headers.get('expires')).toBe('0')
     }
   })
 
   it('never pins index.html under an old asset URL after an update', async () => {
     const r = await get('/assets/index-gone00.js', 'gzip')
     expect(r.headers.get('content-type')).toContain('text/html')
-    expect(r.headers.get('cache-control')).toBe('no-cache')
+    expect(r.headers.get('cache-control')).toBe('no-cache, no-store, must-revalidate')
+    expect(r.headers.get('pragma')).toBe('no-cache')
+    expect(r.headers.get('expires')).toBe('0')
   })
 
   it('keeps unhashed files a day', async () => {

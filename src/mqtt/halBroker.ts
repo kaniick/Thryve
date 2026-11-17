@@ -1,5 +1,3 @@
-import { readFile } from 'node:fs/promises'
-import { join } from 'node:path'
 import { brokerHost } from './bridge'
 
 /** hald's default when `mqtt_url` is unset in hal.toml. */
@@ -41,47 +39,33 @@ function unquoteToml(raw: string): string {
   return t
 }
 
-/** Load the daemon's MQTT settings from a hal.toml path; null if the file isn't there. */
-export async function readHalTomlBroker(path: string): Promise<HalTomlBroker | null> {
-  try {
-    const parsed = parseHalTomlBroker(await readFile(path, 'utf8'))
-    return {
-      url: parsed.url ?? DEFAULT_HAL_MQTT_URL,
-      explicit: parsed.explicit,
-      hasUsername: parsed.hasUsername,
-      hasPassword: parsed.hasPassword,
-    }
-  }
-  catch (err) {
-    if ((err as { code?: string } | null)?.code === 'ENOENT') return null
-    throw err
+export function tomlBrokerFromText(text: string): HalTomlBroker {
+  const parsed = parseHalTomlBroker(text)
+  return {
+    url: parsed.url ?? DEFAULT_HAL_MQTT_URL,
+    explicit: parsed.explicit,
+    hasUsername: parsed.hasUsername,
+    hasPassword: parsed.hasPassword,
   }
 }
 
-export function halTomlPath(): string {
-  return join(process.env.THRYVE_ETC_DIR ?? '/etc/thryve', 'hal.toml')
+export interface HardwareBrokerApplyInput {
+  url: string
+  username?: string | null
+  password?: string | null
 }
 
-export function halHttpBase(): string {
-  return (process.env.HAL_HTTP_URL ?? 'http://127.0.0.1:3001').replace(/\/$/, '')
+export interface HardwareBrokerApplyResult {
+  ok: boolean
+  detail: string
+  code?: string
 }
 
-/** Whether hald's HTTP /health reports an MQTT session. null if it couldn't be reached. */
-export async function haldMqttConnected(httpBase = halHttpBase(), fetchImpl: typeof fetch = fetch): Promise<boolean | null> {
-  const ac = new AbortController()
-  const timer = setTimeout(() => ac.abort(), 1500)
-  try {
-    const res = await fetchImpl(`${httpBase}/health`, { signal: ac.signal })
-    if (!res.ok) return null
-    const body = await res.json() as { mqtt_connected?: unknown }
-    return typeof body.mqtt_connected === 'boolean' ? body.mqtt_connected : null
-  }
-  catch {
-    return null
-  }
-  finally {
-    clearTimeout(timer)
-  }
+/** Node hosts only: read and optionally re-point hald's broker. The browser demo omits this. */
+export interface HardwareBrokerControl {
+  status: (sim: boolean) => Promise<HalBrokerStatus>
+  canApply: (sim: boolean) => boolean
+  apply: (mqtt: HardwareBrokerApplyInput) => Promise<HardwareBrokerApplyResult>
 }
 
 export interface HalBrokerStatus {
@@ -100,22 +84,26 @@ export interface HalBrokerStatus {
 /**
  * The hardware daemon's MQTT broker and whether it is connected, for the
  * Settings Home Assistant card. Never includes a username or password.
+ * Callers on Node supply the parsed toml and /health result.
  */
-export async function halBrokerStatus(opts: { sim?: boolean, tomlPath?: string, httpBase?: string, fetchImpl?: typeof fetch } = {}): Promise<HalBrokerStatus> {
+export function halBrokerStatus(opts: {
+  sim?: boolean
+  file?: HalTomlBroker | null
+  configPath?: string | null
+  connected?: boolean | null
+} = {}): HalBrokerStatus {
   if (opts.sim) {
     return { broker: null, url: null, connected: null, sim: true, configPath: null, usingDefault: false }
   }
-  const path = opts.tomlPath ?? halTomlPath()
-  const file = await readHalTomlBroker(path)
+  const file = opts.file ?? null
   const url = file?.url ?? DEFAULT_HAL_MQTT_URL
-  const connected = await haldMqttConnected(opts.httpBase ?? halHttpBase(), opts.fetchImpl ?? fetch)
   const safe = stripUserinfo(url)
   return {
     broker: brokerHost(safe),
     url: safe,
-    connected,
+    connected: opts.connected ?? null,
     sim: false,
-    configPath: file ? path : null,
+    configPath: file ? (opts.configPath ?? null) : null,
     usingDefault: !file || !file.explicit,
   }
 }
@@ -130,4 +118,48 @@ function stripUserinfo(url: string): string {
   catch {
     return url
   }
+}
+
+/** Whether a hald /health body reports an MQTT session. */
+export function mqttConnectedFromHealth(body: unknown): boolean | null {
+  if (!body || typeof body !== 'object' || !('mqtt_connected' in body)) return null
+  return typeof (body as { mqtt_connected: unknown }).mqtt_connected === 'boolean'
+    ? (body as { mqtt_connected: boolean }).mqtt_connected
+    : null
+}
+
+function tomlQuote(value: string): string {
+  return `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`
+}
+
+/**
+ * Set or remove mqtt_url / mqtt_username / mqtt_password in a hal.toml body,
+ * leaving every other line (including comments) as it is.
+ */
+export function upsertHalTomlMqtt(text: string, mqtt: { url: string, username?: string | null, password?: string | null }): string {
+  const values: Record<string, string | null> = {
+    mqtt_url: mqtt.url,
+    mqtt_username: mqtt.username ?? null,
+    mqtt_password: mqtt.password ?? null,
+  }
+  const seen = new Set<string>()
+  const out: string[] = []
+  for (const line of text.split('\n')) {
+    const s = line.trim()
+    const m = !s.startsWith('#') ? /^(mqtt_url|mqtt_username|mqtt_password)\s*=/.exec(s) : null
+    if (m && m[1]) {
+      const key = m[1]
+      seen.add(key)
+      const v = values[key]
+      if (v) out.push(`${key} = ${tomlQuote(v)}`)
+      continue
+    }
+    out.push(line)
+  }
+  for (const key of ['mqtt_url', 'mqtt_username', 'mqtt_password'] as const) {
+    if (seen.has(key) || !values[key]) continue
+    if (out.length && out[out.length - 1] !== '') out.push('')
+    out.push(`${key} = ${tomlQuote(values[key] as string)}`)
+  }
+  return `${out.join('\n').replace(/\n+$/, '')}\n`
 }

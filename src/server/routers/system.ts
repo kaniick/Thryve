@@ -65,10 +65,31 @@ export const systemRouter = router({
       sim: z.boolean(),
       configPath: z.string().nullable(),
       usingDefault: z.boolean(),
+      canApply: z.boolean(),
     }))
-    .query(({ ctx }) => {
+    .query(async ({ ctx }) => {
       const ver = ctx.hal.snapshot().system?.halVersion ?? ''
-      return halBrokerStatus({ sim: ver.includes('sim') })
+      const sim = ver.includes('sim')
+      const status = ctx.hardwareBroker ? await ctx.hardwareBroker.status(sim) : halBrokerStatus({ sim: true })
+      return { ...status, canApply: ctx.hardwareBroker?.canApply(sim) ?? false }
+    }),
+  applyHalBroker: publicProcedure
+    .meta({ openapi: { method: 'POST', path: '/system/hal-broker', tags: ['system'], summary: 'Point the hardware daemon and core at the entered MQTT broker: writes hal.toml and HAL_MQTT_URL, then restarts hald' } })
+    .input(z.object({
+      mqttUrl: z.string().min(1),
+      mqttUsername: z.string().nullable().optional(),
+      mqttPassword: z.string().nullable().optional(),
+    }))
+    .output(z.object({ ok: z.boolean(), detail: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const ver = ctx.hal.snapshot().system?.halVersion ?? ''
+      if (!ctx.hardwareBroker || ver.includes('sim')) {
+        return { ok: false, detail: 'This core is using the in-process simulator, which has no hardware-daemon broker to re-point.' }
+      }
+      const resolved = resolveBrokerTest(ctx.store.settings.get(), input)
+      const url = resolved.mqttUrl?.trim()
+      if (!url) return { ok: false, detail: 'Enter a broker URL first.' }
+      return ctx.hardwareBroker.apply({ url, username: resolved.mqttUsername, password: resolved.mqttPassword })
     }),
   logging: publicProcedure
     .meta({ openapi: { method: 'GET', path: '/system/logging', tags: ['system'], summary: 'How much core and hald log: quiet (warnings and errors), off, or debug until a time' } })
