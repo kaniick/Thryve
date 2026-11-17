@@ -15,6 +15,25 @@
   runs. Registered devices and activity tokens stay on the unit; a LAN
   notification feed works without an Apple key. Migration
   `0026_ios_notifications` (PR #24).
+- Analysis → Pod bounds: opening the view lets you move and resize the boxes
+  immediately, with **Save boxes**, **Reset to measured** and **Discard** in
+  the toolbar, an unsaved-changes mark, and a toast on success or failure
+  (PR #26).
+- Settings → Home Assistant bridge: the existing **Test connection** button
+  now tests the broker URL, credentials and TLS options entered in the form
+  (an empty password keeps the saved one) and reports connected, auth
+  refused, unreachable, timeout, DNS or TLS failures without exposing raw
+  broker errors. The card explains that it only configures core's
+  grow-event bridge — lights, pump and sensors come from the hardware
+  daemon — and shows hald's current broker and whether it is connected.
+  When `scripts/install` (or a later web update) has installed the
+  helper, **Use this broker for hardware** writes the URL and credentials
+  to `/etc/thryve/hal.toml`, points core at the same broker, and restarts
+  hald. A unit updated from an earlier release needs a one-time
+  `sudo scripts/install` before that button appears. Saving other settings
+  no longer clears a stored MQTT password. After an update, `index.html`
+  is served with `Cache-Control: no-cache, no-store, must-revalidate` so
+  the browser does not keep a stale UI (PR #27).
 
 ## 2.1.1 — 2026-11-16
 

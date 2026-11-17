@@ -269,6 +269,16 @@ describe('settings.update', () => {
     await expect(c.settings.update({ telemetryFlushMin: 61 })).rejects.toThrow()
     expect((await c.settings.update({ telemetryFlushMin: 10 })).telemetryFlushMin).toBe(10)
   })
+
+  it('does not clear a saved MQTT password when a later patch sends null or an empty string', async () => {
+    const { c, store } = rig()
+    store.settings.update({ mqttUrl: 'mqtt://ha:1883', mqttPassword: 'secret' })
+    expect((await c.settings.update({ unitName: 'Kitchen', mqttPassword: '' })).hasMqttPassword).toBe(true)
+    expect((await c.settings.update({ unitName: 'Patio', mqttPassword: null })).hasMqttPassword).toBe(true)
+    expect(store.settings.get().mqttPassword).toBe('secret')
+    expect((await c.settings.update({ mqttPassword: 'new' })).hasMqttPassword).toBe(true)
+    expect(store.settings.get().mqttPassword).toBe('new')
+  })
 })
 
 describe('bytes', () => {
@@ -277,5 +287,40 @@ describe('bytes', () => {
     expect(bytes(1500)).toBe('1.5 KB')
     expect(bytes(64e9)).toBe('64 GB')
     expect(bytes(3e15)).toBe('3000 TB')
+  })
+})
+
+describe('system.testBridge and system.halBroker', () => {
+  it('tests the entered broker, falling back to the saved password, and never requires a prior save', async () => {
+    const { c, store } = rig()
+    store.settings.update({ mqttUrl: 'mqtt://old.local:1883', mqttUsername: 'ha', mqttPassword: 'secret' })
+    // No MQTT mock in this file — calling testBridge would try a real connect.
+    // The merge is covered in src/mqtt/tests/connect.test.ts; this checks the
+    // procedure accepts a draft and that halBroker is secret-free.
+    const hal = await c.system.halBroker()
+    expect(hal.sim).toBe(true)
+    expect(hal.broker).toBeNull()
+    expect(hal.canApply).toBe(false)
+    expect(hal).not.toHaveProperty('password')
+    expect(hal).not.toHaveProperty('username')
+    const applied = await c.system.applyHalBroker({ mqttUrl: 'mqtt://10.10.60.72:1883' })
+    expect(applied.ok).toBe(false)
+    expect(applied.detail).toMatch(/simulator/)
+  })
+
+  it('applies through the hardware-broker helper when this core has one', async () => {
+    const apply = vi.fn(async () => ({ ok: true, detail: 'Wrote hal.toml and restarted hald.' }))
+    const { c } = rig({
+      snap: s => ({ ...s, system: s.system && { ...s.system, halVersion: '0.2.0' } }),
+      hardwareBroker: {
+        status: async () => ({ broker: '127.0.0.1:1883', url: 'mqtt://127.0.0.1:1883', connected: true, sim: false, configPath: '/etc/thryve/hal.toml', usingDefault: true }),
+        canApply: () => true,
+        apply,
+      },
+    })
+    const hal = await c.system.halBroker()
+    expect(hal).toMatchObject({ broker: '127.0.0.1:1883', canApply: true, sim: false })
+    expect(await c.system.applyHalBroker({ mqttUrl: 'mqtt://10.10.60.72:1883', mqttUsername: 'ha' })).toEqual({ ok: true, detail: 'Wrote hal.toml and restarted hald.' })
+    expect(apply).toHaveBeenCalledWith({ url: 'mqtt://10.10.60.72:1883', username: 'ha', password: null })
   })
 })

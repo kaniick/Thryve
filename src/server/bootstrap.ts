@@ -24,6 +24,7 @@ import type { HomeKitControl } from '../homekit/types'
 import { createEventBus, type EventBus } from '../lib/eventBus'
 import type { LoggingControl } from '../logging/policy'
 import type { BridgeStatus } from '../mqtt/bridge'
+import type { HardwareBrokerControl } from '../mqtt/halBroker'
 import { SimWifi, type Wifi } from '../network/wifi'
 import { Scheduler } from '../scheduler/scheduler'
 import type { Store } from '../store/types'
@@ -75,6 +76,8 @@ export interface CoreOptions {
   disk?: () => DiskUsage | null
   /** The Home Assistant bridge's state; node hosts only. */
   bridge?: () => BridgeStatus
+  /** hald's broker and a safe way to point it at the same URL as this card; node hosts only. */
+  hardwareBroker?: HardwareBrokerControl
   /** How much core and hald log; node hosts only. */
   logging?: LoggingControl
   host?: Context['host']
@@ -121,7 +124,7 @@ export function createCore(opts: CoreOptions): Core {
   const notifier = createNotifier({ hal: o.hal, store: o.store, events, now: o.now, update: o.update, log: m => console.warn(m), ios })
   const flash = new FlashMeter({ store: o.store, source: o.flashSource ?? null, disk: o.disk, now: o.now })
   const podCodes = new PodCodeService({ store: o.store, captures, reader: o.codeReader ?? null, log: m => console.warn(m), onRead: () => events.emit({ kind: 'mutation', path: 'podCodes' }) })
-  const ctx: Context = { hal: o.hal, events, store: o.store, captures, analysis, podCodes, mirror: o.mirror, backup: o.backup, restore: o.restore, update: o.update, bootLog: o.bootLog, homekit: o.homekit, models: o.models, podvision: o.podvision, bridge: o.bridge, flash, database: o.database, logging: o.logging, wifi, light, autopilot, notifier, ios, version: o.version, host: o.host, now: o.now }
+  const ctx: Context = { hal: o.hal, events, store: o.store, captures, analysis, podCodes, mirror: o.mirror, backup: o.backup, restore: o.restore, update: o.update, bootLog: o.bootLog, homekit: o.homekit, models: o.models, podvision: o.podvision, bridge: o.bridge, hardwareBroker: o.hardwareBroker, flash, database: o.database, logging: o.logging, wifi, light, autopilot, notifier, ios, version: o.version, host: o.host, now: o.now }
   o.homekit?.attach(ctx)
   const recorder = new Recorder({ store: o.store, events, now: o.now })
   const retention = new TelemetryRetention({ store: o.store, now: o.now })

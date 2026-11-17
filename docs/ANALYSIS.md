@@ -52,13 +52,15 @@ Gardyn Home 3.0's stills, one box per cup centred on its opening
 them over the stills, each with its dashed middle third, so you can see what
 each pod is scored on.
 
-If your camera sits a little differently, press **Edit boxes** in that view.
-Drag a box onto its pod's cup, and drag its corner to fit the plant. You can
-also focus a box and move it with the arrow keys, or resize it with Shift and
-the arrow keys. **Save boxes** keeps them per camera. **Reset to measured**
-brings back the defaults. New photos are scored on the saved boxes, and so is
-the Grow page's crop of each pod. **Re-run** an analyser to rescore the photos
-already on the unit. Scripts read and set the boxes with `GET /api/vision/regions`
+If your camera sits a little differently, open that view: the boxes can be
+dragged straight away. Drag a box onto its pod's cup, and drag its corner to
+fit the plant. You can also focus a box and move it with the arrow keys, or
+resize it with Shift and the arrow keys. **Save boxes** in the toolbar keeps
+them per camera; an unsaved-changes mark appears until you do. **Reset to
+measured** brings back the defaults, and **Discard** drops unsaved edits.
+New photos are scored on the saved boxes, and so is the Grow page's crop of
+each pod. **Re-run** an analyser to rescore the photos already on the unit.
+Scripts read and set the boxes with `GET /api/vision/regions`
 and `PUT /api/vision/regions/{camera}`. The reference worker
 (`scripts/analysis-worker.mjs`) uses the unit's boxes.
 
@@ -231,8 +233,8 @@ A dismissal is not a label. It never shows in the label counts, the
 dataset export carries dismissals in their own file,
 `suggestion_dismissals.json`. Nothing hides a pod on its own: a box that
 doesn't sit on a pod should be moved in **Analysis → Latest photos → Pod
-bounds → Edit boxes** (the tooltip on each suggested pod says so, and the
-link under the label chips opens it).
+bounds** and saved (the tooltip on each suggested pod says so, and the
+link under the label chips opens the editor).
 
 Scripts use `PUT /api/vision/captures/{captureId}/suggestions/{slot}/dismissal`
 to dismiss, `DELETE` on the same path to bring the suggestion back, and

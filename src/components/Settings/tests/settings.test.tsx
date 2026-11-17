@@ -6,14 +6,14 @@ import { parsePlace, SettingsPage } from '../SettingsPage'
 
 const { data, calls } = vi.hoisted(() => ({
   data: new Map<string, unknown>(),
-  calls: { update: vi.fn(), testBridge: vi.fn(), test: vi.fn(), sync: vi.fn(), run: vi.fn(), undo: vi.fn(), browse: vi.fn(), fromBucket: vi.fn() },
+  calls: { update: vi.fn(), testBridge: vi.fn(), applyHalBroker: vi.fn(), test: vi.fn(), sync: vi.fn(), run: vi.fn(), undo: vi.fn(), browse: vi.fn(), fromBucket: vi.fn() },
 }))
 
 vi.mock('@tanstack/react-router', () => ({ Link: ({ to, children, className }: { to: string, children: unknown, className?: string }) => <a href={to} className={className}>{children as string}</a> }))
 
 vi.mock('@/src/utils/trpc', () => {
   const query = (name: string) => ({ useQuery: () => ({ data: data.get(name), refetch: vi.fn() }) })
-  const mutation = (name: 'update' | 'testBridge' | 'test' | 'sync' | 'run' | 'undo' | 'browse' | 'fromBucket') => ({ useMutation: () => ({
+  const mutation = (name: 'update' | 'testBridge' | 'applyHalBroker' | 'test' | 'sync' | 'run' | 'undo' | 'browse' | 'fromBucket') => ({ useMutation: () => ({
     isPending: false,
     data: data.get(`${name}Result`),
     error: data.get(`${name}Error`) ?? null,
@@ -24,7 +24,7 @@ vi.mock('@/src/utils/trpc', () => {
     trpc: {
       useUtils: () => ({ settings: { invalidate: vi.fn() }, pump: { invalidate: vi.fn() } }),
       settings: { get: query('settings'), update: mutation('update') },
-      system: { info: query('info'), testBridge: mutation('testBridge') },
+      system: { info: query('info'), testBridge: mutation('testBridge'), applyHalBroker: mutation('applyHalBroker'), halBroker: query('halBroker') },
       backup: { status: query('backup'), runNow: mutation('run'), restoreInfo: query('restoreInfo'), undo: mutation('undo'), list: query('bucketList'), browse: mutation('browse'), restoreFromBucket: mutation('fromBucket') },
       storage: { flash: query('flash'), mirror: query('mirror'), testMirror: mutation('test'), syncMirror: mutation('sync') },
       sensors: { latest: query('sensors') },
@@ -443,18 +443,61 @@ describe('Settings: units', () => {
 })
 
 describe('Settings: MQTT broker test', () => {
-  it('tests the saved broker and asks the user to save any MQTT edits first', () => {
+  it('tests the entered broker, keeps a saved password when the field is blank, and stays clickable before Save', () => {
     data.set('settings', { ...settings, mqttUrl: 'mqtt://ha.local:1883', hasMqttPassword: true })
     data.set('testBridgeResult', { ok: true, detail: 'Connected to the MQTT broker.' })
+    data.set('halBroker', { broker: '127.0.0.1:1883', url: 'mqtt://127.0.0.1:1883', connected: true, sim: false, configPath: '/etc/thryve/hal.toml', usingDefault: true })
     render(<SettingsPage />)
+    expect(screen.getByTestId('hal-broker-status').textContent).toBe('127.0.0.1:1883 · connected')
+    expect(screen.getByText(/core's MQTT bridge only/)).toBeTruthy()
     const button = screen.getByRole<HTMLButtonElement>('button', { name: 'Test connection' })
     fireEvent.click(button)
-    expect(calls.testBridge).toHaveBeenCalledWith(undefined)
+    expect(calls.testBridge).toHaveBeenCalledWith({ mqttUrl: 'mqtt://ha.local:1883', mqttUsername: null, mqttTlsEnabled: false, mqttTlsInsecure: false })
     expect(screen.getByText('Connected to the MQTT broker.')).toBeTruthy()
-    fireEvent.change(field('Broker URL'), { target: { value: 'mqtt://other.local:1883' } })
-    expect(button.disabled).toBe(true)
-    expect(screen.queryByText('Connected to the MQTT broker.')).toBeNull()
-    expect(screen.getByText('Save MQTT changes before testing.')).toBeTruthy()
+    fireEvent.change(field('Broker URL'), { target: { value: 'mqtt://10.10.60.72:1883' } })
+    fireEvent.change(field('Username'), { target: { value: 'ha' } })
+    fireEvent.change(field('Password'), { target: { value: 'pw' } })
+    expect(button.disabled).toBe(false)
+    fireEvent.click(button)
+    expect(calls.testBridge).toHaveBeenLastCalledWith({
+      mqttUrl: 'mqtt://10.10.60.72:1883', mqttUsername: 'ha', mqttPassword: 'pw', mqttTlsEnabled: false, mqttTlsInsecure: false,
+    })
+    expect(screen.getByText('Connected to the MQTT broker.')).toBeTruthy()
+  })
+
+  it('says the hardware daemon is simulated when this core has no hald broker', () => {
+    data.set('halBroker', { broker: null, url: null, connected: null, sim: true, configPath: null, usingDefault: false })
+    render(<SettingsPage />)
+    expect(screen.getByTestId('hal-broker-status').textContent).toBe('In-process simulator (no MQTT broker of its own)')
+  })
+
+  it('omits a blank MQTT password so saving other fields cannot clear the one already set', () => {
+    data.set('settings', { ...settings, mqttUrl: 'mqtt://ha.local:1883', hasMqttPassword: true })
+    render(<SettingsPage />)
+    fireEvent.change(field('Name'), { target: { value: 'Kitchen' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    const patch = calls.update.mock.calls[0]?.[0] as Record<string, unknown>
+    expect(patch).toMatchObject({ unitName: 'Kitchen', mqttUrl: 'mqtt://ha.local:1883' })
+    expect(patch).not.toHaveProperty('mqttPassword')
+  })
+
+  it('offers to point the hardware daemon at the entered broker when the helper is installed', () => {
+    data.set('settings', { ...settings, mqttUrl: 'mqtt://10.10.60.72:1883', hasMqttPassword: true })
+    data.set('halBroker', { broker: '127.0.0.1:1883', url: 'mqtt://127.0.0.1:1883', connected: true, sim: false, configPath: '/etc/thryve/hal.toml', usingDefault: true, canApply: true })
+    data.set('applyHalBrokerResult', { ok: true, detail: 'Wrote hal.toml, pointed core at the same broker, and restarted hald. Core will reconnect in a few seconds.' })
+    render(<SettingsPage />)
+    const button = screen.getByRole<HTMLButtonElement>('button', { name: 'Use this broker for hardware' })
+    fireEvent.click(button)
+    expect(calls.applyHalBroker).toHaveBeenCalledWith({ mqttUrl: 'mqtt://10.10.60.72:1883', mqttUsername: null })
+    expect(screen.getByText(/Wrote hal.toml/)).toBeTruthy()
+    expect(screen.getByText(/Saving this card alone does not do that/)).toBeTruthy()
+  })
+
+  it('hides the hardware apply button when the helper is not on this core', () => {
+    data.set('halBroker', { broker: '127.0.0.1:1883', url: 'mqtt://127.0.0.1:1883', connected: true, sim: false, configPath: '/etc/thryve/hal.toml', usingDefault: true, canApply: false })
+    render(<SettingsPage />)
+    expect(screen.queryByRole('button', { name: 'Use this broker for hardware' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Test connection' })).toBeTruthy()
   })
 })
 

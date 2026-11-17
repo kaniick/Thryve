@@ -18,6 +18,7 @@ import type { ModelRegistry } from '../vision/registry'
 import type { PodCodeService } from '../vision/podCodes'
 import type { HomeKitControl } from '../homekit/types'
 import type { BridgeStatus } from '../mqtt/bridge'
+import type { HardwareBrokerControl } from '../mqtt/halBroker'
 import type { LoggingControl } from '../logging/policy'
 
 export interface Context {
@@ -56,6 +57,8 @@ export interface Context {
   podvision?: { bin: string, lastError: () => string | null }
   /** The Home Assistant MQTT bridge (ADR-0013); node hosts only, where server/index.ts owns it. */
   bridge?: () => BridgeStatus
+  /** The hardware daemon's broker (hal.toml) and a safe apply path; node hosts only. */
+  hardwareBroker?: HardwareBrokerControl
   /** How much core and hald log; node hosts only, where the policy file lives. */
   logging?: LoggingControl
   /** Build info pinned at release time (.git-info) or 'dev'. */

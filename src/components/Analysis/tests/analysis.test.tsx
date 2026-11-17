@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { ToastProvider } from '@/src/components/ds/toast'
 import { AnalysisPage, gapSummary } from '../AnalysisPage'
 
 const { data, calls, invalidate, demo } = vi.hoisted(() => ({
@@ -60,6 +61,7 @@ const row = (analyzer: string, slot: number, value: number) => ({ captureId: slo
 const frame = (camera: string) => ({ id: `${camera}-1`, camera, ts: '2026-01-02T00:00:00Z', path: 'x.jpg', bytes: 1, url: `/api/captures/${camera}-1.jpg` })
 /** Pod rows of the table, without the per-camera headings. */
 const podRows = () => [...screen.getByRole('table').querySelectorAll('tbody tr')].filter(tr => tr.querySelector('td'))
+const mount = () => render(<ToastProvider><AnalysisPage /></ToastProvider>)
 
 beforeEach(() => {
   data.clear()
@@ -197,7 +199,7 @@ describe('AnalysisPage', () => {
     fireEvent.pointerEnter(screen.getAllByRole('button', { name: 'Pod 2 details' })[0] as HTMLElement)
     expect(screen.getByRole('dialog', { name: 'Pod 2' }).textContent).toContain('Marked empty, so none of this counts as cover.')
     fireEvent.click(screen.getByRole('tab', { name: 'Pod bounds' }))
-    fireEvent.click(screen.getByText('Edit boxes'))
+    expect(screen.getByText('Save boxes')).toBeTruthy()
     expect(screen.queryByTestId('pod-hits')).toBeNull()
     expect(screen.queryByTestId('pod-card')).toBeNull()
   })
@@ -207,9 +209,12 @@ describe('AnalysisPage', () => {
     Element.prototype.scrollIntoView = scroll
     render(<AnalysisPage />)
     expect(screen.queryByText('Edit boxes')).toBeNull()
+    expect(screen.queryByText('Save boxes')).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'stub move boxes' }))
     expect(screen.getByRole('tab', { name: 'Pod bounds' }).getAttribute('aria-selected')).toBe('true')
-    expect(screen.getByText('Edit boxes')).toBeTruthy()
+    expect(screen.getByText('Save boxes')).toBeTruthy()
+    expect(screen.queryByText('Edit boxes')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Pod 1 box' })).toBeTruthy()
     expect(scroll).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' })
     expect(scroll.mock.contexts[0]).toBe(document.getElementById('latest-photos'))
   })
@@ -327,14 +332,16 @@ describe('AnalysisPage', () => {
   })
 
   it('edits the boxes by keyboard and saves each camera\'s', async () => {
-    render(<AnalysisPage />)
+    mount()
     fireEvent.click(screen.getByRole('tab', { name: 'Pod bounds' }))
-    expect(screen.queryByRole('button', { name: 'Pod 1 box' })).toBeNull()
-    fireEvent.click(screen.getByText('Edit boxes'))
     const box = screen.getByRole('button', { name: 'Pod 1 box' })
+    expect((screen.getByRole('button', { name: 'Save boxes' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.queryByTestId('unsaved-bounds')).toBeNull()
     const before = parseFloat(box.style.left)
     fireEvent.keyDown(box, { key: 'ArrowRight' })
     expect(parseFloat(box.style.left)).toBeCloseTo(before + 0.5, 1)
+    expect(screen.getByTestId('unsaved-bounds').textContent).toBe('Unsaved changes')
+    expect((screen.getByRole('button', { name: 'Save boxes' }) as HTMLButtonElement).disabled).toBe(false)
     fireEvent.keyDown(box, { key: 'ArrowDown', shiftKey: true })
     fireEvent.keyDown(box, { key: 'Enter' })
     await act(async () => fireEvent.click(screen.getByText('Save boxes')))
@@ -345,13 +352,14 @@ describe('AnalysisPage', () => {
     expect(upper.regions[0]?.x).toBeCloseTo(before / 100 + 0.005, 4)
     expect(calls.setRegions.mock.calls[1]?.[0]).toMatchObject({ camera: 'lower' })
     expect(screen.getByText(/Saved. New photos use these boxes/)).toBeTruthy()
+    expect(screen.getByText('Pod boxes saved')).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Pod 1 box' })).toBeNull()
+    expect(screen.queryByTestId('unsaved-bounds')).toBeNull()
   })
 
   it('drags a box and its corner, and resets or drops a draft', () => {
     render(<AnalysisPage />)
     fireEvent.click(screen.getByRole('tab', { name: 'Pod bounds' }))
-    fireEvent.click(screen.getByText('Edit boxes'))
     const overlay = screen.getAllByTestId('pod-bounds')[0] as HTMLElement
     overlay.getBoundingClientRect = () => ({ width: 400, height: 300, x: 0, y: 0, top: 0, left: 0, right: 400, bottom: 300, toJSON: () => ({}) })
     const box = screen.getByRole('button', { name: 'Pod 2 box' })
@@ -370,15 +378,15 @@ describe('AnalysisPage', () => {
     expect(parseFloat(box.style.width)).toBeCloseTo(width + 5, 1)
     fireEvent.click(screen.getByText('Reset to measured'))
     expect(parseFloat(screen.getByRole('button', { name: 'Pod 2 box' }).style.left)).toBeCloseTo(left, 1)
-    fireEvent.click(screen.getByText('Cancel'))
+    fireEvent.click(screen.getByText('Discard'))
     expect(screen.queryByRole('button', { name: 'Pod 2 box' })).toBeNull()
+    expect(screen.queryByTestId('unsaved-bounds')).toBeNull()
     expect(calls.setRegions).not.toHaveBeenCalled()
   })
 
   it('repositions the dashed cup area without moving Pod 2’s outer box', async () => {
     render(<AnalysisPage />)
     fireEvent.click(screen.getByRole('tab', { name: 'Pod bounds' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Edit boxes' }))
     const overlay = screen.getAllByTestId('pod-bounds')[0] as HTMLElement
     overlay.getBoundingClientRect = () => ({ width: 400, height: 300, x: 0, y: 0, top: 0, left: 0, right: 400, bottom: 300, toJSON: () => ({}) })
     const box = screen.getByRole('button', { name: 'Pod 2 box' })
@@ -398,12 +406,15 @@ describe('AnalysisPage', () => {
 
   it('shows why the boxes could not be saved', async () => {
     data.set('setRegionsError', new Error('pod 16 is not on the upper camera'))
-    render(<AnalysisPage />)
+    mount()
     fireEvent.click(screen.getByRole('tab', { name: 'Pod bounds' }))
-    fireEvent.click(screen.getByText('Edit boxes'))
+    const box = screen.getByRole('button', { name: 'Pod 1 box' })
+    fireEvent.keyDown(box, { key: 'ArrowRight' })
     await act(async () => fireEvent.click(screen.getByText('Save boxes')))
     expect(screen.getByRole('button', { name: 'Pod 1 box' })).toBeTruthy()
-    expect(screen.queryByText(/Saved/)).toBeNull()
+    expect(screen.queryByText(/Saved. New photos/)).toBeNull()
+    expect(screen.getByText('Couldn\'t save pod boxes')).toBeTruthy()
+    expect(screen.getAllByText('pod 16 is not on the upper camera').length).toBeGreaterThan(0)
   })
 
   it('reports progress, failures and empty states', () => {

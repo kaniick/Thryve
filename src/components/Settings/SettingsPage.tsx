@@ -181,6 +181,9 @@ function SettingsForm({ s, coreVersion, coreHost, system, onSave, saving }: {
     delete rest.pumpPower
     delete rest.pumpSoftStart
     delete rest.pumpSoftStartMs
+    // The password fields are write-only; a blank value would otherwise wipe the saved secret.
+    if (!str('mqttPassword')) delete rest.mqttPassword
+    if (!str('mirrorSecretAccessKey')) delete rest.mirrorSecretAccessKey
     onSave(rest)
   }
   const original = s as Record<string, unknown>
@@ -194,7 +197,29 @@ function SettingsForm({ s, coreVersion, coreHost, system, onSave, saving }: {
   const mirrorSaved = !!(s.mirrorEndpoint && s.mirrorBucket)
   const [bucketOpen, setBucketOpen] = useState(mirrorSaved)
   const mqttTest = trpc.system.testBridge.useMutation()
-  const mqttChanged = ['mqttUrl', 'mqttUsername', 'mqttPassword', 'mqttTlsEnabled', 'mqttTlsInsecure'].some(k => d[k] !== original[k])
+  const applyHal = trpc.system.applyHalBroker.useMutation()
+  const halBroker = trpc.system.halBroker.useQuery()
+  const mqttUrl = str('mqttUrl').trim()
+  const testMqtt = () => {
+    if (!mqttUrl) return
+    const password = str('mqttPassword')
+    mqttTest.mutate({
+      mqttUrl,
+      mqttUsername: str('mqttUsername') || null,
+      ...(password ? { mqttPassword: password } : {}),
+      mqttTlsEnabled: !!d.mqttTlsEnabled,
+      mqttTlsInsecure: !!d.mqttTlsInsecure,
+    })
+  }
+  const applyMqtt = () => {
+    if (!mqttUrl) return
+    const password = str('mqttPassword')
+    applyHal.mutate({
+      mqttUrl,
+      mqttUsername: str('mqttUsername') || null,
+      ...(password ? { mqttPassword: password } : {}),
+    }, { onSuccess: () => { void halBroker.refetch() } })
+  }
 
   return (
     <div className="mx-auto flex max-w-[1000px] flex-col gap-6 min-[900px]:pt-3">
@@ -312,20 +337,35 @@ function SettingsForm({ s, coreVersion, coreHost, system, onSave, saving }: {
 
           <BackupCard />
 
-          <Section id="home-assistant" title="Home Assistant bridge" sub="Core-level MQTT bridge for grow events and services. The hardware daemon already publishes discovery for lights, pump and sensors.">
+          <Section id="home-assistant" title="Home Assistant bridge" sub="This card configures core's MQTT bridge only: grow events, reminders and the Water now button. Lights, pump and sensors are published by the hardware daemon to a different broker — usually the unit's own, at 127.0.0.1:1883.">
             <Row label="Broker URL"><TextField className="w-60" value={str('mqttUrl')} onChange={v => setD({ ...d, mqttUrl: v || null })} placeholder="mqtt://homeassistant.local:1883" /></Row>
             <Row label="Username"><TextField className="w-60" value={str('mqttUsername')} onChange={v => setD({ ...d, mqttUsername: v || null })} /></Row>
-            <Row label="Password" sub={s.hasMqttPassword ? 'set' : 'not set'}><TextField className="w-60" type="password" value={str('mqttPassword')} onChange={v => setD({ ...d, mqttPassword: v || null })} placeholder="••••••" /></Row>
+            <Row label="Password" sub={s.hasMqttPassword ? 'set — leave blank to keep it' : 'not set'}><TextField className="w-60" type="password" value={str('mqttPassword')} onChange={v => setD({ ...d, mqttPassword: v || null })} placeholder="••••••" autoComplete="off" /></Row>
             <Row label="TLS"><Toggle label="TLS" on={!!d.mqttTlsEnabled} onChange={v => setD({ ...d, mqttTlsEnabled: v })} /></Row>
             <Row label="Allow self-signed" sub="Off by default (ADR-0013)"><Toggle label="Allow self-signed" on={!!d.mqttTlsInsecure} onChange={v => setD({ ...d, mqttTlsInsecure: v })} /></Row>
-            <Row label="Broker connection" sub={mqttChanged ? 'Save MQTT changes before testing.' : 'Checks the saved broker address and credentials from Thryve.'}>
+            <Row label="Broker connection" sub="Tests the URL, credentials and TLS options entered above, without saving. An empty password uses the one already saved.">
               <div className="flex flex-col items-end gap-1">
-                <Button size="sm" disabled={!s.mqttUrl?.trim() || mqttChanged || saving || mqttTest.isPending} onClick={() => mqttTest.mutate()}>
+                <Button size="sm" disabled={!mqttUrl || saving || mqttTest.isPending} onClick={testMqtt}>
                   {mqttTest.isPending ? 'Testing…' : 'Test connection'}
                 </Button>
                 <div role="status" className={`text-xs ${mqttTest.data?.ok ? 'text-fg-2' : 'text-danger'}`}>
-                  {!mqttChanged && (mqttTest.data?.detail ?? mqttTest.error?.message)}
+                  {mqttTest.data?.detail ?? mqttTest.error?.message}
                 </div>
+              </div>
+            </Row>
+            <Row label="Hardware daemon" sub={halDaemonSub(halBroker.data)}>
+              <div className="flex flex-col items-end gap-1">
+                <span className="text-[13px] text-fg-2" data-testid="hal-broker-status">{halDaemonStatus(halBroker.data)}</span>
+                {halBroker.data?.canApply && (
+                  <>
+                    <Button size="sm" disabled={!mqttUrl || saving || applyHal.isPending} onClick={applyMqtt} data-testid="apply-hal-broker">
+                      {applyHal.isPending ? 'Applying…' : 'Use this broker for hardware'}
+                    </Button>
+                    <div role="status" className={`text-xs ${applyHal.data?.ok ? 'text-fg-2' : 'text-danger'}`}>
+                      {applyHal.data?.detail ?? applyHal.error?.message}
+                    </div>
+                  </>
+                )}
               </div>
             </Row>
           </Section>
@@ -351,6 +391,26 @@ function SettingsForm({ s, coreVersion, coreHost, system, onSave, saving }: {
 
 function About({ label, value }: { label: string, value: string }) {
   return <KeyValue label={label} value={value} size={13} className="flex flex-col gap-[3px] [&>div:first-child]:text-fg-3" valueClassName="whitespace-normal break-words font-medium" />
+}
+
+interface HalBroker { broker: string | null, connected: boolean | null, sim: boolean, usingDefault: boolean, canApply?: boolean }
+
+function halDaemonStatus(h: HalBroker | undefined): string {
+  if (!h) return '…'
+  if (h.sim) return 'In-process simulator (no MQTT broker of its own)'
+  if (!h.broker) return 'Unknown'
+  const link = h.connected === true ? 'connected' : h.connected === false ? 'not connected' : 'status unknown'
+  return `${h.broker} · ${link}`
+}
+
+function halDaemonSub(h: HalBroker | undefined): string {
+  if (!h || h.sim) return 'The app talks to simulated hardware here, not to a hardware-daemon broker.'
+  if (h.canApply) {
+    return 'hald publishes lights, pump and sensors on this broker, and the app talks to the hardware over the same one. Use this broker for hardware writes the URL and credentials above into /etc/thryve/hal.toml and points core at it too, then restarts hald. Saving this card alone does not do that — this card is only core\'s grow-event bridge.'
+  }
+  return h.usingDefault
+    ? 'Default is the unit\'s local broker at 127.0.0.1:1883. To see lights, pump and sensors in Home Assistant, run scripts/install-hal --mqtt-lan and add MQTT in HA (thryve.local, port 1884), or run scripts/install so this page can point hald at the broker above. Pointing only hal.toml at HA\'s broker, without HAL_MQTT_URL, makes the app lose the hardware.'
+    : 'hald publishes lights, pump and sensors on this broker. The app also uses it to talk to the hardware. To use the broker above, run scripts/install so this page can apply it, or set mqtt_url in /etc/thryve/hal.toml and HAL_MQTT_URL on the core service to the same URL (docs/INSTALLATION.md §4).'
 }
 
 const REMINDERS = [
