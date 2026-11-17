@@ -31,7 +31,7 @@ export interface CreateAppOptions {
  * must not be pinned there.
  */
 export function staticCacheControl(path: string, contentType: string | null): string {
-  if (contentType?.startsWith('text/html')) return 'no-cache'
+  if (contentType?.startsWith('text/html')) return 'no-cache, no-store, must-revalidate'
   return path.startsWith('/assets/') ? 'public, max-age=31536000, immutable' : 'public, max-age=86400'
 }
 
@@ -217,7 +217,15 @@ export function createApp({ ctx, staticRoot }: CreateAppOptions) {
     // After the fact: serveStatic has built its response by the time its onFound runs, so headers set there are lost.
     app.use('/*', async (c, next) => {
       await next()
-      if (c.res.ok) c.header('cache-control', staticCacheControl(c.req.path, c.res.headers.get('content-type')))
+      if (c.res.ok) {
+        const cc = staticCacheControl(c.req.path, c.res.headers.get('content-type'))
+        c.header('cache-control', cc)
+        // HTML must not be stored: a cached index.html after an update keeps the old UI.
+        if (cc.includes('no-store')) {
+          c.header('pragma', 'no-cache')
+          c.header('expires', '0')
+        }
+      }
     })
     // The `.gz` files come from the build (scripts/precompress.mjs): a Pi's one core shouldn't gzip per request.
     app.use('/*', serveStatic({ root: staticRoot, precompressed: true }))

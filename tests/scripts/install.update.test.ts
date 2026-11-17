@@ -77,3 +77,20 @@ describe('the update helper', () => {
     expect(existsSync(join(root, 'etc/sudoers.d/thryve-update'))).toBe(false)
   })
 })
+
+const mqttHelper = resolve(import.meta.dirname, '../../scripts/thryve-hal-mqtt.cjs')
+
+describe('the hardware-broker helper', () => {
+  it('lands in /usr/local/sbin with a sudoers rule that takes no arguments', () => {
+    writeFileSync(join(prefix, 'scripts/thryve-hal-mqtt.cjs'), readFileSync(mqttHelper))
+    const r = spawnSync('bash', ['-c', `source "${script}"; CORE_USER=thryve-core; install_hal_mqtt_helper`], {
+      encoding: 'utf8',
+      env: { PATH: `${bin}:${process.env.PATH}`, THRYVE_ROOT: root, THRYVE_PREFIX: prefix, THRYVE_LIB_ONLY: '1', STATE: dir },
+    })
+    expect(r).toMatchObject({ status: 0 })
+    expect(readFileSync(join(root, 'usr/local/sbin/thryve-hal-mqtt'), 'utf8')).toContain('Secrets come from stdin JSON')
+    expect(readFileSync(join(root, 'etc/sudoers.d/thryve-hal-mqtt'), 'utf8').trim()).toBe(
+      'thryve-core ALL=(root) NOPASSWD: /usr/local/sbin/thryve-hal-mqtt',
+    )
+  })
+})

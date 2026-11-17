@@ -67,8 +67,13 @@ export const settingsRouter = router({
     .output(Public)
     .mutation(({ ctx, input }) => {
       const now = (ctx.now ?? (() => new Date()))()
-      const starting = input.setupComplete === true && !ctx.store.settings.get().setupComplete
-      const s = ctx.store.settings.update(input)
+      // Secrets are write-only in the public view. An empty or null password in a
+      // patch means "leave it"; sending every other field must not clear it.
+      const patch = { ...input }
+      if (patch.mqttPassword == null || patch.mqttPassword === '') delete patch.mqttPassword
+      if (patch.mirrorSecretAccessKey == null || patch.mirrorSecretAccessKey === '') delete patch.mirrorSecretAccessKey
+      const starting = patch.setupComplete === true && !ctx.store.settings.get().setupComplete
+      const s = ctx.store.settings.update(patch)
       ctx.events.emit({ kind: 'mutation', path: 'settings' })
       // A new garden starts on Auto, unless it already has a light curve.
       if (starting && !ctx.store.schedules.list().some(x => x.kind === 'light')) {
@@ -76,7 +81,7 @@ export const settingsRouter = router({
         ctx.events.emit({ kind: 'schedule', action: 'changed', id: 'auto' })
       }
       // A new place or zone moves today's sunrise and sunset.
-      if ('latitude' in input || 'longitude' in input || 'timezone' in input) {
+      if ('latitude' in patch || 'longitude' in patch || 'timezone' in patch) {
         for (const id of refollowSun(ctx.store, now, autoLight(ctx.store))) ctx.events.emit({ kind: 'schedule', action: 'changed', id })
       }
       return publicView(s)
