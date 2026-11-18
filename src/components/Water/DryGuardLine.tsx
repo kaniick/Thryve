@@ -8,7 +8,7 @@ const GUARD_WORDS: Record<DryGuard, string> = { level: 'tank level', current: 'p
 
 /** "Dry-run guard: tank level + pump current (set on the unit)". */
 export function dryGuardLine(mode: DryGuard): string {
-  return `Dry-run guard: ${GUARD_WORDS[mode]} (set on the unit)`
+  return `Dry-run guard: ${GUARD_WORDS[mode]} — change in Settings`
 }
 
 /**
@@ -30,10 +30,9 @@ export function fmtSeconds(ms: number): string {
 }
 
 /**
- * Under the pump strip: which dry-run guard the unit runs, read-only (hal.toml
- * sets it, and pump safety outranks the app), and the one guard setting the app
- * may change, the grace before the pump-current check starts. The unit holds
- * that to the bounds in its hal.toml. A hald older than these shows nothing.
+ * Under the pump strip: which dry-run guard the unit runs (the mode and
+ * cutoffs are in Settings → Pump) and the grace before the pump-current check.
+ * A hald older than these shows nothing.
  */
 export function DryGuardLine({ limits }: { limits: Limits | undefined }) {
   const utils = trpc.useUtils()

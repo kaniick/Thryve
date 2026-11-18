@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3'
-import { and, asc, desc, eq, gt, gte, lt, lte, notInArray, or, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, gte, isNull, lt, lte, notInArray, or, sql } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { existsSync, mkdirSync } from 'node:fs'
@@ -11,7 +11,7 @@ import type { ChannelConfig, ChannelSecrets, NotificationChannel, NotificationRu
 import type { ActivityToken, ApnsEnvironment, FeedItem, FeedLevel, IosDevice } from '../notify/ios/types'
 import * as t from '../db/schema'
 import { downsample } from './memory'
-import type { AlertRow, Automation, AutomationRun, AnalysisPoint, AnalysisRow, AnalyzerStats, BackupRecord, Capture, CustomPlant, DeviceSettings, FlashSample, GrowCycle, GrowProtocolState, GrowStage, LightSpec, PlanRow, PlantProfile, Pod, PodCodePair, PodCodeRead, PodLabel, PodLabelCursor, PodLabelInput, PodLabelSource, PodLabelValue, PumpSpec, SavedCycle, SavedSchedule, Schedule, ScheduleRun, Store, SuggestionDismissal, TankAction, TankActionKind, TelemetryPoint } from './types'
+import type { AlertRow, Automation, AutomationRun, AnalysisPoint, AnalysisRow, AnalyzerStats, BackupRecord, Capture, CustomPlant, DeviceSettings, FlashSample, GrowCycle, GrowProtocolState, GrowStage, LightSpec, PlanRow, PlantProfile, Pod, PodCodePair, PodCodeRead, PodLabel, PodLabelCursor, PodLabelInput, PodLabelSource, PodLabelValue, PumpSpec, SavedCycle, SavedSchedule, Schedule, ScheduleRun, Store, SuggestionDismissal, TankAction, TankActionKind, TelemetryPoint, QualitySample, PumpRun } from './types'
 import { DEFAULT_SETTINGS, POD_LABELS, profileKey } from './types'
 
 export interface SqliteStoreOptions {
@@ -47,6 +47,7 @@ export class SqliteStore implements Store {
   private readonly db
   /** Rows waiting for the next flush (ADR-0021). */
   private heldTelemetry: TelemetryPoint[] = []
+  private heldQuality: QualitySample[] = []
   /** A full buffer's own flush failed: new samples leave retrying to the timer until a flush lands. */
   private capFlushFailed = false
   /** Newest detail of active alerts whose rows still hold an older one, by alert id. */
@@ -265,13 +266,16 @@ export class SqliteStore implements Store {
         .where(and(eq(t.telemetry.sensor, sensor), gte(t.telemetry.ts, fromTs), lte(t.telemetry.ts, toTs))).orderBy(asc(t.telemetry.ts)).all() as TelemetryPoint[]
       // Merged rather than flushed, so a chart polling every minute costs no write.
       const held = this.heldTelemetry.filter(p => p.sensor === sensor && p.ts >= fromTs && p.ts <= toTs)
-      return downsample(held.length ? [...rows, ...held].sort((a, b) => a.ts.localeCompare(b.ts)) : rows, maxPoints)
+      const all = held.length ? [...rows, ...held].sort((a, b) => a.ts.localeCompare(b.ts)) : rows
+      return maxPoints < 0 ? all : downsample(all, maxPoints)
     },
     flush: (): void => {
-      if (this.heldTelemetry.length === 0) return
+      if (this.heldTelemetry.length === 0 && this.heldQuality.length === 0) return
       try {
-        this.db.insert(t.telemetry).values(this.heldTelemetry).run()
+        if (this.heldTelemetry.length) this.db.insert(t.telemetry).values(this.heldTelemetry).run()
+        if (this.heldQuality.length) this.db.insert(t.sensorQuality).values(this.heldQuality).run()
         this.heldTelemetry = []
+        this.heldQuality = []
         this.capFlushFailed = false
       }
       catch (e) {
@@ -291,6 +295,72 @@ export class SqliteStore implements Store {
       }, 0))()
     },
     oldestTs: (): string | null => this.db.select({ ts: t.telemetry.ts }).from(t.telemetry).orderBy(asc(t.telemetry.id)).limit(1).get()?.ts ?? null,
+  }
+
+  sensorQuality = {
+    add: (samples: QualitySample[]): void => {
+      if (samples.length === 0) return
+      this.heldQuality.push(...samples)
+    },
+    range: (sensor: string, fromTs: string, toTs: string): QualitySample[] => {
+      const rows = this.db.select({ ts: t.sensorQuality.ts, sensor: t.sensorQuality.sensor, quality: t.sensorQuality.quality })
+        .from(t.sensorQuality)
+        .where(and(eq(t.sensorQuality.sensor, sensor), gte(t.sensorQuality.ts, fromTs), lte(t.sensorQuality.ts, toTs)))
+        .orderBy(asc(t.sensorQuality.ts)).all() as QualitySample[]
+      const held = this.heldQuality.filter(s => s.sensor === sensor && s.ts >= fromTs && s.ts <= toTs)
+      return held.length ? [...rows, ...held].sort((a, b) => a.ts.localeCompare(b.ts)) : rows
+    },
+    trustedShare: (sensor: string, nowTs: string, windowS: number) => {
+      const fromTs = new Date(Date.parse(nowTs) - windowS * 1000).toISOString()
+      const rows = this.sensorQuality.range(sensor, fromTs, nowTs)
+      const trusted = rows.filter(s => s.quality === 'good').length
+      return {
+        trustedPct: rows.length ? Math.round((trusted / rows.length) * 1000) / 10 : null,
+        samples: rows.length,
+        trusted,
+        hours: windowS / 3600,
+      }
+    },
+  }
+
+  pumpRuns = {
+    open: (startedAt: string, level: number | null, recent: ScheduleRun[]): PumpRun => {
+      const started = Date.parse(startedAt)
+      const hit = recent.find(r => Math.abs(Date.parse(r.firedAt) - started) <= 10_000 && !r.result.startsWith('refused'))
+      const spec = hit ? this.schedules.get(hit.scheduleId) : null
+      const scheduledDurationS = spec?.kind === 'pump' ? (spec.spec as PumpSpec).durationS : null
+      const row = this.db.insert(t.pumpRuns).values({
+        startedAt,
+        endedAt: null,
+        durationS: 0,
+        source: hit ? 'scheduled' : 'manual',
+        scheduleId: hit?.scheduleId ?? null,
+        scheduledDurationS,
+        fault: null,
+        level,
+      }).returning().get()
+      return rowToPumpRun(row)
+    },
+    close: (endedAt: string, fault: string | null): PumpRun | null => {
+      const open = this.db.select().from(t.pumpRuns).where(isNull(t.pumpRuns.endedAt)).orderBy(desc(t.pumpRuns.id)).limit(1).get()
+      if (!open) return null
+      const durationS = Math.max(0, (Date.parse(endedAt) - Date.parse(open.startedAt)) / 1000)
+      const row = this.db.update(t.pumpRuns).set({ endedAt, durationS, fault }).where(eq(t.pumpRuns.id, open.id)).returning().get()
+      return rowToPumpRun(row)
+    },
+    list: (opts?: { from?: string, to?: string, limit?: number }): PumpRun[] => {
+      const conds = []
+      if (opts?.from) conds.push(gte(t.pumpRuns.startedAt, opts.from))
+      if (opts?.to) conds.push(lte(t.pumpRuns.startedAt, opts.to))
+      const q = this.db.select().from(t.pumpRuns)
+      const rows = (conds.length ? q.where(and(...conds)) : q).orderBy(desc(t.pumpRuns.startedAt), desc(t.pumpRuns.id)).limit(opts?.limit ?? 50).all()
+      const now = Date.now()
+      return rows.map((r) => {
+        const run = rowToPumpRun(r)
+        if (!run.endedAt) run.durationS = Math.max(0, (now - Date.parse(run.startedAt)) / 1000)
+        return run
+      })
+    },
   }
 
   counters = {
@@ -739,3 +809,16 @@ function rowToNotifyRule(r: typeof t.notificationRules.$inferSelect): Notificati
   }
 }
 
+function rowToPumpRun(r: typeof t.pumpRuns.$inferSelect): PumpRun {
+  return {
+    id: r.id,
+    startedAt: r.startedAt,
+    endedAt: r.endedAt ?? null,
+    durationS: r.durationS,
+    source: r.source as PumpRun['source'],
+    scheduleId: r.scheduleId ?? null,
+    scheduledDurationS: r.scheduledDurationS ?? null,
+    fault: r.fault ?? null,
+    level: r.level ?? null,
+  }
+}

@@ -59,7 +59,12 @@ export function alertSnack(a: { id: number, kind: string, detail: string }): Sna
     const f = pumpFault(a.detail)
     return { ...base, id: 'pump', icon: Waves, title: `Pump stopped: ${f.reason}`, detail: f.detail ?? undefined, shownOn: '/water' }
   }
-  if (a.kind === 'water_low') return { ...base, id: 'pump', icon: Droplets, title: 'Pump off: water low', detail: 'It stays off until the tank is filled.', shownOn: '/water' }
+  if (a.kind === 'water_low') {
+    const unavailable = /unavailable|suspect/i.test(a.detail)
+    // A flaky ranger on a still-wet tank must not say the tank is empty.
+    if (unavailable) return null
+    return { ...base, id: 'pump', icon: Droplets, title: 'Pump off: water low', detail: 'It stays off until the tank is filled.', shownOn: '/water' }
+  }
   if (a.kind === 'over_temp') return { ...base, icon: Thermometer, title: 'Outputs off: board over temperature', detail: a.detail || undefined }
   const { title, detail } = describeAlert(a)
   // Autopilot notices have no label of their own; their detail names the rule.

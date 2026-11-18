@@ -1,7 +1,7 @@
 import { TRPCError } from '@trpc/server'
 import { z } from 'zod'
 import type { ActuatorId } from '../../hardware/contract'
-import { ActuatorCommand, ActuatorState, Limits } from '../../hardware/contract'
+import { ActuatorCommand, ActuatorState, Limits, PumpGuardCommand } from '../../hardware/contract'
 import { MAX_SOFT_START_MS, MIN_SOFT_START_MS, pumpPower, softStartMs } from '../../hardware/pumpPower'
 import { HalRefused } from '../../hardware/sim'
 import { publicProcedure, router } from '../trpc'
@@ -135,16 +135,14 @@ export const pumpRouter = router({
     .input(z.void())
     .output(ActuatorState)
     .mutation(({ ctx }) => set(ctx, 'pump', { on: false })),
-  // The one dry-run guard setting the app may change. Which guard runs, and its
-  // current cutoff, are hal.toml only: pump safety outranks the app.
   setDryGrace: publicProcedure
     .meta({ openapi: { method: 'POST', path: '/pump/dry-grace', tags: ['pump'], summary: 'Set how long after a start the pump current isn\'t checked, while the pump spins up; the unit holds it to the bounds in its hal.toml' } })
     .input(z.object({ ms: z.number().int().min(0).max(10_000) }))
     .output(Limits)
     .mutation(async ({ ctx, input }) => {
       try {
-        const limits = await ctx.hal.setPumpDryGrace(input.ms)
-        ctx.events.emit({ kind: 'mutation', path: 'pump.dryGrace' })
+        const limits = await ctx.hal.setPumpGuard({ dryGraceMs: input.ms })
+        ctx.events.emit({ kind: 'mutation', path: 'pump.guard' })
         return limits
       }
       catch (e) {
@@ -152,4 +150,42 @@ export const pumpRouter = router({
         throw e
       }
     }),
+  setGuard: publicProcedure
+    .meta({ openapi: { method: 'POST', path: '/pump/guard', tags: ['pump'], summary: 'Set the dry-run guard mode, tank or current cutoffs, spin-up grace, or the no-trusted-reading window; the unit holds each value to the bounds in its hal.toml' } })
+    .input(PumpGuardCommand)
+    .output(Limits)
+    .mutation(async ({ ctx, input }) => {
+      try {
+        const limits = await ctx.hal.setPumpGuard(input)
+        ctx.events.emit({ kind: 'mutation', path: 'pump.guard' })
+        return limits
+      }
+      catch (e) {
+        if (e instanceof HalRefused) throw new TRPCError({ code: 'PRECONDITION_FAILED', message: e.message })
+        throw e
+      }
+    }),
+  runs: publicProcedure
+    .meta({ openapi: { method: 'GET', path: '/pump/runs', tags: ['pump'], summary: 'Actual pump runs, including manual ones, newest first' } })
+    .input(z.object({
+      from: z.string().datetime({ offset: true }).optional(),
+      to: z.string().datetime({ offset: true }).optional(),
+      limit: z.number().int().min(1).max(500).default(50),
+    }).optional())
+    .output(z.array(z.object({
+      id: z.number(),
+      startedAt: z.string(),
+      endedAt: z.string().nullable(),
+      durationS: z.number(),
+      source: z.enum(['scheduled', 'manual']),
+      scheduleId: z.string().nullable(),
+      scheduledDurationS: z.number().nullable(),
+      fault: z.string().nullable(),
+      level: z.number().nullable(),
+    })))
+    .query(({ ctx, input }) => ctx.store.pumpRuns.list({
+      from: input?.from,
+      to: input?.to,
+      limit: input?.limit ?? 50,
+    })),
 })

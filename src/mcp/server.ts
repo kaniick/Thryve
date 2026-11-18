@@ -426,9 +426,39 @@ export function createMcpServer(ctx: Context): McpServer {
   server.registerTool('stop_pump', { description: 'Stop the pump immediately.', inputSchema: {} }, async () => text(await caller.pump.stop()))
 
   server.registerTool('set_pump_dry_grace', {
-    description: 'Set the spin-up grace of the pump\'s dry-run current check: how long after a start (ms) the pump current isn\'t judged, while it primes. The unit holds it to the bounds in its hal.toml (system.limits.pumpDryGraceMinMs to pumpDryGraceMaxMs in status) and returns its limits. Too short can stop a pump that is only priming; too long lets a dry one run longer. It is the only dry-run setting that can be changed here: which guard runs (tank level, pump current or both) and the current cutoff are set on the unit only.',
+    description: 'Set the spin-up grace of the pump\'s dry-run current check: how long after a start (ms) the pump current isn\'t judged, while it primes. The unit holds it to the bounds in its hal.toml (system.limits.pumpDryGraceMinMs to pumpDryGraceMaxMs in status) and returns its limits. Too short can stop a pump that is only priming; too long lets a dry one run longer. For the mode and cutoffs, use set_pump_guard.',
     inputSchema: { ms: z.number().int().min(0).max(10_000) },
   }, async i => text(await caller.pump.setDryGrace({ ms: i.ms })))
+
+  server.registerTool('set_pump_guard', {
+    description: 'Set the pump dry-run guard from Settings → Pump: dry_guard is level, current or both (there is no off); water_low_cm is the tank cutoff; pump_dry_current_a is the current cutoff; dry_grace_ms is the spin-up grace; dry_level_absent_ms is how long a run may continue without a new trusted level when the last trusted reading is well above the cutoff. Name at least one field. The unit holds each value to the bounds in its hal.toml and returns its limits. A trusted low tank still refuses a start in every mode. current or both without a cutoff or a pump monitor falls back to level.',
+    inputSchema: {
+      dry_guard: z.enum(['level', 'current', 'both']).optional(),
+      water_low_cm: z.number().optional(),
+      pump_dry_current_a: z.number().positive().optional(),
+      dry_grace_ms: z.number().int().min(0).max(10_000).optional(),
+      dry_level_absent_ms: z.number().int().min(0).optional(),
+    },
+  }, async i => text(await caller.pump.setGuard({
+    dryGuard: i.dry_guard,
+    waterLowCm: i.water_low_cm,
+    pumpDryCurrentA: i.pump_dry_current_a,
+    dryGraceMs: i.dry_grace_ms,
+    dryLevelAbsentMs: i.dry_level_absent_ms,
+  })))
+
+  server.registerTool('set_tank_sampling', {
+    description: 'Set how the tank ranger is sampled: distance_samples (how many pings in a median), distance_gap_ms between them, and distance_timeout_ms for each ping. Name at least one field. The unit holds each value to the bounds in its hal.toml and applies them on the next read without a restart.',
+    inputSchema: {
+      distance_samples: z.number().int().positive().optional(),
+      distance_gap_ms: z.number().int().nonnegative().optional(),
+      distance_timeout_ms: z.number().int().nonnegative().optional(),
+    },
+  }, async i => text(await caller.tank.setSampling({
+    distanceSamples: i.distance_samples,
+    distanceGapMs: i.distance_gap_ms,
+    distanceTimeoutMs: i.distance_timeout_ms,
+  })))
 
   server.registerTool('acknowledge_alert', {
     description: 'Acknowledge an alert by id (from status). For latched hardware faults (pump_fault, dose_fault) this re-enables the actuator — only do it after the cause is fixed (e.g. tank refilled, dosing checked). For reminders it marks the chore done.',

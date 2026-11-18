@@ -252,6 +252,24 @@ export interface AnalysisPoint { ts: string, value: number, captureId: string }
 /** What the table holds per analyser@version. */
 export interface AnalyzerStats { analyzer: string, version: number, source: 'device' | 'remote', rows: number, captures: number, firstTs: string, lastTs: string }
 export interface TelemetryPoint { ts: string, sensor: SensorId, value: number }
+
+export type ReadingQuality = 'good' | 'stale' | 'suspect'
+
+export interface QualitySample { ts: string, sensor: string, quality: ReadingQuality }
+
+export interface TrustedShare { trustedPct: number | null, samples: number, trusted: number, hours: number }
+
+export interface PumpRun {
+  id: number
+  startedAt: string
+  endedAt: string | null
+  durationS: number
+  source: 'scheduled' | 'manual'
+  scheduleId: string | null
+  scheduledDurationS: number | null
+  fault: string | null
+  level: number | null
+}
 /** One off-card backup attempt (ADR-0021). A finished download counts as a success. */
 export interface BackupRecord {
   id: number
@@ -438,6 +456,16 @@ export interface Store {
     thin(sensors: readonly SensorId[], fromTs: string, toTs: string, bucketMin: number): number
     /** The first stored row's time, which is where thinning starts. */
     oldestTs(): string | null
+  }
+  sensorQuality: {
+    add(samples: QualitySample[]): void
+    range(sensor: string, fromTs: string, toTs: string): QualitySample[]
+    trustedShare(sensor: string, nowTs: string, windowS: number): TrustedShare
+  }
+  pumpRuns: {
+    open(startedAt: string, level: number | null, recent: ScheduleRun[]): PumpRun
+    close(endedAt: string, fault: string | null): PumpRun | null
+    list(opts?: { from?: string, to?: string, limit?: number }): PumpRun[]
   }
   counters: {
     add(key: string, delta: number, ts: string): number

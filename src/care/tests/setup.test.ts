@@ -21,6 +21,15 @@ const light: Omit<Schedule, 'createdAt' | 'updatedAt'> = { id: 'day', kind: 'lig
 const pump: Omit<Schedule, 'createdAt' | 'updatedAt'> = { id: 'cycle', kind: 'pump', name: 'Cycle', enabled: true, days: 127, spec: { minute: 480, durationS: 300 } }
 const level = (quality: Reading['quality']): Reading => ({ ts: T, value: 62, unit: '%', quality })
 
+function seedQuality(store: MemoryStore, quality: Reading['quality'], n = 6, now = T, everyMs = 2 * 60_000) {
+  const t0 = Date.parse(now)
+  store.sensorQuality.add(Array.from({ length: n }, (_, i) => ({
+    ts: new Date(t0 - (n - 1 - i) * everyMs).toISOString(),
+    sensor: 'water_level_pct',
+    quality,
+  })))
+}
+
 function rig(snap: (s: HalSnapshot) => HalSnapshot = s => s) {
   const hal = new SimHal({ tickMs: 0, now: () => NOW })
   const base = hal.snapshot.bind(hal)
@@ -85,6 +94,9 @@ describe('setupReport', () => {
   it('warns on a suspect tank level, and says nothing of the sensor while hald is offline or unknown', () => {
     const suspect = (s: HalSnapshot) => ({ ...s, sensors: { ...s.sensors, water_level_pct: level('suspect') } })
     const { store, hal, reshape } = rig(suspect)
+    // A single suspect reading must not raise; a 10-minute majority does.
+    expect(setupReport(store, hal.snapshot()).issues).toEqual([])
+    seedQuality(store, 'suspect')
     expect(setupReport(store, hal.snapshot()).issues).toMatchObject([{ id: 'water_sensor_suspect', title: 'Tank level suspect' }])
     reshape(s => ({ ...suspect(s), online: false }))
     expect(setupReport(store, hal.snapshot()).issues).toEqual([])
@@ -161,12 +173,16 @@ describe('CareEngine', () => {
 
     reshape(s => ({ ...s, sensors: { ...s.sensors, water_level_pct: level('suspect') } }))
     events.emit({ kind: 'hal', event: { type: 'sensor', id: 'water_level_pct', reading: level('suspect') } })
+    expect(active(store)).toEqual([])
+    seedQuality(store, 'suspect')
+    events.emit({ kind: 'hal', event: { type: 'sensor', id: 'water_level_pct', reading: level('suspect') } })
     expect(active(store)).toEqual(['setup_water_sensor'])
-    // Back to good clears on the tick, not on the reading, so a flapping sensor can't churn the card.
+    // A majority of good samples in the window clears it; one good reading is not enough.
     reshape(s => ({ ...s, sensors: { ...s.sensors, water_level_pct: level('good') } }))
     events.emit({ kind: 'hal', event: { type: 'sensor', id: 'water_level_pct', reading: level('good') } })
     expect(active(store)).toEqual(['setup_water_sensor'])
-    vi.advanceTimersByTime(15 * 60_000)
+    seedQuality(store, 'good', 20, T, 20_000)
+    events.emit({ kind: 'hal', event: { type: 'sensor', id: 'water_level_pct', reading: level('good') } })
     expect(active(store)).toEqual([])
   })
 

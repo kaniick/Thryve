@@ -71,7 +71,7 @@ interface Mark {
   label: string
   /** The tooltip and the screen reader's name: what it is and exactly when. */
   title: string
-  kind: 'light' | 'water' | 'run' | 'hold'
+  kind: 'light' | 'water' | 'run' | 'hold' | 'actual' | 'manual'
   muted?: boolean
   /** A run's days, said under its times in the tooltip. */
   days?: number
@@ -111,6 +111,15 @@ export interface ScheduleTimelineProps {
   hold?: { since: string, until: string | null, level: number } | null
   /** The pump running now. */
   pumpRun?: { since: string, remainingS: number | null } | null
+  /** Actual pump runs today, including manual ones. */
+  pumpRuns?: Array<{
+    startedAt: string
+    endedAt: string | null
+    durationS: number
+    source: 'scheduled' | 'manual'
+    scheduledDurationS?: number | null
+    fault?: string | null
+  }>
   /** Today's sunrise and sunset (minutes of the unit's day) when the light follows the sun. */
   sun?: { sunrise: number | null, sunset: number | null } | null
 }
@@ -124,7 +133,7 @@ export interface ScheduleTimelineProps {
  * hatched and dimmed as forecast. The header says what's next, and each mark
  * has its exact times on hover, tap or focus.
  */
-export function ScheduleTimeline({ lead, curves, cycles, timezone, hold, pumpRun, sun }: ScheduleTimelineProps) {
+export function ScheduleTimeline({ lead, curves, cycles, timezone, hold, pumpRun, pumpRuns, sun }: ScheduleTimelineProps) {
   const nowMs = useNow(30_000)
   const now = new Date(nowMs)
   const zone = timezone ?? systemZone()
@@ -145,11 +154,31 @@ export function ScheduleTimeline({ lead, curves, cycles, timezone, hold, pumpRun
     const { fromMin, untilMin } = holdWindow(holding.since, holding.until ?? new Date(nowMs + DAY * 60_000).toISOString(), now, zone)
     if (untilMin > fromMin) lightMarks.push({ start: fromMin, end: untilMin, label: `hold ${holding.level ? `${holding.level}%` : 'off'}`, title: `Held by hand ${holding.level ? `at ${holding.level}%` : 'off'} · ${span(fromMin, untilMin)}`, kind: 'hold' })
   }
+  const actual = (pumpRuns ?? []).filter((r) => {
+    const start = minuteOf(r.startedAt)
+    const end = r.endedAt ? minuteOf(r.endedAt) : nowMin
+    return end > 0 && start < DAY
+  })
+  const covered = (minute: number) => actual.some(r => Math.abs(minuteOf(r.startedAt) - minute) <= 10)
   const waterMarks: Mark[] = cycles.flatMap((c) => {
     const today = c.enabled && dayOn(c.days, weekday)
+    // A past scheduled slot that already has an actual run is drawn from the run, not the plan.
+    if (today && c.spec.minute <= nowMin && covered(c.spec.minute)) return []
     return clipToDay(runMark(c.spec.minute, c.spec.durationS, `${c.name}${today ? '' : c.enabled ? ' · not today' : ' · off'}`, 'water', !today, c.days))
   })
-  if (pumpRun) {
+  for (const r of actual) {
+    const from = Math.max(0, minuteOf(r.startedAt))
+    const until = r.endedAt ? minuteOf(r.endedAt) : nowMin
+    const live = !r.endedAt
+    const planned = r.scheduledDurationS ? fmtMinutes(r.scheduledDurationS) : null
+    const actualLen = fmtMinutes(Math.max(1, Math.round(r.durationS)))
+    const label = live ? 'now' : r.source === 'manual' ? 'Manual' : planned && planned !== actualLen ? `${actualLen} / ${planned}` : actualLen
+    const title = r.source === 'manual'
+      ? `Manual watering · ${span(from, Math.max(until, from + 1))}${r.fault ? ` · ${r.fault}` : ''}`
+      : `Watering ${actualLen}${planned ? ` (planned ${planned})` : ''} · ${span(from, Math.max(until, from + 1))}${r.fault ? ` · ${r.fault}` : live ? ' · in progress' : ''}`
+    waterMarks.push(...clipToDay({ start: from, end: Math.max(until, from + 1), label, title, kind: live ? 'run' : r.source === 'manual' ? 'manual' : 'actual' }))
+  }
+  if (pumpRun && !actual.some(r => !r.endedAt)) {
     const from = Math.max(0, minuteOf(pumpRun.since))
     const until = pumpRun.remainingS === null ? nowMin : nowMin + pumpRun.remainingS / 60
     waterMarks.push(...clipToDay({ start: from, end: Math.max(until, from + 1), label: 'now', title: `Watering now · since ${fmtClock(Math.round(from))}${pumpRun.remainingS === null ? '' : `, ${fmtMinutes(pumpRun.remainingS)} left`}`, kind: 'run' }))
@@ -321,7 +350,7 @@ function Row({ id, name, sub, marks, nowPct, width, active, onActive, laneRef }:
     return { m, key: `${id}-${i}`, widthPx, fits: widthPx >= labelPx, leftPx: Math.min(m.start * pxPerMin, width - widthPx) }
   })
   // The labels sit in a layer of their own, so one under a mark drawn over it would show through: hide it, as the mark used to.
-  const raised = (m: Mark) => m.kind === 'run' || m.kind === 'hold' || (m.kind === 'water' && !m.muted)
+  const raised = (m: Mark) => m.kind === 'run' || m.kind === 'actual' || m.kind === 'manual' || m.kind === 'hold' || (m.kind === 'water' && !m.muted)
   const covered = (i: number) => {
     const p = placed[i] as typeof placed[number]
     return placed.some((o, j) => j !== i && (Number(raised(o.m)) - Number(raised(p.m)) || j - i) > 0 && o.leftPx < p.leftPx + p.widthPx && o.leftPx + o.widthPx > p.leftPx)
@@ -358,6 +387,8 @@ function Row({ id, name, sub, marks, nowPct, width, active, onActive, laneRef }:
               'absolute inset-y-0 cursor-default overflow-hidden rounded-[2px] outline-none focus-visible:ring-2 focus-visible:ring-fg',
               m.kind === 'water' && (m.muted ? 'bg-fg-3/40' : 'z-[1] bg-tank/60'),
               m.kind === 'run' && 'z-[1] bg-tank ring-2 ring-tank/50 motion-safe:animate-pulse',
+              m.kind === 'actual' && 'z-[1] bg-tank',
+              m.kind === 'manual' && 'z-[1] bg-tank ring-2 ring-dashed ring-tank/80',
               m.kind === 'hold' && 'z-[1] border border-hold bg-hold/25',
             )}
             style={{
@@ -378,7 +409,7 @@ function Row({ id, name, sub, marks, nowPct, width, active, onActive, laneRef }:
             className={cn(
               'pointer-events-none absolute inset-y-0 z-[2] overflow-hidden whitespace-nowrap px-1 font-mono text-[11px] leading-[22px] text-fg',
               m.muted && 'text-fg-2',
-              m.kind === 'run' && 'text-inverse',
+              (m.kind === 'run' || m.kind === 'actual' || m.kind === 'manual') && 'text-inverse',
               hidden && 'invisible',
             )}
             style={{ left: `${(leftPx / (width || 1)) * 100}%`, width: `${(widthPx / (width || 1)) * 100}%` }}

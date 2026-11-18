@@ -97,6 +97,7 @@ describe('newAlertSnacks', () => {
   it('says the pump fault alone when a dry run raises water low with it', () => {
     expect(newAlertSnacks([], [a(3, 'water_low'), a(4, 'pump_fault', 'pump: dry-run')]).map(s => s.title)).toEqual(['Pump stopped: dry-run'])
     expect(newAlertSnacks([], [a(3, 'water_low')]).map(s => s.title)).toEqual(['Pump off: water low'])
+    expect(alertSnack({ id: 9, kind: 'water_low', detail: 'water level sensor unavailable' })).toBeNull()
   })
 })
 

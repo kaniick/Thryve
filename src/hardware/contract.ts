@@ -61,8 +61,7 @@ export type ActuatorCommand = z.infer<typeof ActuatorCommand>
 
 /**
  * Which dry-run guard stops a running pump: the tank level, the pump current, or
- * either. Set in hal.toml on the unit and nowhere else (pump safety outranks the
- * app), so core only ever reads it.
+ * either. The app may set it; hald falls back when the unit can't run what was asked.
  */
 export const DryGuard = z.enum(['level', 'current', 'both'])
 export type DryGuard = z.infer<typeof DryGuard>
@@ -73,10 +72,31 @@ export const Limits = z.object({
   waterLowCm: z.number().nullable(),
   /** The dry-run guard in effect, after hald's fallbacks; absent from an older hald. */
   pumpDryGuard: DryGuard.optional(),
+  pumpDryGuardAsked: DryGuard.optional(),
+  pumpDryGuardWhy: z.string().optional(),
   /** The current guard's spin-up grace in effect (ms), and the bounds a PumpGuardCommand is clamped into. */
   pumpDryGraceMs: z.number().int().nonnegative().optional(),
   pumpDryGraceMinMs: z.number().int().nonnegative().optional(),
   pumpDryGraceMaxMs: z.number().int().nonnegative().optional(),
+  waterLowMinCm: z.number().optional(),
+  waterLowMaxCm: z.number().optional(),
+  pumpDryCurrentA: z.number().optional(),
+  pumpDryCurrentMinA: z.number().optional(),
+  pumpDryCurrentMaxA: z.number().optional(),
+  pumpDryLevelAbsentMs: z.number().int().nonnegative().optional(),
+  pumpDryLevelAbsentMinMs: z.number().int().nonnegative().optional(),
+  pumpDryLevelAbsentMaxMs: z.number().int().nonnegative().optional(),
+  pumpLastWetCurrentA: z.number().optional(),
+  pumpHasCurrentMonitor: z.boolean().optional(),
+  distanceSamples: z.number().int().positive().optional(),
+  distanceSamplesMin: z.number().int().positive().optional(),
+  distanceSamplesMax: z.number().int().positive().optional(),
+  distanceGapMs: z.number().int().nonnegative().optional(),
+  distanceGapMinMs: z.number().int().nonnegative().optional(),
+  distanceGapMaxMs: z.number().int().nonnegative().optional(),
+  distanceTimeoutMs: z.number().int().nonnegative().optional(),
+  distanceTimeoutMinMs: z.number().int().nonnegative().optional(),
+  distanceTimeoutMaxMs: z.number().int().nonnegative().optional(),
   /**
    * The brown-out guard, as hal.toml sets it and the unit can run it: the supply
    * cutoff (V), absent when it's off or there's no pump monitor; how long a sag
@@ -89,15 +109,29 @@ export const Limits = z.object({
 })
 export type Limits = z.infer<typeof Limits>
 
+const atLeastOne = <T extends Record<string, unknown>>(keys: (keyof T)[]) => (v: T) => keys.some(k => v[k] !== undefined)
+
 /**
- * `pump/guard/set`: ask for the current guard's spin-up grace; hald clamps it
- * into hal.toml's bounds. The one guard setting core may change: there is no
- * field for the mode or the cutoff, and hald refuses a payload with any other.
+ * `pump/guard/set`: the app may set the dry-run mode, tank and current
+ * cutoffs, spin-up grace, and the no-trusted-reading window. hald clamps each
+ * named field into hal.toml's bounds. At least one field is required.
  */
 export const PumpGuardCommand = z.object({
-  dryGraceMs: z.number().int().nonnegative(),
-}).strict()
+  dryGraceMs: z.number().int().nonnegative().optional(),
+  dryGuard: DryGuard.optional(),
+  waterLowCm: z.number().optional(),
+  pumpDryCurrentA: z.number().positive().optional(),
+  dryLevelAbsentMs: z.number().int().nonnegative().optional(),
+}).strict().refine(atLeastOne(['dryGraceMs', 'dryGuard', 'waterLowCm', 'pumpDryCurrentA', 'dryLevelAbsentMs']), { message: 'name at least one field' })
 export type PumpGuardCommand = z.infer<typeof PumpGuardCommand>
+
+/** `tank/sensor/set`: ranger sample count, gap, and timeout. */
+export const TankSensorCommand = z.object({
+  distanceSamples: z.number().int().positive().optional(),
+  distanceGapMs: z.number().int().nonnegative().optional(),
+  distanceTimeoutMs: z.number().int().nonnegative().optional(),
+}).strict().refine(atLeastOne(['distanceSamples', 'distanceGapMs', 'distanceTimeoutMs']), { message: 'name at least one field' })
+export type TankSensorCommand = z.infer<typeof TankSensorCommand>
 
 export const SystemInfo = z.object({
   contract: z.literal(CONTRACT_VERSION),
@@ -227,4 +261,5 @@ export const topics = {
   alert: (u: string, kind: AlertKind) => `${topics.prefix(u)}/alert/${kind}`,
   alertAck: (u: string, kind: AlertKind) => `${topics.prefix(u)}/alert/${kind}/ack`,
   pumpGuardSet: (u: string) => `${topics.prefix(u)}/pump/guard/set`,
+  tankSensorSet: (u: string) => `${topics.prefix(u)}/tank/sensor/set`,
 } as const

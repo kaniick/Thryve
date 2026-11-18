@@ -22,14 +22,15 @@ vi.mock('@/src/utils/trpc', () => {
   return {
     apiBase: () => '',
     trpc: {
-      useUtils: () => ({ settings: { invalidate: vi.fn() }, pump: { invalidate: vi.fn() } }),
+      useUtils: () => ({ settings: { invalidate: vi.fn() }, pump: { invalidate: vi.fn() }, system: { invalidate: vi.fn() }, tank: { invalidate: vi.fn() } }),
       settings: { get: query('settings'), update: mutation('update') },
       system: { info: query('info'), testBridge: mutation('testBridge'), applyHalBroker: mutation('applyHalBroker'), halBroker: query('halBroker') },
       backup: { status: query('backup'), runNow: mutation('run'), restoreInfo: query('restoreInfo'), undo: mutation('undo'), list: query('bucketList'), browse: mutation('browse'), restoreFromBucket: mutation('fromBucket') },
       storage: { flash: query('flash'), mirror: query('mirror'), testMirror: mutation('test'), syncMirror: mutation('sync') },
       sensors: { latest: query('sensors') },
       grow: { current: query('grow') },
-      pump: { power: query('pumpPower'), get: query('pump'), setPower: mutation('update'), runOnce: mutation('run'), stop: mutation('update') },
+      pump: { power: query('pumpPower'), get: query('pump'), setPower: mutation('update'), runOnce: mutation('run'), stop: mutation('update'), setGuard: mutation('update') },
+      tank: { trustedShare: query('trusted'), setSampling: mutation('update') },
       homekit: { status: query('homekit'), setEnabled: mutation('update'), resetPairing: mutation('update') },
       update: { status: query('updateInfo'), check: mutation('update'), setChannel: mutation('update'), start: mutation('update') },
     },

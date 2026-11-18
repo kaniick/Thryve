@@ -8,6 +8,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
 
+use hal_core::derived::DistanceTune;
 use hal_core::registry::Registry;
 use hal_core::{ActuatorId, BinarySensor, ButtonPress, SensorId};
 #[cfg(feature = "hardware")]
@@ -31,6 +32,17 @@ pub struct Built {
     pub factory: Box<dyn crate::kinds::SensorFactory>,
     /// Each configured sensor entry and why it failed, if it did.
     pub status: Vec<(SensorEntry, Option<String>)>,
+    /// Live ranger sampling knobs, shared with the engine so the app can
+    /// change them without restarting hald.
+    pub distance_tune: Arc<DistanceTune>,
+}
+
+fn distance_tune_from(cfg: &Config) -> Arc<DistanceTune> {
+    Arc::new(DistanceTune::new(
+        cfg.limits.distance_samples as u64,
+        cfg.limits.distance_gap_ms,
+        cfg.limits.distance_timeout_ms,
+    ))
 }
 
 /// Which contract sensor ids a kind provides (used by the simulator and by
@@ -67,6 +79,7 @@ pub fn planned_capabilities(cfg: &Config) -> (Vec<SensorId>, Vec<ActuatorId>) {
 }
 
 pub fn build_sim(cfg: &Config) -> Built {
+    let distance_tune = distance_tune_from(cfg);
     let world = hal_sim::world();
     let mut registry = Registry::default();
     let (sensors, actuators) = planned_capabilities(cfg);
@@ -94,6 +107,7 @@ pub fn build_sim(cfg: &Config) -> Built {
         stop: Arc::new(AtomicBool::new(false)),
         factory: Box::new(crate::kinds::SimFactory(world)),
         status: cfg.sensors().into_iter().map(|s| (s, None)).collect(),
+        distance_tune,
     }
 }
 
@@ -105,6 +119,7 @@ pub fn build_hardware(_cfg: &Config) -> anyhow::Result<Built> {
 #[cfg(feature = "hardware")]
 pub fn build_hardware(cfg: &Config) -> anyhow::Result<Built> {
     use std::time::Duration;
+    let distance_tune = distance_tune_from(cfg);
 
     use hal_core::derived::{LevelPctSensor, MedianSensor};
     use hal_core::device::split_multi;
@@ -178,10 +193,12 @@ pub fn build_hardware(cfg: &Config) -> anyhow::Result<Built> {
                             timeout: Duration::from_millis(cfg.limits.distance_timeout_ms),
                             ..Default::default()
                         },
-                    );
+                    )
+                    .with_tune(distance_tune.clone());
                     let mut m = MedianSensor::new(Box::new(d), cfg.limits.distance_samples)
                         .with_gap(Duration::from_millis(cfg.limits.distance_gap_ms))
-                        .with_max(cfg.limits.distance_max_cm.unwrap_or(cfg.tank.empty_cm * 1.5));
+                        .with_max(cfg.limits.distance_max_cm.unwrap_or(cfg.tank.empty_cm * 1.5))
+                        .with_tune(distance_tune.clone());
                     probe_sensor(&mut m, &s)?;
                     let level = LevelPctSensor::new(m.shared(), tank);
                     registry.add_sensor(Box::new(m));
@@ -333,6 +350,7 @@ pub fn build_hardware(cfg: &Config) -> anyhow::Result<Built> {
             i2c,
         }),
         status,
+        distance_tune,
     })
 }
 

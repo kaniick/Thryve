@@ -9,7 +9,7 @@
  */
 import kindsFixture from '../../hal/contract/fixtures/device_kinds.json'
 import { CONTRACT_VERSION, DeviceKindInfo } from './contract'
-import type { ActuatorCommand, ActuatorId, ActuatorState, Alert, AlertKind, ButtonPress, CalibrationCommand, CalibrationResult, DeviceEntry, DeviceInventory, DeviceResult, Reading, SensorId, SystemInfo } from './contract'
+import type { ActuatorCommand, ActuatorId, ActuatorState, Alert, AlertKind, ButtonPress, CalibrationCommand, CalibrationResult, DeviceEntry, DeviceInventory, DeviceResult, DryGuard, PumpGuardCommand, Reading, SensorId, SystemInfo, TankSensorCommand } from './contract'
 import type { HalClient, HalEvent, HalSnapshot, Unsubscribe } from './types'
 
 export interface SimHalOptions {
@@ -26,7 +26,40 @@ export interface SimHalOptions {
 // As hald ships: a cap of 100, so an owner may choose full power; a start that names no level runs at 30.
 const SIM_DEFAULT_DUTY = 30
 /** A stock hal.toml: no current cutoff yet, so hald guards on the tank level alone. */
-const DEFAULT_LIMITS: SystemInfo['limits'] = { pumpMaxRunS: 900, pumpMaxDuty: 100, waterLowCm: 16, pumpDryGuard: 'level', pumpDryGraceMs: 1000, pumpDryGraceMinMs: 300, pumpDryGraceMaxMs: 5000, pumpBrownoutV: 10.8, pumpBrownoutMs: 300, pumpBrownoutPi: false }
+const DEFAULT_LIMITS: SystemInfo['limits'] = {
+  pumpMaxRunS: 900,
+  pumpMaxDuty: 100,
+  waterLowCm: 16,
+  waterLowMinCm: 5,
+  waterLowMaxCm: 20,
+  pumpDryGuard: 'level',
+  pumpDryGuardAsked: 'level',
+  pumpDryGuardWhy: 'tank level',
+  pumpDryGraceMs: 1000,
+  pumpDryGraceMinMs: 300,
+  pumpDryGraceMaxMs: 5000,
+  pumpDryCurrentA: undefined,
+  pumpDryCurrentMinA: 0.1,
+  pumpDryCurrentMaxA: 3.2,
+  pumpDryLevelAbsentMs: 30_000,
+  pumpDryLevelAbsentMinMs: 3_000,
+  pumpDryLevelAbsentMaxMs: 60_000,
+  pumpHasCurrentMonitor: true,
+  distanceSamples: 5,
+  distanceSamplesMin: 3,
+  distanceSamplesMax: 15,
+  distanceGapMs: 60,
+  distanceGapMinMs: 30,
+  distanceGapMaxMs: 250,
+  distanceTimeoutMs: 60,
+  distanceTimeoutMinMs: 30,
+  distanceTimeoutMaxMs: 250,
+  pumpBrownoutV: 10.8,
+  pumpBrownoutMs: 300,
+  pumpBrownoutPi: false,
+}
+
+const clampNum = (n: number, min: number, max: number) => Math.min(max, Math.max(min, n))
 
 /** What hald can add at runtime: the same descriptors hald publishes (the fixture is checked against hald's `SensorKind`s). */
 const ADDABLE = DeviceKindInfo.array().parse(kindsFixture)
@@ -188,11 +221,66 @@ export class SimHal implements HalClient {
     this.emit({ type: 'devices', devices: this.inventory() })
   }
 
-  /** Mirrors hald: held to the bounds, never refused, and reported in `system`. */
+  async setPumpGuard(cmd: PumpGuardCommand): Promise<SystemInfo['limits']> {
+    if (cmd.dryGraceMs !== undefined) {
+      const min = this.limits.pumpDryGraceMinMs ?? 0
+      const max = Math.max(min, this.limits.pumpDryGraceMaxMs ?? Number.POSITIVE_INFINITY)
+      this.limits.pumpDryGraceMs = clamp(Math.round(cmd.dryGraceMs), min, max)
+    }
+    if (cmd.waterLowCm !== undefined) {
+      const min = this.limits.waterLowMinCm ?? 5
+      const max = Math.max(min, this.limits.waterLowMaxCm ?? 20)
+      this.limits.waterLowCm = clampNum(cmd.waterLowCm, min, max)
+    }
+    if (cmd.pumpDryCurrentA !== undefined) {
+      const min = this.limits.pumpDryCurrentMinA ?? 0.1
+      const max = Math.max(min, this.limits.pumpDryCurrentMaxA ?? 3.2)
+      this.limits.pumpDryCurrentA = clampNum(cmd.pumpDryCurrentA, min, max)
+    }
+    if (cmd.dryLevelAbsentMs !== undefined) {
+      const min = this.limits.pumpDryLevelAbsentMinMs ?? 3_000
+      const max = Math.max(min, this.limits.pumpDryLevelAbsentMaxMs ?? 60_000)
+      this.limits.pumpDryLevelAbsentMs = clamp(Math.round(cmd.dryLevelAbsentMs), min, max)
+    }
+    if (cmd.dryGuard !== undefined) this.limits.pumpDryGuardAsked = cmd.dryGuard
+    const asked = this.limits.pumpDryGuardAsked ?? cmd.dryGuard ?? this.limits.pumpDryGuard ?? 'both'
+    const hasMonitor = this.system.caps.sensors.includes('pump_a')
+    this.limits.pumpHasCurrentMonitor = hasMonitor
+    const canCurrent = hasMonitor && this.limits.pumpDryCurrentA != null
+    let mode: DryGuard = asked
+    let why = asked === 'level' ? 'tank level' : asked === 'current' ? 'pump current' : 'tank level + pump current'
+    if ((asked === 'current' || asked === 'both') && !canCurrent) {
+      mode = 'level'
+      why = !hasMonitor
+        ? 'no pump current monitor; falling back to tank level'
+        : 'no current cutoff set; falling back to tank level'
+    }
+    this.limits.pumpDryGuard = mode
+    this.limits.pumpDryGuardWhy = why
+    this.emit({ type: 'system', system: this.system })
+    return { ...this.limits }
+  }
+
   async setPumpDryGrace(ms: number): Promise<SystemInfo['limits']> {
-    const min = this.limits.pumpDryGraceMinMs ?? 0
-    const max = Math.max(min, this.limits.pumpDryGraceMaxMs ?? Number.POSITIVE_INFINITY)
-    this.limits.pumpDryGraceMs = clamp(Math.round(ms), min, max)
+    return this.setPumpGuard({ dryGraceMs: ms })
+  }
+
+  async setTankSensor(cmd: TankSensorCommand): Promise<SystemInfo['limits']> {
+    if (cmd.distanceSamples !== undefined) {
+      const min = this.limits.distanceSamplesMin ?? 3
+      const max = Math.max(min, this.limits.distanceSamplesMax ?? 15)
+      this.limits.distanceSamples = clamp(Math.round(cmd.distanceSamples), min, max)
+    }
+    if (cmd.distanceGapMs !== undefined) {
+      const min = this.limits.distanceGapMinMs ?? 30
+      const max = Math.max(min, this.limits.distanceGapMaxMs ?? 250)
+      this.limits.distanceGapMs = clamp(Math.round(cmd.distanceGapMs), min, max)
+    }
+    if (cmd.distanceTimeoutMs !== undefined) {
+      const min = this.limits.distanceTimeoutMinMs ?? 30
+      const max = Math.max(min, this.limits.distanceTimeoutMaxMs ?? 250)
+      this.limits.distanceTimeoutMs = clamp(Math.round(cmd.distanceTimeoutMs), min, max)
+    }
     this.emit({ type: 'system', system: this.system })
     return { ...this.limits }
   }
