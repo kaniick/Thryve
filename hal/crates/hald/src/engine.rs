@@ -12,6 +12,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
+use hal_core::derived::DistanceTune;
 use hal_core::device::{now_epoch_s, rfc3339_from_epoch};
 use hal_core::registry::Registry;
 use hal_core::safety::{
@@ -22,7 +23,7 @@ use hal_core::{
     topics, ActuatorCommand, ActuatorId, ActuatorState, Alert, AlertKind, BinarySensor, ButtonEvent,
     ButtonPress, CalibrationCommand, CalibrationResult, DeviceCommand, DeviceEntry, DeviceInventory,
     DeviceOp, DeviceResult, DeviceSource, DeviceStatus, DryGuard, PumpGuardCommand, Quality, Reading,
-    SensorId, SystemInfo,
+    SensorId, SystemInfo, TankSensorCommand,
 };
 use serde::Serialize;
 use tracing::{error, info, warn};
@@ -66,8 +67,10 @@ pub enum Inbound {
     Calibrate(SensorId, CalibrationCommand),
     /// Add or remove a sensor at runtime (`devices/set`).
     Devices(DeviceCommand),
-    /// The app asks for the current guard's spin-up grace (`pump/guard/set`).
+    /// The app asks for dry-run guard settings (`pump/guard/set`).
     PumpGuard(PumpGuardCommand),
+    /// The app asks for ranger sampling settings (`tank/sensor/set`).
+    TankSensor(TankSensorCommand),
     Button(ButtonPress),
     /// Outcome of a camera capture (from the HTTP server) → `camera_missing`.
     CameraResult {
@@ -143,11 +146,118 @@ pub struct EngineConfig {
     /// (`config::PI_THROTTLED`); `None` doesn't read it (`--sim`, or
     /// `pump_brownout_pi = false`).
     pub pi_throttled: Option<std::path::PathBuf>,
+    /// Live bounds and ranger sampling the app may change.
+    pub app_tune: AppTune,
+}
+
+/// Bounds and live sampling knobs from hal.toml, shared with the ranger.
+#[derive(Debug, Clone)]
+pub struct AppTune {
+    pub water_low_bounds_cm: (f64, f64),
+    pub dry_current_bounds_a: (f64, f64),
+    pub dry_level_absent_bounds_ms: (u64, u64),
+    pub distance_samples_bounds: (u64, u64),
+    pub distance_gap_bounds_ms: (u64, u64),
+    pub distance_timeout_bounds_ms: (u64, u64),
+    pub distance_samples: u64,
+    pub distance_gap_ms: u64,
+    pub distance_timeout_ms: u64,
+    pub distance: Option<std::sync::Arc<DistanceTune>>,
+}
+
+impl Default for AppTune {
+    fn default() -> Self {
+        Self {
+            water_low_bounds_cm: (5.0, 20.0),
+            dry_current_bounds_a: (0.1, 3.2),
+            dry_level_absent_bounds_ms: (3_000, 60_000),
+            distance_samples_bounds: (3, 15),
+            distance_gap_bounds_ms: (30, 250),
+            distance_timeout_bounds_ms: (30, 250),
+            distance_samples: 5,
+            distance_gap_ms: 60,
+            distance_timeout_ms: 60,
+            distance: None,
+        }
+    }
+}
+
+impl AppTune {
+    pub fn from_hal(cfg: &crate::config::Config, distance: std::sync::Arc<DistanceTune>) -> Self {
+        let empty = cfg.tank.empty_cm;
+        let lo = cfg.limits.water_low_min_cm;
+        let hi = cfg.limits.water_low_max_cm.unwrap_or(empty).min(empty).max(lo);
+        let (s, g, to) = distance.values();
+        Self {
+            water_low_bounds_cm: (lo, hi),
+            dry_current_bounds_a: (
+                cfg.limits.pump_dry_current_min_a,
+                cfg.limits.pump_dry_current_max_a,
+            ),
+            dry_level_absent_bounds_ms: (
+                cfg.limits.pump_dry_level_absent_min_ms,
+                cfg.limits.pump_dry_level_absent_max_ms,
+            ),
+            distance_samples_bounds: (
+                cfg.limits.distance_samples_min as u64,
+                cfg.limits.distance_samples_max as u64,
+            ),
+            distance_gap_bounds_ms: (cfg.limits.distance_gap_min_ms, cfg.limits.distance_gap_max_ms),
+            distance_timeout_bounds_ms: (
+                cfg.limits.distance_timeout_min_ms,
+                cfg.limits.distance_timeout_max_ms,
+            ),
+            distance_samples: s,
+            distance_gap_ms: g,
+            distance_timeout_ms: to,
+            distance: Some(distance),
+        }
+    }
 }
 
 /// A grace from the app, held to hal.toml's bounds.
 fn clamp_grace(ms: u64, (min, max): (u64, u64)) -> u64 {
     ms.clamp(min, max.max(min))
+}
+
+fn clamp_f64(v: f64, (min, max): (f64, f64)) -> f64 {
+    v.clamp(min, max.max(min))
+}
+
+fn fill_published_limits(
+    limits: &mut hal_core::Limits,
+    cfg: &EngineConfig,
+    asked: DryGuard,
+    why: &str,
+    last_wet: Option<f64>,
+    has_current_monitor: bool,
+) {
+    limits.pump_dry_guard = Some(cfg.pump.dry_guard);
+    limits.pump_dry_guard_asked = Some(asked);
+    limits.pump_dry_guard_why = Some(why.to_string());
+    limits.pump_dry_grace_ms = Some(cfg.pump.dry_grace_ms);
+    limits.pump_dry_grace_min_ms = Some(cfg.dry_grace_bounds.0);
+    limits.pump_dry_grace_max_ms = Some(cfg.dry_grace_bounds.1);
+    limits.water_low_cm = cfg.pump.water_low_cm;
+    limits.water_low_min_cm = Some(cfg.app_tune.water_low_bounds_cm.0);
+    limits.water_low_max_cm = Some(cfg.app_tune.water_low_bounds_cm.1);
+    limits.pump_dry_current_a = cfg.pump.dry_current_a;
+    limits.pump_dry_current_min_a = Some(cfg.app_tune.dry_current_bounds_a.0);
+    limits.pump_dry_current_max_a = Some(cfg.app_tune.dry_current_bounds_a.1);
+    limits.pump_dry_level_absent_ms = Some(cfg.pump.dry_level_absent_ms);
+    limits.pump_dry_level_absent_min_ms = Some(cfg.app_tune.dry_level_absent_bounds_ms.0);
+    limits.pump_dry_level_absent_max_ms = Some(cfg.app_tune.dry_level_absent_bounds_ms.1);
+    limits.pump_last_wet_current_a = last_wet;
+    limits.pump_has_current_monitor = Some(has_current_monitor);
+    limits.distance_samples = Some(cfg.app_tune.distance_samples);
+    limits.distance_samples_min = Some(cfg.app_tune.distance_samples_bounds.0);
+    limits.distance_samples_max = Some(cfg.app_tune.distance_samples_bounds.1);
+    limits.distance_gap_ms = Some(cfg.app_tune.distance_gap_ms);
+    limits.distance_gap_min_ms = Some(cfg.app_tune.distance_gap_bounds_ms.0);
+    limits.distance_gap_max_ms = Some(cfg.app_tune.distance_gap_bounds_ms.1);
+    limits.distance_timeout_ms = Some(cfg.app_tune.distance_timeout_ms);
+    limits.distance_timeout_min_ms = Some(cfg.app_tune.distance_timeout_bounds_ms.0);
+    limits.distance_timeout_max_ms = Some(cfg.app_tune.distance_timeout_bounds_ms.1);
 }
 
 const HOURS_PERSIST_EVERY: Duration = Duration::from_secs(900);
@@ -219,6 +329,10 @@ pub struct Engine {
     water: WaterAlert,
     snapshot: SharedSnapshot,
     devices: Devices,
+    asked_dry_guard: DryGuard,
+    dry_guard_why: String,
+    last_wet_current_a: Option<f64>,
+    wet_run_max_a: Option<f64>,
 }
 
 /// Telemetry rounds the water alert looks back over: a minute at the default 10 s.
@@ -343,8 +457,44 @@ impl Engine {
     ) -> Self {
         let mut cfg = cfg;
         let mut system = system;
+        let mut registry = registry;
+        let light = registry
+            .remove_actuator(ActuatorId::Light)
+            .map(|driver| LightFader::new(driver, cfg.light_fade));
+        let persisted = state_file.as_ref().map(StateFile::load).unwrap_or_default();
+        // App-set values, if any, held to the current hal.toml bounds.
+        let asked_dry_guard = persisted.pump_dry_guard.unwrap_or(cfg.pump.dry_guard);
+        if let Some(cm) = persisted.water_low_cm {
+            cfg.pump.water_low_cm = Some(clamp_f64(cm, cfg.app_tune.water_low_bounds_cm));
+        }
+        if let Some(a) = persisted.pump_dry_current_a {
+            cfg.pump.dry_current_a = Some(clamp_f64(a, cfg.app_tune.dry_current_bounds_a));
+        }
+        if let Some(ms) = persisted.pump_dry_grace_ms {
+            cfg.pump.dry_grace_ms = clamp_grace(ms, cfg.dry_grace_bounds);
+        }
+        if let Some(ms) = persisted.pump_dry_level_absent_ms {
+            cfg.pump.dry_level_absent_ms = clamp_grace(ms, cfg.app_tune.dry_level_absent_bounds_ms);
+        }
+        if let Some(n) = persisted.distance_samples {
+            cfg.app_tune.distance_samples = clamp_grace(n, cfg.app_tune.distance_samples_bounds);
+        }
+        if let Some(ms) = persisted.distance_gap_ms {
+            cfg.app_tune.distance_gap_ms = clamp_grace(ms, cfg.app_tune.distance_gap_bounds_ms);
+        }
+        if let Some(ms) = persisted.distance_timeout_ms {
+            cfg.app_tune.distance_timeout_ms = clamp_grace(ms, cfg.app_tune.distance_timeout_bounds_ms);
+        }
+        if let Some(d) = &cfg.app_tune.distance {
+            d.set(
+                cfg.app_tune.distance_samples,
+                cfg.app_tune.distance_gap_ms,
+                cfg.app_tune.distance_timeout_ms,
+            );
+        }
+        let last_wet_current_a = persisted.pump_last_wet_current_a;
         let guard = resolve_dry_guard(
-            cfg.pump.dry_guard,
+            asked_dry_guard,
             cfg.pump.dry_current_a,
             system.caps.sensors.contains(&SensorId::PumpA),
             cfg.pump.water_low_cm.is_some(),
@@ -355,22 +505,7 @@ impl Engine {
             info!(mode = %key(&guard.mode), why = %guard.why, "pump dry-run guard");
         }
         cfg.pump.dry_guard = guard.mode;
-        if guard.mode == DryGuard::Level {
-            cfg.pump.dry_current_a = None;
-        }
-        let mut registry = registry;
-        let light = registry
-            .remove_actuator(ActuatorId::Light)
-            .map(|driver| LightFader::new(driver, cfg.light_fade));
-        let persisted = state_file.as_ref().map(StateFile::load).unwrap_or_default();
-        // The app's grace if it set one, held to hal.toml's bounds as they are now.
-        if let Some(ms) = persisted.pump_dry_grace_ms {
-            cfg.pump.dry_grace_ms = clamp_grace(ms, cfg.dry_grace_bounds);
-        }
-        system.limits.pump_dry_guard = Some(guard.mode);
-        system.limits.pump_dry_grace_ms = Some(cfg.pump.dry_grace_ms);
-        system.limits.pump_dry_grace_min_ms = Some(cfg.dry_grace_bounds.0);
-        system.limits.pump_dry_grace_max_ms = Some(cfg.dry_grace_bounds.1);
+        let dry_guard_why = guard.why.clone();
         // The brown-out guard: the supply needs a pump monitor, the Pi's flag a readable file.
         let monitor = system.caps.sensors.contains(&SensorId::PumpV);
         let pi_flag = match cfg.pi_throttled.as_deref() {
@@ -394,6 +529,14 @@ impl Engine {
         system.limits.pump_brownout_v = cfg.pump.brownout_v;
         system.limits.pump_brownout_ms = Some(cfg.pump.brownout_ms);
         system.limits.pump_brownout_pi = Some(pi_flag);
+        fill_published_limits(
+            &mut system.limits,
+            &cfg,
+            asked_dry_guard,
+            &dry_guard_why,
+            last_wet_current_a,
+            system.caps.sensors.contains(&SensorId::PumpA),
+        );
         let mut doses = BTreeMap::new();
         for id in &system.caps.actuators {
             if matches!(id, ActuatorId::Dose1 | ActuatorId::Dose2 | ActuatorId::Dose3) {
@@ -437,6 +580,10 @@ impl Engine {
             water: WaterAlert::default(),
             snapshot,
             devices: Devices::default(),
+            asked_dry_guard,
+            dry_guard_why,
+            last_wet_current_a,
+            wet_run_max_a: None,
         }
     }
 
@@ -644,7 +791,8 @@ impl Engine {
                 ));
             }
             Inbound::Devices(cmd) => out.extend(self.devices_cmd(cmd, now)),
-            Inbound::PumpGuard(cmd) => out.extend(self.set_dry_grace(cmd.dry_grace_ms, now)),
+            Inbound::PumpGuard(cmd) => out.extend(self.set_guard(cmd, now)),
+            Inbound::TankSensor(cmd) => out.extend(self.set_tank_sensor(cmd, now)),
             Inbound::Resync => out.extend(self.resync(now)),
             Inbound::Shutdown => out.extend(self.shutdown(now)),
         }
@@ -880,6 +1028,34 @@ impl Engine {
             .sensor_mut(SensorId::PumpV)
             .and_then(|s| s.read().ok())
             .map(|r| r.value);
+        self.note_wet_current();
+    }
+
+    fn note_wet_current(&mut self) {
+        if !self.pump_was_on {
+            return;
+        }
+        let Some(a) = self.env.pump_current_a else {
+            return;
+        };
+        let floor = self.cfg.pump.dry_current_a.unwrap_or(0.15).max(0.1);
+        if a >= floor {
+            self.wet_run_max_a = Some(self.wet_run_max_a.unwrap_or(0.0).max(a));
+        }
+    }
+
+    fn commit_wet_current(&mut self, now: Now) {
+        if self.pump.fault().is_some() {
+            self.wet_run_max_a = None;
+            return;
+        }
+        let Some(a) = self.wet_run_max_a.take() else {
+            return;
+        };
+        self.last_wet_current_a = Some(a);
+        self.persisted.pump_last_wet_current_a = Some(a);
+        self.system.limits.pump_last_wet_current_a = Some(a);
+        self.save_state(now);
     }
 
     /// The Pi's under-voltage flag, at most once a second while the pump runs.
@@ -1072,8 +1248,11 @@ impl Engine {
         if on != self.pump_was_on {
             self.pump_since = now.ts();
             self.pump_was_on = on;
-            if !on {
+            if on {
+                self.wet_run_max_a = None;
+            } else {
                 self.watch_until = Some(now.instant + PUMP_WATCH_TAIL);
+                self.commit_wet_current(now);
             }
         }
         if on {
@@ -1268,29 +1447,148 @@ impl Engine {
         self.update_snapshot(now);
     }
 
-    // ---- the one guard setting from the app --------------------------------
+    // ---- app-settable guard and ranger sampling ----------------------------
 
-    /// `pump/guard/set`: the current guard's spin-up grace, the one dry-run
-    /// setting the app may change. Held to hal.toml's bounds (logged when it had
-    /// to be, never refused), kept in the state file, and reported in `system`.
-    fn set_dry_grace(&mut self, asked: u64, now: Now) -> Vec<Outbound> {
-        let ms = clamp_grace(asked, self.cfg.dry_grace_bounds);
-        let (min, max) = self.cfg.dry_grace_bounds;
-        if ms != asked {
-            warn!(
-                asked,
-                ms, min, max, "pump dry-run grace held to hal.toml's bounds"
-            );
-        } else {
-            info!(ms, "pump dry-run grace set");
-        }
-        self.cfg.pump.dry_grace_ms = ms;
-        self.pump.set_dry_grace_ms(ms);
-        self.system.limits.pump_dry_grace_ms = Some(ms);
-        self.persisted.pump_dry_grace_ms = Some(ms);
+    fn publish_system(&mut self, now: Now) -> Vec<Outbound> {
+        self.fill_limits();
         self.save_state(now);
         self.update_snapshot(now);
         vec![Outbound::json(topics::system(&self.unit), &self.system, true)]
+    }
+
+    fn fill_limits(&mut self) {
+        fill_published_limits(
+            &mut self.system.limits,
+            &self.cfg,
+            self.asked_dry_guard,
+            &self.dry_guard_why,
+            self.last_wet_current_a,
+            self.system.caps.sensors.contains(&SensorId::PumpA),
+        );
+    }
+
+    /// `pump/guard/set`: mode, cutoffs, grace, and the no-trusted-reading window.
+    /// Each named field is held to hal.toml's bounds (logged when clamped, never
+    /// refused), kept in the state file, and reported in `system.limits`.
+    fn set_guard(&mut self, cmd: PumpGuardCommand, now: Now) -> Vec<Outbound> {
+        if cmd.is_empty() {
+            warn!("pump/guard/set named no field");
+            return self.publish_system(now);
+        }
+        if let Some(asked) = cmd.dry_grace_ms {
+            let ms = clamp_grace(asked, self.cfg.dry_grace_bounds);
+            let (min, max) = self.cfg.dry_grace_bounds;
+            if ms != asked {
+                warn!(
+                    asked,
+                    ms, min, max, "pump dry-run grace held to hal.toml's bounds"
+                );
+            } else {
+                info!(ms, "pump dry-run grace set");
+            }
+            self.cfg.pump.dry_grace_ms = ms;
+            self.pump.set_dry_grace_ms(ms);
+            self.persisted.pump_dry_grace_ms = Some(ms);
+        }
+        if let Some(cm) = cmd.water_low_cm {
+            let got = clamp_f64(cm, self.cfg.app_tune.water_low_bounds_cm);
+            if (got - cm).abs() > f64::EPSILON {
+                warn!(asked = cm, got, "water low cutoff held to hal.toml's bounds");
+            } else {
+                info!(cm = got, "water low cutoff set");
+            }
+            self.cfg.pump.water_low_cm = Some(got);
+            self.pump.set_water_low_cm(Some(got));
+            self.persisted.water_low_cm = Some(got);
+        }
+        if let Some(a) = cmd.pump_dry_current_a {
+            let got = clamp_f64(a, self.cfg.app_tune.dry_current_bounds_a);
+            if (got - a).abs() > f64::EPSILON {
+                warn!(asked = a, got, "pump dry current held to hal.toml's bounds");
+            } else {
+                info!(a = got, "pump dry current set");
+            }
+            self.cfg.pump.dry_current_a = Some(got);
+            self.pump.set_dry_current_a(Some(got));
+            self.persisted.pump_dry_current_a = Some(got);
+        }
+        if let Some(asked) = cmd.dry_level_absent_ms {
+            let ms = clamp_grace(asked, self.cfg.app_tune.dry_level_absent_bounds_ms);
+            if ms != asked {
+                warn!(asked, ms, "ranger-gone window held to hal.toml's bounds");
+            } else {
+                info!(ms, "ranger-gone window set");
+            }
+            self.cfg.pump.dry_level_absent_ms = ms;
+            self.pump.set_dry_level_absent_ms(ms);
+            self.persisted.pump_dry_level_absent_ms = Some(ms);
+        }
+        if let Some(mode) = cmd.dry_guard {
+            self.asked_dry_guard = mode;
+            self.persisted.pump_dry_guard = Some(mode);
+        }
+        let guard = resolve_dry_guard(
+            self.asked_dry_guard,
+            self.cfg.pump.dry_current_a,
+            self.system.caps.sensors.contains(&SensorId::PumpA),
+            self.cfg.pump.water_low_cm.is_some(),
+        );
+        if guard.warn {
+            warn!(mode = %key(&guard.mode), why = %guard.why, "pump dry-run guard");
+        } else if cmd.dry_guard.is_some() {
+            info!(mode = %key(&guard.mode), why = %guard.why, "pump dry-run guard");
+        }
+        self.cfg.pump.dry_guard = guard.mode;
+        self.dry_guard_why = guard.why;
+        self.pump.set_dry_guard(guard.mode);
+        self.publish_system(now)
+    }
+
+    /// `tank/sensor/set`: ranger sample count, gap, and timeout, clamped, persisted,
+    /// applied live, and reported in `system.limits`.
+    fn set_tank_sensor(&mut self, cmd: TankSensorCommand, now: Now) -> Vec<Outbound> {
+        if cmd.is_empty() {
+            warn!("tank/sensor/set named no field");
+            return self.publish_system(now);
+        }
+        if let Some(n) = cmd.distance_samples {
+            let got = clamp_grace(n, self.cfg.app_tune.distance_samples_bounds);
+            if got != n {
+                warn!(asked = n, got, "distance samples held to hal.toml's bounds");
+            } else {
+                info!(n = got, "distance samples set");
+            }
+            self.cfg.app_tune.distance_samples = got;
+            self.persisted.distance_samples = Some(got);
+        }
+        if let Some(ms) = cmd.distance_gap_ms {
+            let got = clamp_grace(ms, self.cfg.app_tune.distance_gap_bounds_ms);
+            if got != ms {
+                warn!(asked = ms, got, "distance gap held to hal.toml's bounds");
+            } else {
+                info!(ms = got, "distance gap set");
+            }
+            self.cfg.app_tune.distance_gap_ms = got;
+            self.persisted.distance_gap_ms = Some(got);
+        }
+        if let Some(ms) = cmd.distance_timeout_ms {
+            let got = clamp_grace(ms, self.cfg.app_tune.distance_timeout_bounds_ms);
+            if got != ms {
+                warn!(asked = ms, got, "distance timeout held to hal.toml's bounds");
+            } else {
+                info!(ms = got, "distance timeout set");
+            }
+            self.cfg.app_tune.distance_timeout_ms = got;
+            self.persisted.distance_timeout_ms = Some(got);
+        }
+        if let Some(d) = &self.cfg.app_tune.distance {
+            d.set(
+                self.cfg.app_tune.distance_samples,
+                self.cfg.app_tune.distance_gap_ms,
+                self.cfg.app_tune.distance_timeout_ms,
+            );
+        }
+        self.publish_system(now)
     }
 
     // ---- runtime sensors ----------------------------------------------------
@@ -1526,6 +1824,7 @@ mod tests {
             ha_prefix: ha.then(|| "homeassistant".to_owned()),
             dry_grace_bounds: (300, 5000),
             pi_throttled: None,
+            app_tune: AppTune::default(),
         }
     }
 
@@ -1977,7 +2276,10 @@ mod tests {
     }
 
     fn grace(ms: u64) -> Inbound {
-        Inbound::PumpGuard(PumpGuardCommand { dry_grace_ms: ms })
+        Inbound::PumpGuard(PumpGuardCommand {
+            dry_grace_ms: Some(ms),
+            ..Default::default()
+        })
     }
 
     #[test]
@@ -2035,7 +2337,65 @@ mod tests {
     }
 
     #[test]
-    fn current_mode_runs_on_a_low_tank_and_reports_itself() {
+    fn the_app_sets_the_dry_guard_and_tank_sampling_within_bounds() {
+        let mut r = current_rig("guard-set", true);
+        let _ = r.engine.boot(r.now);
+        let cmd = PumpGuardCommand {
+            dry_guard: Some(DryGuard::Current),
+            water_low_cm: Some(16.0),
+            pump_dry_current_a: Some(0.33),
+            dry_level_absent_ms: Some(1),
+            ..Default::default()
+        };
+        let out = r.engine.handle(Inbound::PumpGuard(cmd), r.now);
+        let limits = &payload(&out, "thryve/u1/system")["limits"];
+        assert_eq!(limits["pumpDryGuard"], "current");
+        assert_eq!(limits["pumpDryGuardAsked"], "current");
+        assert_eq!(limits["waterLowCm"], 16.0);
+        assert_eq!(limits["pumpDryCurrentA"], 0.33);
+        // 1 ms is held to the 3 s floor.
+        assert_eq!(limits["pumpDryLevelAbsentMs"], 3_000);
+        let out = r.engine.handle(
+            Inbound::TankSensor(TankSensorCommand {
+                distance_samples: Some(99),
+                distance_gap_ms: Some(80),
+                distance_timeout_ms: Some(80),
+            }),
+            r.now,
+        );
+        let limits = &payload(&out, "thryve/u1/system")["limits"];
+        assert_eq!(limits["distanceSamples"], 15);
+        assert_eq!(limits["distanceGapMs"], 80);
+        assert_eq!(limits["distanceTimeoutMs"], 80);
+        // Restarted, the clamped values survive.
+        let again = current_engine(&r, current_cfg(), true);
+        assert_eq!(again.pump.limits().dry_guard, DryGuard::Current);
+        assert_eq!(again.pump.limits().dry_current_a, Some(0.33));
+        assert_eq!(again.pump.limits().dry_level_absent_ms, 3_000);
+        assert_eq!(again.system.limits.distance_samples, Some(15));
+        assert_eq!(again.system.limits.distance_gap_ms, Some(80));
+        // Current without a monitor falls back to level and says why.
+        let fallback = current_engine(&r, current_cfg(), false);
+        assert_eq!(fallback.pump.limits().dry_guard, DryGuard::Level);
+        assert_eq!(
+            fallback.system.limits.pump_dry_guard_asked,
+            Some(DryGuard::Current)
+        );
+        assert!(
+            fallback
+                .system
+                .limits
+                .pump_dry_guard_why
+                .as_deref()
+                .is_some_and(|s| s.to_lowercase().contains("current")),
+            "{:?}",
+            fallback.system.limits.pump_dry_guard_why
+        );
+        let _ = std::fs::remove_dir_all(&r.dir);
+    }
+
+    #[test]
+    fn current_mode_still_refuses_a_trusted_low_tank_and_reports_itself() {
         let mut r = rig(vec![ActuatorId::Pump], false, "mode-current");
         let mut c = current_cfg();
         c.pump.dry_guard = DryGuard::Current;
@@ -2049,21 +2409,19 @@ mod tests {
         let out = r
             .engine
             .handle(Inbound::ActuatorSet(ActuatorId::Pump, on(None, Some(30))), r.now);
-        assert_eq!(payload(&out, "thryve/u1/actuator/pump/state")["on"], true);
-        for _ in 0..50 {
-            step(&mut r);
-        }
+        assert_eq!(payload(&out, "thryve/u1/actuator/pump/state")["on"], false);
         assert_eq!(
             r.world.lock().unwrap().pump_level,
-            100.0,
-            "the tank doesn't stop it"
+            0.0,
+            "a trusted low tank still refuses a start"
         );
-        // Asked for current with no monitor, it runs on the tank level instead.
+        // Asked for current with no monitor, it runs on the tank level instead,
+        // but keeps the asked current cutoff so the app can show it.
         let mut c = current_cfg();
         c.pump.dry_guard = DryGuard::Current;
         let fallback = current_engine(&r, c, false);
         assert_eq!(fallback.system.limits.pump_dry_guard, Some(DryGuard::Level));
-        assert_eq!(fallback.pump.limits().dry_current_a, None);
+        assert_eq!(fallback.pump.limits().dry_current_a, Some(0.15));
         let _ = std::fs::remove_dir_all(&r.dir);
     }
 
@@ -2252,7 +2610,8 @@ mod tests {
     #[test]
     fn without_a_pump_monitor_the_current_guard_is_off() {
         let mut r = current_rig("no-monitor", false);
-        assert_eq!(r.engine.pump.limits().dry_current_a, None);
+        assert_eq!(r.engine.pump.limits().dry_guard, DryGuard::Level);
+        assert_eq!(r.engine.pump.limits().dry_current_a, Some(0.15));
         r.engine.boot(r.now);
         r.engine
             .handle(Inbound::ActuatorSet(ActuatorId::Pump, on(None, Some(60))), r.now);

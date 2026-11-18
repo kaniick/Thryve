@@ -23,6 +23,22 @@ pub struct Persisted {
     /// into hal.toml's bounds; unset, hal.toml's default.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pump_dry_grace_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pump_dry_guard: Option<hal_core::DryGuard>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub water_low_cm: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pump_dry_current_a: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pump_dry_level_absent_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pump_last_wet_current_a: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub distance_samples: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub distance_gap_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub distance_timeout_ms: Option<u64>,
 }
 
 pub struct StateFile {
@@ -88,6 +104,7 @@ mod tests {
             last_pump_run: None,
             pump_dry_grace_ms: Some(1500),
             doses: BTreeMap::new(),
+            ..Default::default()
         };
         s.doses.insert(
             "dose_1".into(),

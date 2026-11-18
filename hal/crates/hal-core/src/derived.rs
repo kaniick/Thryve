@@ -7,6 +7,7 @@
 //!   percentage from the configured full/empty geometry, as trusted as the
 //!   distance it came from.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -27,6 +28,52 @@ pub const OUTLIER_CM: f64 = 3.0;
 /// Last median distance and its quality, shared with [`LevelPctSensor`].
 pub type SharedDistance = Arc<Mutex<Option<(f64, Quality)>>>;
 
+/// Live sampling knobs the app may change (`tank/sensor/set`). Shared with
+/// the ranger driver so a new sample count, gap, or timeout is used on the
+/// next read, without restarting hald.
+#[derive(Debug)]
+pub struct DistanceTune {
+    samples: AtomicU64,
+    gap_ms: AtomicU64,
+    timeout_ms: AtomicU64,
+}
+
+impl DistanceTune {
+    pub fn new(samples: u64, gap_ms: u64, timeout_ms: u64) -> Self {
+        Self {
+            samples: AtomicU64::new(samples.max(1)),
+            gap_ms: AtomicU64::new(gap_ms),
+            timeout_ms: AtomicU64::new(timeout_ms),
+        }
+    }
+
+    pub fn set(&self, samples: u64, gap_ms: u64, timeout_ms: u64) {
+        self.samples.store(samples.max(1), Ordering::Relaxed);
+        self.gap_ms.store(gap_ms, Ordering::Relaxed);
+        self.timeout_ms.store(timeout_ms, Ordering::Relaxed);
+    }
+
+    pub fn samples(&self) -> usize {
+        self.samples.load(Ordering::Relaxed).max(1) as usize
+    }
+
+    pub fn gap(&self) -> Duration {
+        Duration::from_millis(self.gap_ms.load(Ordering::Relaxed))
+    }
+
+    pub fn timeout(&self) -> Duration {
+        Duration::from_millis(self.timeout_ms.load(Ordering::Relaxed))
+    }
+
+    pub fn values(&self) -> (u64, u64, u64) {
+        (
+            self.samples.load(Ordering::Relaxed).max(1),
+            self.gap_ms.load(Ordering::Relaxed),
+            self.timeout_ms.load(Ordering::Relaxed),
+        )
+    }
+}
+
 pub struct MedianSensor {
     inner: Box<dyn Sensor>,
     samples: usize,
@@ -36,6 +83,7 @@ pub struct MedianSensor {
     /// Last median that was quality `good`, for trusting a thin round and
     /// rejecting short or long strays.
     last_trusted: Option<f64>,
+    tune: Option<Arc<DistanceTune>>,
 }
 
 impl MedianSensor {
@@ -47,7 +95,27 @@ impl MedianSensor {
             max: None,
             last: Arc::new(Mutex::new(None)),
             last_trusted: None,
+            tune: None,
         }
+    }
+
+    /// Use live sampling knobs from the app, falling back to the values
+    /// given to [`new`] / [`with_gap`] only if no tune is attached.
+    pub fn with_tune(mut self, tune: Arc<DistanceTune>) -> Self {
+        self.tune = Some(tune);
+        self
+    }
+
+    fn sample_count(&self) -> usize {
+        self.tune
+            .as_ref()
+            .map(|t| t.samples())
+            .unwrap_or(self.samples)
+            .max(1)
+    }
+
+    fn sample_gap(&self) -> Duration {
+        self.tune.as_ref().map(|t| t.gap()).unwrap_or(self.gap)
     }
 
     /// Wait this long between samples. An ultrasonic ping fired while the
@@ -125,15 +193,15 @@ impl Sensor for MedianSensor {
         self.inner.probe()
     }
     fn read(&mut self) -> Result<Reading, DeviceError> {
-        let mut vals = Vec::with_capacity(self.samples);
+        let mut vals = Vec::with_capacity(self.sample_count());
         let mut unit = String::new();
         let mut last_err = None;
         // A second pass if the first round is thin: dropped pings, not
         // disagreement, are how this ranger goes "suspect" on a still surface.
-        let attempts = self.samples.saturating_mul(2);
+        let attempts = self.sample_count().saturating_mul(2);
         for i in 0..attempts {
-            if i > 0 && !self.gap.is_zero() {
-                std::thread::sleep(self.gap);
+            if i > 0 && !self.sample_gap().is_zero() {
+                std::thread::sleep(self.sample_gap());
             }
             match self.inner.read() {
                 Ok(r) if self.max.is_some_and(|max| r.value > max) => {
@@ -160,7 +228,7 @@ impl Sensor for MedianSensor {
                     }
                 }
             }
-            if i + 1 >= self.samples && self.usable(&vals).len() >= 2.min(self.samples) {
+            if i + 1 >= self.sample_count() && self.usable(&vals).len() >= 2.min(self.sample_count()) {
                 break;
             }
         }
@@ -176,7 +244,7 @@ impl Sensor for MedianSensor {
         // comes back 8.08, not a new surface.
         let agree = usable.iter().filter(|v| (**v - m).abs() <= AGREE_CM).count();
         let near_trusted = self.last_trusted.is_some_and(|t| (m - t).abs() <= TRUST_NEAR_CM);
-        if agree < 2.min(self.samples) && !near_trusted {
+        if agree < 2.min(self.sample_count()) && !near_trusted {
             r.quality = Quality::Suspect;
         }
         if r.quality == Quality::Good {

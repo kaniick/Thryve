@@ -1,7 +1,7 @@
 ---
 type: "Decision record"
 title: "ADR 0009: Pump safety guard and latched faults"
-description: "Pump duty clamp, bounded runs, dry-run interlock, over-temp cutoff and latched faults; amended 2026-11-14 for full duty, the brown-out and current guards, and hal.toml-only guard settings."
+description: "Pump duty clamp, bounded runs, dry-run interlock, over-temp cutoff and latched faults; amended 2026-11-14 for full duty, the brown-out and current guards; amended 2026-11-17 so the app may set the dry-run mode, cutoffs and ranger sampling within hal.toml bounds."
 status: "stable"
 generated: {"by": "claude/fable-5.1", "at": "2026-10-31T04:40:00+00:00"}
 sources: [{"resource": "https://github.com/sleepypod/core", "title": "sleepypod/core (conventions and ADR precedents)"}, {"resource": "https://github.com/iot-root/garden-of-eden", "title": "iot-root/garden-of-eden (reference implementation, GPL-3; no code copied)"}, {"resource": "https://github.com/sleepypod/core/blob/dev/docs/adr/0022-pump-stall-safety.md", "title": "sleepypod ADR 0022 pump stall safety"}]
@@ -9,7 +9,7 @@ sources: [{"resource": "https://github.com/sleepypod/core", "title": "sleepypod/
 
 # ADR 0009: Pump safety guard and latched faults
 
-**Status:** Accepted, amended 2026-11-14 (full duty by default, a brown-out guard, the current guard and its hal.toml-only mode, fast reads, fail-safes, and retried scheduled runs)
+**Status:** Accepted, amended 2026-11-14 (full duty by default, a brown-out guard, the current guard, fast reads, fail-safes, and retried scheduled runs) and 2026-11-17 (the app may set the dry-run mode, cutoffs and ranger sampling within hal.toml bounds)
 **Date:** 2026-10-30
 
 ## Context
@@ -161,3 +161,45 @@ part of #220 unless noted.
    schedule no longer loses a week of water to one bad echo.
 
 **Authors**: @ng
+
+## Amendment, 2026-11-17
+
+The 2026-11-14 points 4 and 6 (mode and cutoff were hal.toml-only; the spin-up
+grace was the one app-settable guard setting) are superseded. The owner can
+change the dry-run guard from Settings → Pump, and ranger sampling from
+Settings → Tank, without SSH. hald still decides every start and stop.
+
+1. **The app may set the dry-run mode and its cutoffs.** Core sends
+   `pump/guard/set` with any of `dryGraceMs`, `dryGuard` (`level` | `current`
+   | `both`; there is no `"none"`), `waterLowCm`, `pumpDryCurrentA`, and
+   `dryLevelAbsentMs`. At least one field is required; unknown fields are
+   refused. hald clamps each value into the matching min/max in `[limits]`,
+   keeps it in `state.json`, and uses it at boot without waiting on core. A
+   trusted low tank still refuses a start in every mode. `current` or `both`
+   without a cutoff or a pump monitor still falls back to `level`, and the
+   asked mode and why are published on `system.limits` (`pumpDryGuardAsked`,
+   `pumpDryGuardWhy`) so Settings can show the fallback. The asked current
+   cutoff is kept even while the unit is running as level, so it is ready
+   once a monitor is fitted. Brown-out settings stay on the unit only.
+2. **hal.toml supplies defaults and clamp bounds; `state.json` wins the live
+   values.** On boot, an app-set value in `state.json` is used if it is still
+   inside the current toml bounds; narrowing a bound reclamps it. Toml values
+   for `pump_dry_guard`, `water_low_cm`, `pump_dry_current_a`,
+   `pump_dry_level_absent_ms` and the ranger sampling keys are the defaults
+   until the app sets them. Keep the `*_min_*` / `*_max_*` bound keys in
+   toml if you customized them; live value lines can stay or go once Settings
+   has saved, because the app owns those afterwards.
+3. **A longer window when the ranger is flaky.** When the last trusted level
+   is well above the cutoff (2 cm of margin), a run may continue, and a start
+   is not refused as "sensor unavailable", for `pump_dry_level_absent_ms`
+   (default 30 s, bounds 3–60 s) without a new trusted reading. A short
+   outlier or a dropped ping must not raise `water_low`, trip a dry-run, or
+   show "Pump off: water low".
+4. **Ranger sampling is live.** Core sends `tank/sensor/set` with any of
+   `distanceSamples`, `distanceGapMs`, `distanceTimeoutMs`. hald clamps them
+   into toml bounds (samples 3–15, gap and timeout 30–250 ms by default),
+   persists them, republishes them on `system.limits`, and applies them on
+   the next read without restarting. Settings → Tank shows a trusted-% of
+   tank-level samples over the last hour.
+
+**Authors**: @ng, @kaniick

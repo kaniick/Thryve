@@ -1,4 +1,4 @@
-import type { ActuatorCommand, ActuatorId, ActuatorState, Alert, AlertKind, ButtonPress, CalibrationCommand, CalibrationResult, DeviceInventory, DeviceResult, Limits, Reading, SensorId, SystemInfo } from './contract'
+import type { ActuatorCommand, ActuatorId, ActuatorState, Alert, AlertKind, ButtonPress, CalibrationCommand, CalibrationResult, DeviceInventory, DeviceResult, Limits, PumpGuardCommand, Reading, SensorId, SystemInfo, TankSensorCommand } from './contract'
 
 export interface HalSnapshot {
   system: SystemInfo | null
@@ -37,11 +37,14 @@ export interface HalClient {
   /** Remove an app-added probe; sensors from hal.toml are refused. */
   removeSensor(kind: string, addr: number): Promise<DeviceResult>
   /**
-   * Ask for the pump current guard's spin-up grace (ms). hald holds it to
-   * hal.toml's bounds and resolves with the limits it then reports. It's the one
-   * dry-run setting core may change: the mode and the cutoff are hal.toml only.
+   * Ask for dry-run guard settings. hald holds each named field to
+   * hal.toml's bounds and resolves with the limits it then reports.
    */
+  setPumpGuard(cmd: PumpGuardCommand): Promise<Limits>
+  /** @deprecated use setPumpGuard({ dryGraceMs }) */
   setPumpDryGrace(ms: number): Promise<Limits>
+  /** Ask for ranger sampling settings; hald clamps, persists, and reports them. */
+  setTankSensor(cmd: TankSensorCommand): Promise<Limits>
   captureStill(camera: 'upper' | 'lower'): Promise<Uint8Array>
   /**
    * A still at the sensor's full size (2592×1944), where the yCube dot codes

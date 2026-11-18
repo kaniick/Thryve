@@ -64,6 +64,9 @@ export class Recorder {
     const now = this.now()
     switch (event.type) {
       case 'sensor': {
+        if (event.id === 'water_level_pct' || event.id === 'water_distance') {
+          store.sensorQuality.add([{ ts: event.reading.ts, sensor: event.id, quality: event.reading.quality }])
+        }
         const last = this.lastSample.get(event.id)
         if (last === undefined || now.getTime() - last >= this.intervalMs) {
           this.lastSample.set(event.id, now.getTime())
@@ -76,6 +79,11 @@ export class Recorder {
         if (event.id === 'light') {
           if (event.state.on && this.lightOnSince === null) this.lightOnSince = now.getTime()
           if (!event.state.on) this.flushLightHours()
+        }
+        if (event.id === 'pump') {
+          const open = store.pumpRuns.list({ limit: 1 }).find(r => r.endedAt === null)
+          if (event.state.on && !open) store.pumpRuns.open(event.state.since || now.toISOString(), event.state.level, store.schedules.recentRuns(20))
+          if (!event.state.on && open) store.pumpRuns.close(now.toISOString(), event.state.fault)
         }
         // Doser faults surface once, as the HAL's acknowledgeable dose_fault alert that names the doser.
         if (event.id.startsWith('dose_')) break

@@ -337,6 +337,7 @@ async fn main() -> anyhow::Result<()> {
             dry_grace_bounds: (cfg.limits.pump_dry_grace_min_ms, cfg.limits.pump_dry_grace_max_ms),
             pi_throttled: (cfg.limits.pump_brownout_pi && !cli.sim)
                 .then(|| std::path::PathBuf::from(config::PI_THROTTLED)),
+            app_tune: crate::engine::AppTune::from_hal(&cfg, built.distance_tune.clone()),
         },
         built.registry,
         built.over_temp,
@@ -664,6 +665,7 @@ mod tests {
             ha_prefix: None,
             dry_grace_bounds: (300, 5000),
             pi_throttled: None,
+            app_tune: crate::engine::AppTune::default(),
         };
         Engine::new(system, cfg, Registry::default(), None, None, Arc::default())
     }

@@ -8,6 +8,7 @@ import { trpcServer } from '@hono/trpc-server'
 import { Hono } from 'hono'
 import { cors } from 'hono/cors'
 import { datasetEntries, datasetName, resolveWindow } from '../src/datasets/export'
+import { telemetryExportFilename, telemetryExportStream, type TelemetryExportOpts } from '../src/telemetry/export'
 import { tarStream } from '../src/datasets/tar'
 import { RestoreRefused } from '../src/backup/restore'
 import type { Context } from '../src/server/context'
@@ -136,6 +137,19 @@ export function createApp({ ctx, staticRoot }: CreateAppOptions) {
   })
 
   // Dataset export (ADR-0019): a tar streamed entry by entry, so a month of stills never sits in memory.
+  app.get('/api/telemetry/export', (c) => {
+    const format = c.req.query('format') === 'json' ? 'json' : 'csv'
+    const from = c.req.query('from')
+    const to = c.req.query('to')
+    const sensor = c.req.query('sensor') || undefined
+    if (!from || !to) return c.json({ error: 'from and to are required' }, 400)
+    if (Number.isNaN(Date.parse(from)) || Number.isNaN(Date.parse(to))) return c.json({ error: 'from and to must be ISO-8601' }, 400)
+    const opts: TelemetryExportOpts = { from, to, sensor, format }
+    const name = telemetryExportFilename(opts)
+    const type = format === 'json' ? 'application/json' : 'text/csv; charset=utf-8'
+    return c.body(telemetryExportStream(ctx.store, opts), 200, { 'content-type': type, 'content-disposition': `attachment; filename="${name}"` })
+  })
+
   app.get('/api/datasets/export', (c) => {
     let w
     try {

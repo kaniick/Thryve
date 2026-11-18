@@ -9,7 +9,7 @@
  * without a broker; production passes an `mqtt.js` client.
  */
 import type { AlertKind, CalibrationCommand, Limits } from './contract'
-import { ActuatorCommand, ActuatorId, ActuatorState, Alert, ButtonPress, CalibrationCommand as CalibrationCommandSchema, CalibrationResult, DeviceInventory, DeviceResult, PumpGuardCommand, Reading, SensorId, SystemInfo, topics } from './contract'
+import { ActuatorCommand, ActuatorId, ActuatorState, Alert, ButtonPress, CalibrationCommand as CalibrationCommandSchema, CalibrationResult, DeviceInventory, DeviceResult, PumpGuardCommand, Reading, SensorId, SystemInfo, TankSensorCommand, topics } from './contract'
 import type { HalClient, HalEvent, HalSnapshot, Unsubscribe } from './types'
 import { HalRefused } from './sim'
 
@@ -137,14 +137,15 @@ export class MqttHalClient implements HalClient {
     })
   }
 
-  /** Resolves with the limits hald republishes once it has the grace; an older hald has none to set. */
-  setPumpDryGrace(ms: number): Promise<Limits> {
-    const parsed = PumpGuardCommand.parse({ dryGraceMs: ms })
-    if (this.snap.system?.limits.pumpDryGraceMs === undefined) return Promise.reject(new HalRefused('this hald can\'t set the dry-run grace; update it'))
+  setPumpGuard(cmd: PumpGuardCommand): Promise<Limits> {
+    const parsed = PumpGuardCommand.parse(cmd)
+    if (this.snap.system?.limits.pumpDryGraceMs === undefined && this.snap.system?.limits.pumpDryGuard === undefined) {
+      return Promise.reject(new HalRefused('this hald can\'t set the dry-run guard; update it'))
+    }
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         off()
-        reject(new Error(`hald did not report the dry-run grace within ${this.timeoutMs} ms`))
+        reject(new Error(`hald did not report the dry-run guard within ${this.timeoutMs} ms`))
       }, this.timeoutMs)
       const off = this.subscribe((e) => {
         if (e.type !== 'system') return
@@ -153,6 +154,30 @@ export class MqttHalClient implements HalClient {
         resolve(e.system.limits)
       })
       this.o.mqtt.publish(topics.pumpGuardSet(this.u), JSON.stringify(parsed), { qos: 1 })
+    })
+  }
+
+  setPumpDryGrace(ms: number): Promise<Limits> {
+    return this.setPumpGuard({ dryGraceMs: ms })
+  }
+
+  setTankSensor(cmd: TankSensorCommand): Promise<Limits> {
+    const parsed = TankSensorCommand.parse(cmd)
+    if (this.snap.system?.limits.distanceSamples === undefined) {
+      return Promise.reject(new HalRefused('this hald can\'t set tank sampling; update it'))
+    }
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        off()
+        reject(new Error(`hald did not report tank sampling within ${this.timeoutMs} ms`))
+      }, this.timeoutMs)
+      const off = this.subscribe((e) => {
+        if (e.type !== 'system') return
+        clearTimeout(timer)
+        off()
+        resolve(e.system.limits)
+      })
+      this.o.mqtt.publish(topics.tankSensorSet(this.u), JSON.stringify(parsed), { qos: 1 })
     })
   }
 

@@ -226,7 +226,7 @@ describe('the dry-run grace', () => {
     const late = client.setPumpDryGrace(1000)
     // Some other publish in between isn't the answer.
     mqtt.msg(`thryve/${U}/availability`, 'online')
-    await expect(late).rejects.toThrow(/did not report the dry-run grace within 50 ms/)
+    await expect(late).rejects.toThrow(/did not report the dry-run guard within 50 ms/)
     // Only the grace goes on the wire: no mode, no cutoff.
     expect(() => client.setPumpDryGrace(-1)).toThrow()
     expect(Object.keys(JSON.parse(mqtt.published.at(-1)?.payload ?? '{}'))).toEqual(['dryGraceMs'])

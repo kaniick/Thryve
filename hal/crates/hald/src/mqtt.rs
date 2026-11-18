@@ -12,6 +12,7 @@ use std::time::Duration;
 
 use hal_core::{
     topics, ActuatorCommand, AlertKind, CalibrationCommand, DeviceCommand, PumpGuardCommand, SensorId,
+    TankSensorCommand,
 };
 use rumqttc::{AsyncClient, Event, LastWill, MqttOptions, Packet, QoS};
 use tokio::sync::mpsc::UnboundedReceiver;
@@ -74,6 +75,7 @@ pub fn subscriptions(unit: &str) -> Vec<String> {
         format!("{}/sensor/+/calibrate", topics::prefix(unit)),
         topics::devices_set(unit),
         topics::pump_guard_set(unit),
+        topics::tank_sensor_set(unit),
     ];
     v.extend(crate::ha::command_topics(unit));
     v
@@ -114,10 +116,12 @@ pub fn parse_inbound(unit: &str, topic: &str, payload: &[u8]) -> Result<Inbound,
         ["devices", "set"] => serde_json::from_str::<DeviceCommand>(text)
             .map(Inbound::Devices)
             .map_err(|e| format!("bad DeviceCommand {text:?}: {e}")),
-        // The grace and nothing else: the guard's mode and cutoff are hal.toml only.
         ["pump", "guard", "set"] => serde_json::from_str::<PumpGuardCommand>(text)
             .map(Inbound::PumpGuard)
             .map_err(|e| format!("bad PumpGuardCommand {text:?}: {e}")),
+        ["tank", "sensor", "set"] => serde_json::from_str::<TankSensorCommand>(text)
+            .map(Inbound::TankSensor)
+            .map_err(|e| format!("bad TankSensorCommand {text:?}: {e}")),
         ["ha", ..] => crate::ha::translate_command(unit, topic, text)
             .map(|(id, cmd)| Inbound::ActuatorSet(id, cmd))
             .ok_or_else(|| format!("unrecognised HA command {topic:?} = {text:?}")),
@@ -295,23 +299,42 @@ mod tests {
         assert!(s.contains(&"thryve/u1/sensor/+/calibrate".to_owned()));
         assert!(s.contains(&"thryve/u1/devices/set".to_owned()));
         assert!(s.contains(&"thryve/u1/pump/guard/set".to_owned()));
-        assert_eq!(s.len(), 9);
+        assert!(s.contains(&"thryve/u1/tank/sensor/set".to_owned()));
+        assert_eq!(s.len(), 10);
     }
 
     #[test]
-    fn the_pump_guard_topic_takes_a_grace_and_refuses_a_mode_or_a_cutoff() {
+    fn the_pump_guard_topic_takes_mode_and_cutoffs_and_refuses_unknown_fields() {
         let t = "thryve/u1/pump/guard/set";
         assert_eq!(
             parse_inbound("u1", t, br#"{"dryGraceMs":1500}"#).unwrap(),
-            Inbound::PumpGuard(PumpGuardCommand { dry_grace_ms: 1500 })
+            Inbound::PumpGuard(PumpGuardCommand {
+                dry_grace_ms: Some(1500),
+                ..Default::default()
+            })
+        );
+        assert_eq!(
+            parse_inbound("u1", t, br#"{"dryGuard":"current","pumpDryCurrentA":0.33}"#).unwrap(),
+            Inbound::PumpGuard(PumpGuardCommand {
+                dry_guard: Some(hal_core::DryGuard::Current),
+                pump_dry_current_a: Some(0.33),
+                ..Default::default()
+            })
         );
         for bad in [
             &br#"{"pumpDryGuard":"current"}"#[..],
-            br#"{"dryGraceMs":1500,"pumpDryCurrentA":0.1}"#,
+            br#"{"dryGuard":"none"}"#,
             b"",
         ] {
             assert!(parse_inbound("u1", t, bad).is_err());
         }
+        assert_eq!(
+            parse_inbound("u1", "thryve/u1/tank/sensor/set", br#"{"distanceSamples":7}"#).unwrap(),
+            Inbound::TankSensor(TankSensorCommand {
+                distance_samples: Some(7),
+                ..Default::default()
+            })
+        );
     }
 
     #[test]

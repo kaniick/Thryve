@@ -82,7 +82,23 @@ export function SensorsPage() {
             </p>
           )}
         </div>
-        {live.length > 0 && <SegmentedControl ariaLabel="History range" size="sm" className="font-mono" value={hours} options={RANGES} onChange={setHours} />}
+        {live.length > 0 && (
+          <div className="flex flex-wrap items-center gap-2">
+            <SegmentedControl ariaLabel="History range" size="sm" className="font-mono" value={hours} options={RANGES} onChange={setHours} />
+            <Button
+              size="sm"
+              variant="ghost"
+              data-testid="export-all"
+              onClick={() => {
+                const to = new Date().toISOString()
+                const from = new Date(Date.now() - Number(hours) * 3_600_000).toISOString()
+                window.location.href = `/api/telemetry/export?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&format=csv`
+              }}
+            >
+              Export all
+            </Button>
+          </div>
+        )}
         {inv && inv.addable.length > 0 && <Button variant="primary" icon={Plus} onClick={() => setAdding(true)}>Add sensor</Button>}
       </div>
 
@@ -202,7 +218,7 @@ function SensorTile({ sensor, part, latest, hours, spark = true }: { sensor: Sen
   const values = (q.data ?? []).map(p => p.value)
   const stats = values.length ? { min: Math.min(...values), avg: values.reduce((a, b) => a + b, 0) / values.length, max: Math.max(...values) } : null
   return (
-    <div className="flex min-w-0 flex-col gap-2.5 rounded-[14px] border border-line bg-surface p-4">
+    <a href={`/sensors/${sensor}`} className="flex min-w-0 flex-col gap-2.5 rounded-[14px] border border-line bg-surface p-4 text-fg hover:border-line-2" data-testid={`sensor-card-${sensor}`}>
       <div className="flex items-baseline gap-2">
         <span className="min-w-0 flex-1 truncate text-[13px] text-fg-2">{title}</span>
         <span className="font-mono text-[10px] text-fg-3">{part}</span>
@@ -226,7 +242,7 @@ function SensorTile({ sensor, part, latest, hours, spark = true }: { sensor: Sen
           <span>{`max ${round(stats.max)}`}</span>
         </div>
       )}
-    </div>
+    </a>
   )
 }
 

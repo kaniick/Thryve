@@ -56,7 +56,7 @@ export function setupReport(store: Store, snap: HalSnapshot): SetupReport {
     if (!snap.system.caps.sensors.includes('water_level_pct') || device?.status === 'absent') {
       issues.push({ id: 'water_sensor_absent', alert: 'setup_water_sensor', title: 'Tank sensor not answering', detail: `No tank level sensor is answering${device?.detail ? ` (${device.detail})` : ''}, so the unit can't tell when the tank runs low.`, fix: 'Check the level sensor\'s cable; Sensors lists it.' })
     }
-    else if (reading?.quality === 'suspect') {
+    else if (tankLevelSuspect(store, snap, reading?.ts)) {
       issues.push({ id: 'water_sensor_suspect', alert: 'setup_water_sensor', title: 'Tank level suspect', detail: 'The tank level reads suspect: its pings disagreed or too few came back, so top-offs aren\'t advised from it.', fix: 'Check nothing blocks the level sensor and its cable is seated; Sensors shows the reading.' })
     }
   }
@@ -64,4 +64,26 @@ export function setupReport(store: Store, snap: HalSnapshot): SetupReport {
     ? issues.map(i => i.title).join(' · ')
     : planted ? `${pods(planted)} planted · light and pump schedules on` : 'Nothing planted yet'
   return { planted, issues, summary }
+}
+
+/** Raise after a majority of tank-level readings have been suspect for 10 minutes; clear only after that share falls to 30% or less (hysteresis). */
+export const SUSPECT_WINDOW_MS = 10 * 60_000
+const RAISE_AT = 0.5
+const CLEAR_BELOW = 0.3
+const MIN_SAMPLES = 3
+
+export function tankLevelSuspect(store: Store, snap: HalSnapshot, nowTs?: string): boolean {
+  const reading = snap.sensors.water_level_pct
+  const now = nowTs ?? reading?.ts ?? new Date().toISOString()
+  const from = new Date(Date.parse(now) - SUSPECT_WINDOW_MS).toISOString()
+  const samples = store.sensorQuality.range('water_level_pct', from, now)
+  const n = samples.length
+  const share = n ? samples.filter(s => s.quality === 'suspect').length / n : 0
+  const active = store.alerts.list({ activeOnly: true }).some(a => a.kind === 'setup_water_sensor' && a.detail.includes('suspect'))
+  const latestSuspect = reading?.quality === 'suspect'
+  // A lone blip, or a window that already went back to good, must not raise.
+  if (!active && !latestSuspect) return false
+  if (n < MIN_SAMPLES) return active && latestSuspect
+  if (!active) return share >= RAISE_AT
+  return share > CLEAR_BELOW
 }

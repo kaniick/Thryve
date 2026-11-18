@@ -5,11 +5,11 @@ import { PumpSection, TEST_RUN_S } from '../PumpSection'
 
 const { state, calls } = vi.hoisted(() => ({
   state: { power: undefined as unknown, pump: undefined as unknown, runError: null as null | { message: string } },
-  calls: { setPower: vi.fn(), runOnce: vi.fn(), stop: vi.fn(), invalidate: vi.fn() },
+  calls: { setPower: vi.fn(), runOnce: vi.fn(), stop: vi.fn(), setGuard: vi.fn(), invalidate: vi.fn() },
 }))
 
 vi.mock('@/src/utils/trpc', () => {
-  const mutation = (name: 'setPower' | 'runOnce' | 'stop') => ({
+  const mutation = (name: 'setPower' | 'runOnce' | 'stop' | 'setGuard') => ({
     useMutation: (o: { onSuccess: () => void }) => ({
       isPending: false,
       error: name === 'runOnce' ? state.runError : null,
@@ -28,7 +28,10 @@ vi.mock('@/src/utils/trpc', () => {
         setPower: mutation('setPower'),
         runOnce: mutation('runOnce'),
         stop: mutation('stop'),
+        setGuard: mutation('setGuard'),
       },
+      system: { info: { useQuery: () => ({ data: undefined }) } },
+      settings: { get: { useQuery: () => ({ data: undefined }) } },
     },
   }
 })

@@ -65,7 +65,7 @@ vi.mock('@/src/utils/trpc', () => {
         calls.ack(i)
         o.onSuccess()
       } }) } },
-      pump: { get: query('pump'), runOnce: mutation('runOnce'), stop: mutation('stop') },
+      pump: { get: query('pump'), runOnce: mutation('runOnce'), stop: mutation('stop'), runs: query('pumpRuns') },
       sensors: { latest: query('sensors') },
       care: { chores: query('chores') },
       tank: { actions: query('tankActions'), logAction: { useMutation: () => ({ mutate: vi.fn(), error: null }) }, removeAction: { useMutation: () => ({ mutate: vi.fn(), error: null }) } },
@@ -107,6 +107,7 @@ beforeEach(() => {
   data.set('settings', { waterFullCm: 5, waterEmptyCm: 20, tankCapacityL: 19 })
   data.set('schedules', [evening, curve, morning])
   data.set('runs', [{ scheduleId: 'morning', key: 'm1', firedAt: at(8).toISOString(), result: 'pending' }, { scheduleId: 'gone', key: 'g1', firedAt: at(20, 0, 0).toISOString(), result: 'pending' }])
+  data.set('pumpRuns', [])
   data.set('history', [80, 70, 60, 92, 85].map((value, i) => ({ ts: new Date(at(0).getTime() + i * 12 * 3_600_000).toISOString(), value })))
 })
 afterEach(() => {
@@ -437,14 +438,20 @@ describe('WaterPage: the protocol and Your schedules', () => {
 })
 
 describe('WaterPage: history', () => {
-  it('lists recent runs by cycle name, falling back to the id of a deleted one', () => {
+  it('lists recent runs by cycle name, falling back to the id of a deleted one, and labels a manual run', () => {
+    data.set('pumpRuns', [
+      { id: 1, startedAt: at(8).toISOString(), endedAt: at(8, 5).toISOString(), durationS: 300, scheduledDurationS: 300, source: 'scheduled', scheduleId: 'morning', level: 30, fault: null },
+      { id: 2, startedAt: at(20, 0, 0).toISOString(), endedAt: at(20, 5, 0).toISOString(), durationS: 300, scheduledDurationS: 300, source: 'scheduled', scheduleId: 'gone', level: 30, fault: null },
+      { id: 3, startedAt: at(11).toISOString(), endedAt: at(11, 2).toISOString(), durationS: 120, scheduledDurationS: null, source: 'manual', scheduleId: null, level: 30, fault: null },
+    ])
     render(<WaterPage />)
     expect(screen.getByText('Today 08:00')).toBeTruthy()
     expect(screen.getByText('gone')).toBeTruthy()
+    expect(screen.getByTestId('manual-run').textContent).toMatch(/Manual/)
     cleanup()
-    data.set('runs', [])
+    data.set('pumpRuns', [])
     render(<WaterPage />)
-    expect(screen.getByText('No scheduled runs yet.')).toBeTruthy()
+    expect(screen.getByText('No pump runs yet.')).toBeTruthy()
   })
 
   it('charts the tank over a week by default, with top-ups and the drain rate', () => {

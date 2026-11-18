@@ -39,6 +39,7 @@ export function WaterPage() {
   const settings = trpc.settings.get.useQuery()
   const schedules = trpc.schedules.list.useQuery()
   const runs = trpc.schedules.recentRuns.useQuery()
+  const pumpRuns = trpc.pump.runs.useQuery({ limit: 50 })
   // When Run was pressed, until the pump answers by coming on.
   const [asked, setAsked] = useState<number | null>(null)
   const runOnce = trpc.pump.runOnce.useMutation({ onSuccess: () => utils.pump.invalidate(), onError: () => setAsked(null) })
@@ -165,6 +166,7 @@ export function WaterPage() {
         cycles={cycles}
         timezone={cfg?.timezone}
         pumpRun={p?.on ? { since: p.since, remainingS: p.remainingS } : null}
+        pumpRuns={pumpRuns.data}
         sun={sunToday(runningToday(curves, weekday), cfg ?? {}, zone, now)}
       />
       {missed && <MissedRun preset={missed} busy={!!p?.on || asked !== null} onRun={() => runNow(missed.durationS)} />}
@@ -186,15 +188,23 @@ export function WaterPage() {
       <div className="flex flex-col gap-2.5">
         <h2 className={EYEBROW}>Recent runs</h2>
         <Card className="gap-0 p-0">
-          {(runs.data ?? []).length === 0 && <p className="px-5 py-3 text-[13px] text-fg-3">No scheduled runs yet.</p>}
-          {(runs.data ?? []).slice(0, 10).map((r) => {
-            const c = cycles.find(c => c.id === r.scheduleId)
+          {(pumpRuns.data ?? []).length === 0 && <p className="px-5 py-3 text-[13px] text-fg-3">No pump runs yet.</p>}
+          {(pumpRuns.data ?? []).slice(0, 10).map((r) => {
+            const c = r.scheduleId ? cycles.find(c => c.id === r.scheduleId) : undefined
+            const name = r.source === 'manual' ? 'Manual' : (c?.name ?? r.scheduleId ?? 'Pump')
+            const actual = fmtMinutes(Math.max(1, Math.round(r.durationS)))
+            const planned = r.scheduledDurationS ? fmtMinutes(r.scheduledDurationS) : (c ? fmtMinutes(c.spec.durationS) : null)
+            const length = r.source === 'scheduled' && planned && planned !== actual ? `${actual} (planned ${planned})` : actual
             return (
-              <div key={r.key} className="flex flex-wrap items-center gap-4 border-b border-line px-5 py-3 text-[13px] last:border-0">
+              <div key={r.id} className="flex flex-wrap items-center gap-4 border-b border-line px-5 py-3 text-[13px] last:border-0" data-testid={r.source === 'manual' ? 'manual-run' : 'scheduled-run'}>
                 <span className="size-[7px] rounded-full bg-pod-ok" />
-                <span className="min-w-[140px] flex-1">{c?.name ?? r.scheduleId}</span>
-                {c && <span className="font-mono text-[12px] text-fg-2">{fmtMinutes(c.spec.durationS)}</span>}
-                <span className="min-w-[120px] text-right font-mono text-[12px] text-fg-3">{fmtWhen(new Date(r.firedAt), now)}</span>
+                <span className="min-w-[140px] flex-1">
+                  {name}
+                  {r.endedAt ? '' : ' · running'}
+                  {r.fault ? ` · ${r.fault}` : ''}
+                </span>
+                <span className="font-mono text-[12px] text-fg-2">{length}</span>
+                <span className="min-w-[120px] text-right font-mono text-[12px] text-fg-3">{fmtWhen(new Date(r.startedAt), now)}</span>
               </div>
             )
           })}

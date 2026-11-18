@@ -1,5 +1,5 @@
 import type { SensorId } from '../hardware/contract'
-import type { AlertRow, Automation, AutomationRun, AnalysisPoint, AnalysisRow, AnalyzerStats, BackupRecord, Capture, CustomPlant, DeviceSettings, FlashSample, GrowCycle, GrowProtocolState, GrowStage, PlanRow, PlantProfile, Pod, PodCodePair, PodCodeRead, PodLabel, PodLabelCursor, PodLabelInput, PodLabelSource, PodLabelValue, SavedSchedule, Schedule, ScheduleRun, Store, SuggestionDismissal, TankAction, TankActionKind, TelemetryPoint } from './types'
+import type { AlertRow, Automation, AutomationRun, AnalysisPoint, AnalysisRow, AnalyzerStats, BackupRecord, Capture, CustomPlant, DeviceSettings, FlashSample, GrowCycle, GrowProtocolState, GrowStage, PlanRow, PlantProfile, Pod, PodCodePair, PodCodeRead, PodLabel, PodLabelCursor, PodLabelInput, PodLabelSource, PodLabelValue, SavedSchedule, Schedule, ScheduleRun, Store, SuggestionDismissal, TankAction, TankActionKind, TelemetryPoint, QualitySample, PumpRun, PumpSpec } from './types'
 import type { NotificationChannel, NotificationRule, NotificationRun } from '../notify/types'
 import type { ActivityToken, FeedItem, IosDevice } from '../notify/ios/types'
 import type { AutomationRule } from '../autopilot/types'
@@ -45,6 +45,10 @@ export class MemoryStore implements Store {
   private readonly codeReads = new Map<number, PodCodeRead>()
   private readonly tankRows: TankAction[] = []
   private nextTankId = 1
+  private qualityRows: QualitySample[] = []
+  private readonly pumpRunRows: PumpRun[] = []
+  private nextPumpRunId = 1
+  private openPumpRun: PumpRun | null = null
 
   constructor(podCount = 30) {
     const ts = new Date(0).toISOString()
@@ -242,7 +246,7 @@ export class MemoryStore implements Store {
     },
     range: (sensor: SensorId, fromTs: string, toTs: string, maxPoints = 500): TelemetryPoint[] => {
       const rows = this.points.filter(p => p.sensor === sensor && p.ts >= fromTs && p.ts <= toTs)
-      return downsample(rows, maxPoints)
+      return maxPoints < 0 ? rows : downsample(rows, maxPoints)
     },
     flush: (): void => {
       // nothing is held
@@ -260,6 +264,60 @@ export class MemoryStore implements Store {
       return before - this.points.length
     },
     oldestTs: (): string | null => this.points[0]?.ts ?? null,
+  }
+
+  sensorQuality = {
+    add: (samples: QualitySample[]): void => {
+      this.qualityRows.push(...samples)
+    },
+    range: (sensor: string, fromTs: string, toTs: string): QualitySample[] =>
+      this.qualityRows.filter(s => s.sensor === sensor && s.ts >= fromTs && s.ts <= toTs),
+    trustedShare: (sensor: string, nowTs: string, windowS: number) => trustedShareOf(this.qualityRows, sensor, nowTs, windowS),
+  }
+
+  pumpRuns = {
+    open: (startedAt: string, level: number | null, recent: ScheduleRun[]): PumpRun => {
+      const started = Date.parse(startedAt)
+      const hit = recent.find(r => Math.abs(Date.parse(r.firedAt) - started) <= 10_000 && !r.result.startsWith('refused'))
+      const spec = hit ? this.scheduleRows.get(hit.scheduleId) : null
+      const scheduledDurationS = spec?.kind === 'pump' ? (spec.spec as PumpSpec).durationS : null
+      const row: PumpRun = {
+        id: this.nextPumpRunId++,
+        startedAt,
+        endedAt: null,
+        durationS: 0,
+        source: hit ? 'scheduled' : 'manual',
+        scheduleId: hit?.scheduleId ?? null,
+        scheduledDurationS,
+        fault: null,
+        level,
+      }
+      this.openPumpRun = row
+      this.pumpRunRows.push(row)
+      return row
+    },
+    close: (endedAt: string, fault: string | null): PumpRun | null => {
+      const row = this.openPumpRun
+      if (!row) return null
+      row.endedAt = endedAt
+      row.durationS = Math.max(0, (Date.parse(endedAt) - Date.parse(row.startedAt)) / 1000)
+      row.fault = fault
+      this.openPumpRun = null
+      return row
+    },
+    list: (opts?: { from?: string, to?: string, limit?: number }): PumpRun[] => {
+      let rows = this.pumpRunRows.slice()
+      const from = opts?.from
+      const to = opts?.to
+      if (from) rows = rows.filter(r => r.startedAt >= from)
+      if (to) rows = rows.filter(r => r.startedAt <= to)
+      rows.sort((a, b) => b.startedAt.localeCompare(a.startedAt) || b.id - a.id)
+      const now = Date.now()
+      return rows.slice(0, opts?.limit ?? 50).map((r) => {
+        const durationS = r.endedAt ? r.durationS : Math.max(0, (now - Date.parse(r.startedAt)) / 1000)
+        return { ...r, durationS }
+      })
+    },
   }
 
   counters = {
@@ -641,4 +699,16 @@ export function downsample<T>(rows: T[], max: number): T[] {
 
 function clone<T>(v: T): T {
   return JSON.parse(JSON.stringify(v)) as T
+}
+
+function trustedShareOf(rows: QualitySample[], sensor: string, nowTs: string, windowS: number) {
+  const from = new Date(Date.parse(nowTs) - windowS * 1000).toISOString()
+  const samples = rows.filter(s => s.sensor === sensor && s.ts >= from && s.ts <= nowTs)
+  const trusted = samples.filter(s => s.quality === 'good').length
+  return {
+    trustedPct: samples.length ? Math.round((trusted / samples.length) * 1000) / 10 : null,
+    samples: samples.length,
+    trusted,
+    hours: windowS / 3600,
+  }
 }

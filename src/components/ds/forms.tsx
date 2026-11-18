@@ -52,7 +52,7 @@ export interface SegmentOption<T extends string> {
   disabled?: boolean
 }
 
-export function SegmentedControl<T extends string>({ options, value, onChange, full, size = 'md', className, ariaLabel }: {
+export function SegmentedControl<T extends string>({ options, value, onChange, full, size = 'md', className, ariaLabel, disabled }: {
   options: ReadonlyArray<SegmentOption<T> | T>
   value: T
   onChange?: (v: T) => void
@@ -60,6 +60,7 @@ export function SegmentedControl<T extends string>({ options, value, onChange, f
   size?: 'sm' | 'md'
   className?: string
   ariaLabel?: string
+  disabled?: boolean
 }) {
   const opts = options.map(o => (typeof o === 'string' ? { value: o, label: o } : o)) as SegmentOption<T>[]
   const fs = size === 'sm' ? 'text-xs' : full ? 'text-sm' : 'text-[13px]'
@@ -83,7 +84,7 @@ export function SegmentedControl<T extends string>({ options, value, onChange, f
             type="button"
             role="tab"
             aria-selected={on}
-            disabled={o.disabled}
+            disabled={disabled || o.disabled}
             onClick={() => onChange?.(o.value)}
             className={cn(
               'flex min-w-0 cursor-pointer items-center justify-center gap-1.5 whitespace-nowrap border-0 transition-colors disabled:cursor-default disabled:opacity-45',
