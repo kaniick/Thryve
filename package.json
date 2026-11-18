@@ -1,6 +1,6 @@
 {
   "name": "@thryve/core",
-  "version": "2.2.1",
+  "version": "2.2.2",
   "private": true,
   "type": "module",
   "description": "Thryve core \u2014 local, cloud-free control for Gardyn hydroponic towers: Hono + tRPC + MCP server, React web UI, and the Rust hardware daemon (hal/). Fork of seedypod.",
