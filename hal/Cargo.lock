@@ -268,7 +268,7 @@ dependencies = [
 
 [[package]]
 name = "hal-core"
-version = "2.2.0"
+version = "2.2.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -278,7 +278,7 @@ dependencies = [
 
 [[package]]
 name = "hal-drivers"
-version = "2.2.0"
+version = "2.2.1"
 dependencies = [
  "hal-core",
  "rppal",
@@ -288,14 +288,14 @@ dependencies = [
 
 [[package]]
 name = "hal-sim"
-version = "2.2.0"
+version = "2.2.1"
 dependencies = [
  "hal-core",
 ]
 
 [[package]]
 name = "hald"
-version = "2.2.0"
+version = "2.2.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -558,7 +558,7 @@ checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
 
 [[package]]
 name = "podvision"
-version = "2.2.0"
+version = "2.2.1"
 dependencies = [
  "anyhow",
  "base64",
