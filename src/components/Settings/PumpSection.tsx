@@ -167,7 +167,7 @@ function DryRunGuard() {
               disabled={set.isPending || !hasMonitor}
               onChange={v => set.mutate({ pumpDryCurrentA: v })}
             />
-            {sixty != null && hasMonitor && (
+            {sixty != null && hasMonitor && wet != null && (
               <Button
                 size="sm"
                 variant="ghost"
