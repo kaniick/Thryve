@@ -3,6 +3,8 @@ type: "Guide"
 title: "MCP"
 description: "The unit's Model Context Protocol endpoint, tools, and optional access key."
 status: "stable"
+generated: {"by": "kaniick", "at": "2026-11-17T19:45:00-08:00"}
+sources: [{"resource": "/adr/0011-mcp-and-mhs.md", "title": "ADR 0011: MCP tool design and Model Hardware Standard alignment"}, {"resource": "/adr/0012-deployment-and-trust.md", "title": "ADR 0012: Deployment and trust"}]
 ---
 
 # MCP
