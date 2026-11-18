@@ -27,6 +27,7 @@ import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as StatusRouteImport } from './routes/status'
 import { Route as WaterRouteImport } from './routes/water'
 import { Route as WifiRouteImport } from './routes/wifi'
+import { Route as SensorsIndexRouteImport } from './routes/sensors.index'
 import { Route as SensorsIdRouteImport } from './routes/sensors.$id'
 
 const IndexRoute = IndexRouteImport.update({
@@ -119,6 +120,11 @@ const WifiRoute = WifiRouteImport.update({
   path: '/wifi',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SensorsIndexRoute = SensorsIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => SensorsRoute,
+} as any)
 const SensorsIdRoute = SensorsIdRouteImport.update({
   id: '/$id',
   path: '/$id',
@@ -145,6 +151,7 @@ export interface FileRoutesByFullPath {
   '/water': typeof WaterRoute
   '/wifi': typeof WifiRoute
   '/sensors/$id': typeof SensorsIdRoute
+  '/sensors/': typeof SensorsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -160,12 +167,12 @@ export interface FileRoutesByTo {
   '/notifications': typeof NotificationsRoute
   '/plan': typeof PlanRoute
   '/schedule': typeof ScheduleRoute
-  '/sensors': typeof SensorsRouteWithChildren
   '/settings': typeof SettingsRoute
   '/status': typeof StatusRoute
   '/water': typeof WaterRoute
   '/wifi': typeof WifiRoute
   '/sensors/$id': typeof SensorsIdRoute
+  '/sensors': typeof SensorsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -188,6 +195,7 @@ export interface FileRoutesById {
   '/water': typeof WaterRoute
   '/wifi': typeof WifiRoute
   '/sensors/$id': typeof SensorsIdRoute
+  '/sensors/': typeof SensorsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -211,6 +219,7 @@ export interface FileRouteTypes {
     | '/water'
     | '/wifi'
     | '/sensors/$id'
+    | '/sensors/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -226,12 +235,12 @@ export interface FileRouteTypes {
     | '/notifications'
     | '/plan'
     | '/schedule'
-    | '/sensors'
     | '/settings'
     | '/status'
     | '/water'
     | '/wifi'
     | '/sensors/$id'
+    | '/sensors'
   id:
     | '__root__'
     | '/'
@@ -253,6 +262,7 @@ export interface FileRouteTypes {
     | '/water'
     | '/wifi'
     | '/sensors/$id'
+    | '/sensors/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -404,6 +414,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof WifiRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/sensors/': {
+      id: '/sensors/'
+      path: '/'
+      fullPath: '/sensors/'
+      preLoaderRoute: typeof SensorsIndexRouteImport
+      parentRoute: typeof SensorsRoute
+    }
     '/sensors/$id': {
       id: '/sensors/$id'
       path: '/$id'
@@ -416,10 +433,12 @@ declare module '@tanstack/react-router' {
 
 interface SensorsRouteChildren {
   SensorsIdRoute: typeof SensorsIdRoute
+  SensorsIndexRoute: typeof SensorsIndexRoute
 }
 
 const SensorsRouteChildren: SensorsRouteChildren = {
   SensorsIdRoute: SensorsIdRoute,
+  SensorsIndexRoute: SensorsIndexRoute,
 }
 
 const SensorsRouteWithChildren =
