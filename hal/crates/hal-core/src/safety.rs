@@ -16,6 +16,9 @@
 //!    of N samples, supplied by the caller) exceeds `water_low_cm`. A running
 //!    pump stops when trusted readings stay low for [`LEVEL_CONFIRM`], or when
 //!    no trusted reading comes for [`DRY_CONFIRM`] (the ranger is gone).
+//!    When the last trusted reading is still far above the cutoff, that
+//!    absence uses [`DEFAULT_DRY_LEVEL_ABSENT`] (30 s) instead, so a dropped
+//!    ping or a missing telemetry round does not stop the pump.
 //!    It also stops when its current says it is pulling air: past a spin-up
 //!    grace of `dry_grace_ms`, at least [`DRY_MIN_READS`] reads of the pump
 //!    monitor in a row, covering `dry_after_ms`, came back below
@@ -58,6 +61,10 @@ pub struct PumpLimits {
     /// How long after a start the current isn't judged, while the pump spins up and primes.
     /// The soft-start ramp is added on top.
     pub dry_grace_ms: u64,
+    /// How long a running pump may go without a trusted reading before a
+    /// dry-run, when the last trusted distance is still far above the cutoff.
+    /// A lost or suspect ranger with no such reading still uses [`DRY_CONFIRM`].
+    pub dry_level_absent_ms: u64,
     /// Soft start: how long a start takes to ramp from [`RAMP_FROM`] of its level to
     /// all of it, so the motor's inrush doesn't brown the board out. 0 starts at once.
     pub soft_start_ms: u64,
@@ -84,6 +91,7 @@ impl Default for PumpLimits {
             dry_current_a: None,
             dry_after_ms: 300,
             dry_grace_ms: 1000,
+            dry_level_absent_ms: DEFAULT_DRY_LEVEL_ABSENT.as_millis() as u64,
             soft_start_ms: DEFAULT_SOFT_START_MS,
             dry_guard: DryGuard::Both,
             brownout_v: Some(10.8),
@@ -139,7 +147,7 @@ pub fn resolve_dry_guard(
         (DryGuard::Level, _) => (DryGuard::Level, "tank level, as hal.toml sets".to_owned(), false),
         (DryGuard::Current, None) => (
             DryGuard::Current,
-            "pump current only, as hal.toml sets; a low tank doesn't refuse a start".to_owned(),
+            "pump current only; a trusted low tank still refuses a start".to_owned(),
             false,
         ),
         (DryGuard::Both, None) => (DryGuard::Both, "tank level + pump current".to_owned(), false),
@@ -233,6 +241,17 @@ pub const LEVEL_CONFIRM: Duration = Duration::from_millis(500);
 /// dry-run on a full tank.
 pub const DRY_CONFIRM: Duration = Duration::from_secs(3);
 
+/// When the last trusted tank reading is still far above the cutoff, wait this
+/// long without a trusted reading before treating the ranger as gone. Long
+/// enough to cover a dropped telemetry round (the unit has had a 22 s gap on
+/// a full tank) without stopping the pump or raising `water_low`.
+pub const DEFAULT_DRY_LEVEL_ABSENT: Duration = Duration::from_secs(30);
+
+/// A last trusted distance this far below `water_low_cm` means the tank is
+/// still safely wet: missing or suspect readings must not refuse a start,
+/// trip a dry-run, or raise `water_low` until the ranger-gone window elapses.
+pub const TANK_SAFE_MARGIN_CM: f64 = 2.0;
+
 /// The fewest low current reads in a row that trip the current guard.
 pub const DRY_MIN_READS: u32 = 3;
 
@@ -291,6 +310,9 @@ pub struct PumpGuard {
     uv_since: Option<Instant>,
     /// How many reads of the Pi's flag in a row have reported under-voltage.
     uv_reads: u32,
+    /// Last trusted (non-suspect) water distance, used so a flaky ranger on a
+    /// still-wet tank does not fail safe as if the sensor were gone.
+    last_trusted_cm: Option<f64>,
 }
 
 impl PumpGuard {
@@ -312,6 +334,7 @@ impl PumpGuard {
             sag_low: f64::INFINITY,
             uv_since: None,
             uv_reads: 0,
+            last_trusted_cm: None,
         }
     }
 
@@ -323,6 +346,47 @@ impl PumpGuard {
     /// A run under way is judged by the new one from its next read.
     pub fn set_dry_grace_ms(&mut self, ms: u64) {
         self.limits.dry_grace_ms = ms;
+    }
+
+    pub fn set_dry_level_absent_ms(&mut self, ms: u64) {
+        self.limits.dry_level_absent_ms = ms;
+    }
+
+    pub fn set_water_low_cm(&mut self, cm: Option<f64>) {
+        self.limits.water_low_cm = cm;
+    }
+
+    pub fn set_dry_current_a(&mut self, a: Option<f64>) {
+        self.limits.dry_current_a = a;
+    }
+
+    pub fn set_dry_guard(&mut self, mode: DryGuard) {
+        self.limits.dry_guard = mode;
+    }
+
+    /// Note a trusted distance from the environment.
+    fn note_trusted(&mut self, env: Env) {
+        if let Some(d) = env.water_distance_cm.filter(|_| !env.water_suspect) {
+            self.last_trusted_cm = Some(d);
+        }
+    }
+
+    /// The last trusted reading is still clearly above the cutoff (a shorter
+    /// distance than `water_low_cm` by a margin).
+    fn last_trusted_is_safe(&self) -> bool {
+        match (self.limits.water_low_cm, self.last_trusted_cm) {
+            (Some(low), Some(d)) => d + TANK_SAFE_MARGIN_CM < low,
+            _ => false,
+        }
+    }
+
+    /// How long a running pump may go without a trusted reading before a dry-run.
+    fn ranger_gone_after(&self) -> Duration {
+        if self.last_trusted_is_safe() {
+            Duration::from_millis(self.limits.dry_level_absent_ms.max(1))
+        } else {
+            DRY_CONFIRM
+        }
     }
 
     fn level_on(&self) -> bool {
@@ -396,7 +460,8 @@ impl PumpGuard {
         if let Some(f) = &self.fault {
             return Err(Refusal::Latched(f.clone()));
         }
-        if self.level_on() && self.is_dry(env) {
+        self.note_trusted(env);
+        if self.tank_blocks_start(env) {
             return Err(Refusal::WaterLow);
         }
         if self.is_hot(env) {
@@ -473,6 +538,7 @@ impl PumpGuard {
         let Some(low) = self.limits.water_low_cm else {
             return false;
         };
+        self.note_trusted(env);
         match env.water_distance_cm.filter(|_| !env.water_suspect) {
             Some(d) if d < low => {
                 self.dry_since = None;
@@ -487,8 +553,21 @@ impl PumpGuard {
             None => {
                 self.low_since = None;
                 let since = *self.dry_since.get_or_insert(now);
-                now.duration_since(since) >= DRY_CONFIRM
+                now.duration_since(since) >= self.ranger_gone_after()
             }
+        }
+    }
+
+    /// A start is refused on a trusted reading at or past the cutoff, in every
+    /// guard mode. Missing or suspect readings refuse only when the last trusted
+    /// distance is not still safely above the cutoff.
+    fn tank_blocks_start(&self, env: Env) -> bool {
+        let Some(low) = self.limits.water_low_cm else {
+            return false;
+        };
+        match env.water_distance_cm.filter(|_| !env.water_suspect) {
+            Some(d) => d >= low,
+            None => !self.last_trusted_is_safe(),
         }
     }
 
@@ -642,6 +721,7 @@ impl PumpGuard {
         Decision::Stop
     }
 
+    #[allow(dead_code)]
     fn is_dry(&self, env: Env) -> bool {
         match (self.limits.water_low_cm, env.water_distance_cm) {
             (Some(low), Some(d)) => d >= low,
@@ -815,8 +895,12 @@ mod tests {
         assert_eq!(g.tick(lost, t0 + Duration::from_secs(10)), None);
         assert_eq!(g.tick(lost, t0 + Duration::from_secs(12)), None);
         assert_eq!(g.fault(), None);
-        // Still missing past the confirm time: the sensor is gone, so fail safe.
-        assert_eq!(g.tick(lost, t0 + Duration::from_secs(13)), Some(Decision::Stop));
+        // Last trusted is still a wet tank: a few seconds of silence is not a dry-run.
+        assert_eq!(g.tick(lost, t0 + Duration::from_secs(13)), None);
+        assert_eq!(g.fault(), None);
+        // Only after the longer ranger-gone window, starting at the 10 s loss.
+        assert_eq!(g.tick(lost, t0 + Duration::from_secs(39)), None);
+        assert_eq!(g.tick(lost, t0 + Duration::from_secs(40)), Some(Decision::Stop));
         assert_eq!(g.fault(), Some("dry-run"));
     }
 
@@ -878,8 +962,12 @@ mod tests {
         // A suspect good one doesn't clear the count either.
         assert_eq!(g.tick(suspect(7.0), s(3)), None);
         assert_eq!(g.fault(), None);
-        // No trusted reading for DRY_CONFIRM: the ranger is as good as gone.
-        assert_eq!(g.tick(suspect(7.0), s(4)), Some(Decision::Stop));
+        // Last trusted is still a wet tank: DRY_CONFIRM is not enough to trip.
+        assert_eq!(g.tick(suspect(7.0), s(4)), None);
+        assert_eq!(g.fault(), None);
+        // Only after the longer ranger-gone window.
+        assert_eq!(g.tick(suspect(7.0), s(30)), None);
+        assert_eq!(g.tick(suspect(7.0), s(31)), Some(Decision::Stop));
         assert_eq!(g.fault(), Some("dry-run"));
         // A trusted good reading does clear it.
         g.acknowledge();
@@ -889,6 +977,73 @@ mod tests {
         assert_eq!(g.tick(suspect(40.0), s(14)), None);
         assert_eq!(g.tick(at(Some(17.0)), s(15)), None);
         assert_eq!(g.fault(), None);
+    }
+
+    /// The unit's full-tank telemetry, 2026-11-17 UTC: good 8.04–8.11 cm,
+    /// intermittent "suspect" rounds at the same surface, a 22 s missing
+    /// round, and a 3.67 cm short stray. A running pump must not dry-run, and
+    /// a start mid-sequence must not be refused.
+    #[test]
+    fn a_full_tank_stream_with_drops_a_gap_and_a_short_stray_does_not_dry_run() {
+        let mut g = guard();
+        let t0 = Instant::now();
+        let at_ts = |secs: f64| t0 + Duration::from_secs_f64(secs);
+        // Seconds from 04:13:16, matching the published stream.
+        let rounds: &[(f64, Option<f64>, bool)] = &[
+            (0.0, Some(8.07), false),
+            (10.0, Some(8.09), false),
+            (20.0, Some(8.05), false),
+            (30.0, Some(8.11), false),
+            (40.0, Some(8.04), false),
+            (50.0, Some(8.10), false),
+            (60.0, Some(8.08), false),
+            (70.0, Some(8.07), false),
+            // Thin rounds at 8.08/8.06 were published "suspect"; the median
+            // now trusts them (same surface as the last good 8.04–8.11 cm).
+            (80.0, Some(8.08), false),  // 04:14:36
+            (91.0, Some(8.06), false),  // 04:14:47
+            (101.0, None, false),       // 04:14:57 missing round (22 s gap)
+            (113.0, Some(8.06), false), // 04:15:09
+            (123.0, Some(8.07), false),
+            (133.0, Some(8.09), false),
+            (143.0, Some(8.05), false),
+            (153.0, Some(8.10), false),
+            (167.0, Some(8.08), false), // 04:16:03
+            (178.0, Some(3.67), true),  // 04:16:14 short stray: not trusted
+            (188.0, Some(8.07), false),
+        ];
+        g.request(&on(None, Some(900)), at(Some(8.07)), t0).unwrap();
+        for &(secs, d, suspect) in rounds {
+            let env = Env {
+                water_suspect: suspect || d.is_none(),
+                water_fresh: true,
+                ..at(d)
+            };
+            assert_eq!(g.tick(env, at_ts(secs)), None, "tripped at +{secs} s, d={d:?}");
+            assert_eq!(g.fault(), None, "fault at +{secs} s");
+        }
+        assert!(g.is_running(at_ts(188.0)));
+
+        // A start asked in the 22 s gap, on a thin 8.06, or on the 3.67 stray,
+        // is accepted: the last trusted reading is still a full tank.
+        for &(secs, d, suspect) in rounds {
+            if !matches!(secs, 91.0 | 101.0 | 113.0 | 178.0) {
+                continue;
+            }
+            let mut g2 = guard();
+            let seed = at(Some(8.07));
+            g2.request(&on(None, Some(5)), seed, t0).unwrap();
+            g2.request(&off(), seed, at_ts(1.0)).unwrap();
+            let env = Env {
+                water_suspect: suspect || d.is_none(),
+                water_fresh: true,
+                ..at(d)
+            };
+            assert!(
+                g2.request(&on(None, Some(5)), env, at_ts(secs)).is_ok(),
+                "start refused at +{secs} s, d={d:?}"
+            );
+        }
     }
 
     #[test]
@@ -967,8 +1122,13 @@ mod tests {
         let mut g = mode(DryGuard::Current);
         let t0 = Instant::now();
         let ms = |n| t0 + Duration::from_millis(n);
-        // A low or silent tank neither refuses a start nor stops a run.
-        g.request(&on(None, None), at(Some(17.0)), t0).unwrap();
+        // A trusted low tank refuses a start in every mode. A silent ranger
+        // after a wet reading does not, and a low or silent tank does not stop a run.
+        assert_eq!(
+            g.request(&on(None, None), at(Some(17.0)), t0),
+            Err(Refusal::WaterLow)
+        );
+        g.request(&on(None, None), wet(), t0).unwrap();
         g.request(&off(), wet(), ms(10)).unwrap();
         g.request(&on(None, None), at(None), ms(20)).unwrap();
         for n in 1..60 {
@@ -1064,7 +1224,7 @@ mod tests {
             (DryGuard::Current, false),
             "water_low_cm doesn't matter"
         );
-        assert!(c.why.contains("a low tank doesn't refuse a start"));
+        assert!(c.why.contains("a trusted low tank still refuses a start"));
         let l = r(DryGuard::Level, Some(1.2), true, true);
         assert_eq!((l.mode, l.warn), (DryGuard::Level, false));
         for (asked, cutoff, monitor, needs) in [

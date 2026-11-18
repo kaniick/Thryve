@@ -506,6 +506,8 @@ impl From<&Limits> for PumpLimits {
             dry_current_a: l.pump_dry_current_a,
             dry_after_ms: l.dry_after_ms(),
             dry_grace_ms: l.dry_grace_ms(),
+            // 30 s: covers a dropped telemetry round on a still-wet tank.
+            dry_level_absent_ms: 30_000,
             soft_start_ms: l.pump_soft_start_ms,
             // What hal.toml asks for; the engine resolves what the unit can run.
             dry_guard: l.pump_dry_guard,

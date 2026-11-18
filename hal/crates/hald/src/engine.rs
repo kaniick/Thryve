@@ -16,7 +16,7 @@ use hal_core::device::{now_epoch_s, rfc3339_from_epoch};
 use hal_core::registry::Registry;
 use hal_core::safety::{
     describe_brownout, is_dry_run, resolve_dry_guard, Decision, DoseGuard, DoseLimits, Env, PumpGuard,
-    PumpLimits, DRY_RUN,
+    PumpLimits, DRY_RUN, TANK_SAFE_MARGIN_CM,
 };
 use hal_core::{
     topics, ActuatorCommand, ActuatorId, ActuatorState, Alert, AlertKind, BinarySensor, ButtonEvent,
@@ -230,12 +230,19 @@ const WATER_RAISE_AT: usize = 3;
 /// echoes that alternate with no reading at all, and each raise is an alert row
 /// in core. So a reading at the limit raises at once, a lost reading only when
 /// lost ones pile up, and it clears after a whole window of good readings.
+/// When the last trusted reading is still far above the cutoff, a dropped or
+/// suspect round is not low water: only a sustained silence (a few 10 s
+/// telemetry rounds, ~30 s) is "ranger gone".
 #[derive(Debug, Default)]
 struct WaterAlert {
-    /// Newest last; `true` for a round that read low or read nothing.
+    /// Newest last; `true` for a round that read low or that the ranger is gone.
     rounds: VecDeque<bool>,
     active: bool,
     detail: String,
+    /// Last trusted distance still clearly above the cutoff, if any.
+    last_trusted_cm: Option<f64>,
+    /// Consecutive missing rounds since that last trusted reading.
+    misses: usize,
 }
 
 impl WaterAlert {
@@ -244,25 +251,41 @@ impl WaterAlert {
         self.rounds.len() == WATER_WINDOW && self.rounds.iter().all(|b| !*b)
     }
 
+    fn last_trusted_is_safe(&self, low: f64) -> bool {
+        self.last_trusted_cm
+            .is_some_and(|d| d + TANK_SAFE_MARGIN_CM < low)
+    }
+
     fn observe(&mut self, distance: Option<f64>, low: f64) {
         let is_low = distance.is_some_and(|d| d >= low);
-        let bad = is_low || distance.is_none();
-        // With no history the first round decides: nothing says a silent ranger is a blip.
-        if self.rounds.is_empty() {
-            self.rounds.extend([bad; WATER_RAISE_AT]);
+        let good = distance.is_some_and(|d| d < low);
+        if good {
+            self.last_trusted_cm = distance;
+            self.misses = 0;
+        } else if distance.is_none() {
+            self.misses = self.misses.saturating_add(1);
+        } else {
+            self.misses = 0;
+        }
+        // A missing round on a still-wet tank is not "unavailable" until the
+        // ranger-gone window of consecutive misses has elapsed.
+        let gone = distance.is_none() && (!self.last_trusted_is_safe(low) || self.misses >= WATER_RAISE_AT);
+        // The window tracks trusted-good readings only: a dropped round never
+        // counts as the water being back, even when it shouldn't raise either.
+        if self.rounds.is_empty() && !good {
+            self.rounds.extend([true; WATER_RAISE_AT]);
         }
         if self.rounds.len() == WATER_WINDOW {
             self.rounds.pop_front();
         }
-        self.rounds.push_back(bad);
-        let bad_rounds = self.rounds.iter().filter(|b| **b).count();
-        if is_low || bad_rounds >= WATER_RAISE_AT {
+        self.rounds.push_back(!good);
+        if is_low || gone {
             self.active = true;
-        } else if bad_rounds == 0 {
+        } else if self.all_good() {
             self.active = false;
             self.detail.clear();
         }
-        if self.active && bad {
+        if self.active && (is_low || distance.is_none()) {
             self.detail = match distance {
                 Some(d) => format!("water distance {d:.1} cm ≥ {low:.1} cm"),
                 None => "water level sensor unavailable".to_owned(),
@@ -2492,9 +2515,44 @@ mod tests {
             Some(7.0),
         ];
         assert!(!water_rounds(&mut a, &blips).contains(&true));
+        // Two missed rounds on a wet tank (~20 s) are not enough; three (~30 s) are.
         water_rounds(&mut a, &[None, None]);
+        assert!(!a.active);
+        water_rounds(&mut a, &[None]);
         assert!(a.active);
         assert_eq!(a.detail, "water level sensor unavailable");
+    }
+
+    #[test]
+    fn a_full_tank_stream_with_drops_a_gap_and_a_short_stray_does_not_raise() {
+        let mut a = WaterAlert::default();
+        // Trusted distances after the median fix; None is the 22 s gap or the
+        // rejected 3.67 cm short stray. Cutoff 16 cm, surface ~8 cm.
+        let rounds: &[Option<f64>] = &[
+            Some(8.07),
+            Some(8.09),
+            Some(8.05),
+            Some(8.11),
+            Some(8.04),
+            Some(8.10),
+            Some(8.08),
+            Some(8.07),
+            Some(8.08), // 04:14:36 thin, now trusted
+            Some(8.06), // 04:14:47
+            None,       // 04:14:57 missing round
+            Some(8.06), // 04:15:09
+            Some(8.07),
+            Some(8.09),
+            Some(8.05),
+            Some(8.10),
+            Some(8.08), // 04:16:03
+            None,       // 04:16:14 short stray rejected
+            Some(8.07),
+        ];
+        let raised = water_rounds(&mut a, rounds);
+        assert!(!raised.contains(&true), "raised {raised:?}");
+        assert!(!a.active);
+        assert_eq!(a.detail, "");
     }
 
     #[test]
