@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DeviceEntry, DeviceInventory, DeviceKindInfo } from '@/src/hardware/contract'
 import { formatReading, hexAddr } from '@/src/lib/sensorMeta'
 import { CalibrationWizard } from '../CalibrationWizard'
-import { ridgeTicks, SensorsPage, sparkPoints } from '../SensorsPage'
+import { fittedAlternative, notFittedLine, ridgeTicks, SensorsPage, sparkPoints } from '../SensorsPage'
 import type * as Chart3DModule from '@/src/components/charts/viz3d/Chart3D'
 
 // The pages only need the hooks' shape; each test sets what the queries return and
@@ -200,6 +200,26 @@ describe('SensorsPage', () => {
     fireEvent.click(screen.getByText('Calibrate'))
     expect(screen.getByRole('dialog', { name: 'Calibrate pH probe (Atlas EZO)' })).toBeTruthy()
     expect(screen.getByText('Step 1 of 2')).toBeTruthy()
+  })
+
+  it('mutes an unfitted alternative when another probe already fills its role', () => {
+    const dht20: DeviceEntry = { kind: 'dht20', label: 'Air temperature & humidity (DHT20)', addr: 0x38, ids: ['air_temp', 'humidity'], source: 'config', status: 'ready', detail: '' }
+    const am2320: DeviceEntry = { kind: 'am2320', label: 'Air temperature & humidity (AM2320)', addr: 0x5C, ids: ['air_temp', 'humidity'], source: 'config', status: 'absent', detail: 'probe am2320 at Some(92): bus error' }
+    q.devices.data = { sensors: [dht20, am2320], addable: [] }
+    q.latest.data = { air_temp: { value: 23, unit: '°C' }, humidity: { value: 30, unit: '%' } }
+    expect(fittedAlternative(am2320, [dht20, am2320])?.kind).toBe('dht20')
+    expect(notFittedLine(dht20)).toBe('not fitted (DHT20 in use)')
+    render(<SensorsPage />)
+    // The role is filled: not a red "not found", and the AM2320 must not wear the DHT20's reading.
+    expect(screen.getByText('2 devices · 2 readings · all ready')).toBeTruthy()
+    expect(screen.getByTestId('other-probes').textContent).toContain('Other probes')
+    expect(screen.getByText('not fitted (DHT20 in use)')).toBeTruthy()
+    expect(screen.queryByText('not found')).toBeNull()
+    expect(screen.queryByText('probe am2320 at Some(92): bus error')).toBeNull()
+    const amRow = screen.getByText('Air temperature & humidity (AM2320)').parentElement?.parentElement
+    expect(amRow?.textContent).not.toContain('23°C')
+    expect(amRow?.textContent).not.toContain('30%')
+    expect(screen.getByText('23°C · 30%')).toBeTruthy()
   })
 })
 

@@ -30,7 +30,22 @@ const TITLE: Partial<Record<SensorId, string>> = {
 }
 const titleOf = (id: SensorId) => TITLE[id] ?? SENSOR_META[id].label
 /** The part name from a device kind: `dyp_a01` → `DYP-A01`. */
-const partOf = (kind: string) => kind.toUpperCase().replace(/_/g, '-')
+export const partOf = (kind: string) => kind.toUpperCase().replace(/_/g, '-')
+
+/** Another ready device already reports every quantity this absent probe would. */
+export function fittedAlternative(device: DeviceEntry, all: DeviceEntry[]): DeviceEntry | undefined {
+  if (device.status === 'ready' || device.ids.length === 0) return undefined
+  return all.find(d =>
+    d !== device
+    && d.status === 'ready'
+    && device.ids.every(id => d.ids.includes(id))
+    && d.ids.every(id => device.ids.includes(id)),
+  )
+}
+
+export function notFittedLine(alt: DeviceEntry): string {
+  return `not fitted (${partOf(alt.kind)} in use)`
+}
 const ORDER = Object.keys(SENSOR_META) as SensorId[]
 const round = (v: number) => Math.round(v * 10) / 10
 const LABEL = 'font-mono text-[11px] font-medium uppercase tracking-[0.1em] text-fg-3'
@@ -51,7 +66,10 @@ export function SensorsPage() {
   // Every quantity a working sensor reports, in contract order, as a tile.
   const live = ORDER.filter(id => sensors.some(d => d.status === 'ready' && d.ids.includes(id)))
   const sourceOf = (id: SensorId) => sensors.find(d => d.status === 'ready' && d.ids.includes(id))
-  const absent = sensors.filter(d => d.status === 'absent').length
+  const other = sensors.filter(d => fittedAlternative(d, sensors))
+  const main = sensors.filter(d => !fittedAlternative(d, sensors))
+  // An unfitted alternative is not a missing sensor: the role is already filled.
+  const absent = main.filter(d => d.status === 'absent').length
 
   return (
     <div className="mx-auto flex max-w-[1100px] flex-col gap-6">
@@ -89,7 +107,7 @@ export function SensorsPage() {
           ? <div className="rounded-[14px] border border-dashed border-line-2 px-5 py-4 text-[13px] text-fg-2">The hardware daemon hasn&apos;t reported its sensors yet.</div>
           : (
               <div className="flex flex-col overflow-hidden rounded-[14px] border border-line bg-surface">
-                {sensors.map(d => (
+                {main.map(d => (
                   <DeviceRow
                     key={`${d.kind}-${d.addr ?? 'gpio'}`}
                     device={d}
@@ -98,6 +116,24 @@ export function SensorsPage() {
                     onRemove={() => setRemoving(d)}
                   />
                 ))}
+                {other.length > 0 && (
+                  <div data-testid="other-probes">
+                    <div className={`${LABEL} border-t border-line px-5 pt-3`}>Other probes</div>
+                    {other.map((d) => {
+                      const alt = fittedAlternative(d, sensors)
+                      return (
+                        <DeviceRow
+                          key={`${d.kind}-${d.addr ?? 'gpio'}`}
+                          device={d}
+                          latest={latest.data ?? {}}
+                          fittedBy={alt}
+                          onCalibrate={kindOf(d)?.calibration.length ? () => setCalibrating(d) : undefined}
+                          onRemove={() => setRemoving(d)}
+                        />
+                      )
+                    })}
+                  </div>
+                )}
               </div>
             )}
         <p className="text-xs leading-normal text-fg-3 text-pretty">Built-in sensors come from the unit&apos;s hal.toml. Probes you add go live straight away and survive restarts. Wire the probe first: it has to answer on the I²C bus.</p>
@@ -194,22 +230,26 @@ function SensorTile({ sensor, part, latest, hours, spark = true }: { sensor: Sen
   )
 }
 
-function DeviceRow({ device: d, latest, onCalibrate, onRemove }: {
+function DeviceRow({ device: d, latest, fittedBy, onCalibrate, onRemove }: {
   device: DeviceEntry
   latest: Partial<Record<SensorId, Reading>>
+  /** A ready probe already filling this one's role; this row is an unfitted alternative. */
+  fittedBy?: DeviceEntry
   onCalibrate?: () => void
   onRemove: () => void
 }) {
   const ready = d.status === 'ready'
+  const muted = !!fittedBy
+  const status = muted && fittedBy ? notFittedLine(fittedBy) : ready ? 'ready' : 'not found'
   return (
-    <div className="flex flex-wrap items-center gap-4 border-b border-grid px-5 py-3.5 last:border-b-0">
+    <div className={cn('flex flex-wrap items-center gap-4 border-b border-grid px-5 py-3.5 last:border-b-0', muted && 'text-fg-3')}>
       <Cpu size={16} className="shrink-0 text-fg-3" />
       <div className="flex min-w-[200px] flex-1 flex-col gap-0.5">
-        <span className="text-sm">{d.label}</span>
+        <span className={cn('text-sm', muted ? 'text-fg-3' : undefined)}>{d.label}</span>
         <span className="font-mono text-[11px] text-fg-3">{`${d.kind}${d.addr !== null ? ` · I²C ${hexAddr(d.addr)}` : ''}`}</span>
-        {!ready && d.detail && <span className="text-xs text-fg-2">{d.detail}</span>}
+        {!ready && !muted && d.detail && <span className="text-xs text-fg-2">{d.detail}</span>}
       </div>
-      {d.ids.length > 0 && (
+      {ready && d.ids.length > 0 && (
         <span className="flex min-w-[200px] items-baseline gap-2 font-mono text-xs text-fg-2">
           {[...d.ids].sort((a, b) => ORDER.indexOf(a) - ORDER.indexOf(b)).map(id => formatReading(latest[id])).join(' · ')}
           <SensorAge timestamp={latest[d.ids[0] as SensorId]?.ts} />
@@ -222,9 +262,9 @@ function DeviceRow({ device: d, latest, onCalibrate, onRemove }: {
         </span>
       )}
       <span className="rounded-[4px] border border-line px-1.5 py-px font-mono text-[10px] text-fg-3">{d.source === 'user' ? 'added' : 'built-in'}</span>
-      <span className={cn('flex items-center gap-1.5 text-xs', ready ? 'text-pod-ok' : 'text-pod-attention')}>
-        <span className={cn('size-1.5 rounded-full', ready ? 'bg-pod-ok' : 'bg-pod-attention')} />
-        {ready ? 'ready' : 'not found'}
+      <span className={cn('flex items-center gap-1.5 text-xs', muted ? 'text-fg-3' : ready ? 'text-pod-ok' : 'text-pod-attention')}>
+        <span className={cn('size-1.5 rounded-full', muted ? 'bg-fg-3' : ready ? 'bg-pod-ok' : 'bg-pod-attention')} />
+        {status}
       </span>
     </div>
   )
