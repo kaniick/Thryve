@@ -10,6 +10,33 @@
   v2.2.1 sign-in screen and session cookie are removed. Analysis ingest and
   `/api/models` tokens are unchanged. `scripts/thryve-clear-api-key` still
   clears the key over loopback (PR #30).
+- Settings → Pump: choose the dry-run guard (tank level, pump current, or
+  both; there is no off), set the tank and current cutoffs, and use 60% of
+  the last wet run. Values go over MQTT, are clamped to `hal.toml` bounds,
+  persist in `state.json`, and win at boot if they are still in bounds.
+  Narrowing a bound reclamps. A trusted low tank still refuses a start in
+  every mode. `current` or `both` without a cutoff or a pump monitor falls
+  back to level. Brown-out settings stay on the unit only. Keep any
+  customized `*_min_*` / `*_max_*` keys in `hal.toml`; live value lines
+  (`pump_dry_guard`, `pump_dry_current_a`, `distance_*`, and the like) can
+  stay or be removed once Settings has saved (PR #32).
+- Water → Today: the timeline and Recent runs show actual and manual pump
+  runs, with a Manual label and actual vs planned duration (PR #32).
+- Settings → Tank: ranger sample count, gap, and timeout apply on the next
+  read without restarting hald, and a trusted-% shows how many of the last
+  hour's tank-level readings were good (PR #32).
+- The tank-level SERVICE alert (`setup_water_sensor`) raises only after a
+  10-minute majority of suspect readings, and clears with hysteresis, so a
+  dropped ping no longer flaps the toast (PR #32).
+- A full tank is not treated as dry when the ranger drops a ping or returns
+  a short echo: agreed answers near a recent trusted median stay trusted,
+  and a start is not refused as unavailable while the last trusted level is
+  well above the cutoff (PR #32).
+- Sensors → Devices: an unfitted AM2320 on a unit that uses the DHT20 is
+  shown muted as not fitted, and no longer inherits the other probe's
+  reading or a red error (PR #32).
+- Sensors: each card opens a history view with a 24h / 7d / 30d range and
+  streamed CSV/JSON export for that sensor or all sensors (PR #32).
 
 ## 2.2.1 — 2026-11-17
 
