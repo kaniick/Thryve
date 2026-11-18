@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 2.2.3 — 2026-11-17
+
+- Sensors: clicking a card now opens that sensor's history view. In 2.2.2,
+  `/sensors/:id` still showed the list because the parent route had no
+  outlet (PR #33).
+
 ## 2.2.2 — 2026-11-17
 
 - Settings → MCP access: the optional key is required only by MCP clients
