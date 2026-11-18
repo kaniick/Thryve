@@ -106,8 +106,20 @@ pub struct Limits {
     pub pump_dry_grace_min_ms: u64,
     pub pump_dry_grace_max_ms: u64,
     /// Which dry-run guard stops a running pump: `level`, `current` or `both`.
-    /// Only here: no app, API or MCP route can change it.
+    /// Default when the app has never set one; the app may change it within
+    /// these bounds, and a persisted value in state.json wins at boot.
     pub pump_dry_guard: DryGuard,
+    /// Bounds a `waterLowCm` from the app is clamped into. The upper bound
+    /// is also capped at `tank.empty_cm`.
+    pub water_low_min_cm: f64,
+    pub water_low_max_cm: Option<f64>,
+    pub pump_dry_current_min_a: f64,
+    pub pump_dry_current_max_a: f64,
+    /// How long a wet tank may go without a trusted ranger reading before
+    /// the guard treats the ranger as gone. Unset: 30 s.
+    pub pump_dry_level_absent_ms: Option<u64>,
+    pub pump_dry_level_absent_min_ms: u64,
+    pub pump_dry_level_absent_max_ms: u64,
     /// The same two in whole seconds, as hald read them before milliseconds.
     /// Still read so an older `hal.toml` loads; the `_ms` keys are preferred.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -124,9 +136,15 @@ pub struct Limits {
     /// a second while the pump runs, when it's readable.
     pub pump_brownout_pi: bool,
     pub distance_samples: usize,
+    pub distance_samples_min: usize,
+    pub distance_samples_max: usize,
     pub distance_timeout_ms: u64,
+    pub distance_timeout_min_ms: u64,
+    pub distance_timeout_max_ms: u64,
     /// Quiet time between pings, so one doesn't hear the last one's echo.
     pub distance_gap_ms: u64,
+    pub distance_gap_min_ms: u64,
+    pub distance_gap_max_ms: u64,
     /// A ping further than this is a stray echo, not water. Unset: the empty depth plus half again.
     pub distance_max_cm: Option<f64>,
 }
@@ -422,14 +440,27 @@ impl Default for Limits {
             pump_dry_grace_min_ms: 300,
             pump_dry_grace_max_ms: 5000,
             pump_dry_guard: DryGuard::Both,
+            water_low_min_cm: 5.0,
+            water_low_max_cm: None,
+            pump_dry_current_min_a: 0.1,
+            pump_dry_current_max_a: 3.2,
+            pump_dry_level_absent_ms: None,
+            pump_dry_level_absent_min_ms: 3_000,
+            pump_dry_level_absent_max_ms: 60_000,
             pump_dry_after_s: None,
             pump_dry_grace_s: None,
             pump_brownout_v: PUMP_BROWNOUT_V,
             pump_brownout_ms: PUMP_BROWNOUT_MS,
             pump_brownout_pi: true,
             distance_samples: 5,
+            distance_samples_min: 3,
+            distance_samples_max: 15,
             distance_timeout_ms: 60,
+            distance_timeout_min_ms: 30,
+            distance_timeout_max_ms: 250,
             distance_gap_ms: 60,
+            distance_gap_min_ms: 30,
+            distance_gap_max_ms: 250,
             distance_max_cm: None,
         }
     }
@@ -506,6 +537,8 @@ impl From<&Limits> for PumpLimits {
             dry_current_a: l.pump_dry_current_a,
             dry_after_ms: l.dry_after_ms(),
             dry_grace_ms: l.dry_grace_ms(),
+            // Default 30 s: covers a dropped telemetry round on a still-wet tank.
+            dry_level_absent_ms: l.pump_dry_level_absent_ms.unwrap_or(30_000),
             soft_start_ms: l.pump_soft_start_ms,
             // What hal.toml asks for; the engine resolves what the unit can run.
             dry_guard: l.pump_dry_guard,
@@ -742,6 +775,35 @@ impl Config {
         if self.limits.distance_samples == 0 {
             errs.push("limits.distance_samples must be ≥ 1".into());
         }
+        let ls = &self.limits;
+        if ls.distance_samples_min == 0 || ls.distance_samples_min > ls.distance_samples_max {
+            errs.push("limits.distance_samples_min must be ≥ 1 and ≤ distance_samples_max".into());
+        } else if !(ls.distance_samples_min..=ls.distance_samples_max).contains(&ls.distance_samples) {
+            errs.push("limits.distance_samples must sit within distance_samples_min..=max".into());
+        }
+        if ls.distance_gap_min_ms > ls.distance_gap_max_ms
+            || !(ls.distance_gap_min_ms..=ls.distance_gap_max_ms).contains(&ls.distance_gap_ms)
+        {
+            errs.push("limits.distance_gap_ms must sit within distance_gap_min_ms..=max".into());
+        }
+        if ls.distance_timeout_min_ms > ls.distance_timeout_max_ms
+            || !(ls.distance_timeout_min_ms..=ls.distance_timeout_max_ms).contains(&ls.distance_timeout_ms)
+        {
+            errs.push("limits.distance_timeout_ms must sit within distance_timeout_min_ms..=max".into());
+        }
+        if ls.pump_dry_level_absent_min_ms > ls.pump_dry_level_absent_max_ms {
+            errs.push("limits.pump_dry_level_absent_min_ms must be ≤ max".into());
+        } else if let Some(ms) = ls.pump_dry_level_absent_ms {
+            if !(ls.pump_dry_level_absent_min_ms..=ls.pump_dry_level_absent_max_ms).contains(&ms) {
+                errs.push("limits.pump_dry_level_absent_ms must sit within min..=max".into());
+            }
+        }
+        if ls.water_low_min_cm <= 0.0 {
+            errs.push("limits.water_low_min_cm must be > 0".into());
+        }
+        if ls.pump_dry_current_min_a <= 0.0 || ls.pump_dry_current_min_a > ls.pump_dry_current_max_a {
+            errs.push("limits.pump_dry_current_min_a must be > 0 and ≤ max".into());
+        }
         if self.tank.full_cm >= self.tank.empty_cm {
             errs.push("tank.full_cm must be smaller than tank.empty_cm".into());
         }
@@ -865,21 +927,35 @@ pub const DEFAULT_CONFIG_TOML: &str = r##"# thryve hald configuration. Every pin
 #                          # Set it below the wet current at the lowest duty you run.
 #                          # hald reads the current every 100 ms while the pump runs.
 # pump_dry_after_ms = 300  # at least 3 low reads in a row; 100–10000
-# pump_dry_grace_ms = 1000 # spin-up after a start, not judged. The default: the app may set it
-# pump_dry_grace_min_ms = 300  # within these bounds (it's the one guard setting it may);
+# pump_dry_grace_ms = 1000 # spin-up after a start, not judged. Default; the app may set it
+# pump_dry_grace_min_ms = 300  # within these bounds;
 # pump_dry_grace_max_ms = 5000 # min ≤ default ≤ max ≤ 10000
 #                          # (pump_dry_after_s / pump_dry_grace_s, in seconds, still load)
-# pump_dry_guard = "both"  # which dry-run guard stops the pump: "level" (tank), "current"
-#                          # (pump current) or "both". Only here, never from the app.
+# pump_dry_guard = "both"  # default dry-run guard: "level" (tank), "current" (pump current)
+#                          # or "both". The app may change the mode and the cutoffs; a value
+#                          # saved in state.json wins at boot if it still sits in these bounds.
 #                          # "current" needs pump_dry_current_a and the ina219, else it falls
-#                          # back to "level"; there, and in "both", a low tank refuses a start.
+#                          # back to "level"; a trusted low tank still refuses a start in every mode.
+# water_low_min_cm = 5.0
+# water_low_max_cm = 20.0  # also capped at tank.empty_cm
+# pump_dry_current_min_a = 0.1
+# pump_dry_current_max_a = 3.2
+# pump_dry_level_absent_ms = 30000 # no trusted reading, wet tank: 3–60 s (default 30 s)
+# pump_dry_level_absent_min_ms = 3000
+# pump_dry_level_absent_max_ms = 60000
 # pump_brownout_v = 10.8   # brown-out guard: a running pump whose supply (ina219 bus voltage)
 # pump_brownout_ms = 300   # stays below this, past the grace, stops and latches. 6–12 V, 0 = off.
 #                          # The supply idles ~12.6 V; 10.8 is a 12 V supply 10 % low.
 # pump_brownout_pi = true  # also stop on the Pi's under-voltage flag (get_throttled), if readable
-# distance_samples = 5    # median of N pings
+# distance_samples = 5    # median of N pings; the app may set this (and the gap / timeout)
+# distance_samples_min = 3
+# distance_samples_max = 15
 # distance_timeout_ms = 60
+# distance_timeout_min_ms = 30
+# distance_timeout_max_ms = 250
 # distance_gap_ms = 60    # between pings, so one doesn't hear the last one's echo
+# distance_gap_min_ms = 30
+# distance_gap_max_ms = 250
 # distance_max_cm = 30.0  # further is a stray echo; default tank.empty_cm × 1.5
 
 [tank]

@@ -4,7 +4,10 @@
 //! This driver returns one raw ping. `hal_core::derived::MedianSensor` wraps
 //! it so the guard and the alert path both see the median of N samples.
 
+use std::sync::Arc;
 use std::time::Duration;
+
+use hal_core::derived::DistanceTune;
 
 use hal_core::{DeviceError, Reading, Sensor, SensorId};
 
@@ -45,6 +48,7 @@ pub struct DypA01<T: DigitalOut, E: DigitalIn, C: Clock, D: Delay> {
     clock: C,
     delay: D,
     cfg: DypConfig,
+    tune: Option<Arc<DistanceTune>>,
 }
 
 impl<T: DigitalOut, E: DigitalIn, C: Clock, D: Delay> DypA01<T, E, C, D> {
@@ -55,7 +59,21 @@ impl<T: DigitalOut, E: DigitalIn, C: Clock, D: Delay> DypA01<T, E, C, D> {
             clock,
             delay,
             cfg,
+            tune: None,
         }
+    }
+
+    /// Live timeout from [`hal_core::derived::DistanceTune`].
+    pub fn with_tune(mut self, tune: Arc<DistanceTune>) -> Self {
+        self.tune = Some(tune);
+        self
+    }
+
+    fn timeout(&self) -> Duration {
+        self.tune
+            .as_ref()
+            .map(|t| t.timeout())
+            .unwrap_or(self.cfg.timeout)
     }
 
     /// One ping: the echo pulse width.
@@ -69,7 +87,7 @@ impl<T: DigitalOut, E: DigitalIn, C: Clock, D: Delay> DypA01<T, E, C, D> {
             if self.echo.is_high()? {
                 break;
             }
-            if self.clock.now().duration_since(t0) > self.cfg.timeout {
+            if self.clock.now().duration_since(t0) > self.timeout() {
                 return Err(DeviceError::Timeout);
             }
         }
@@ -78,7 +96,7 @@ impl<T: DigitalOut, E: DigitalIn, C: Clock, D: Delay> DypA01<T, E, C, D> {
             if !self.echo.is_high()? {
                 break;
             }
-            if self.clock.now().duration_since(start) > self.cfg.timeout {
+            if self.clock.now().duration_since(start) > self.timeout() {
                 return Err(DeviceError::Timeout);
             }
         }

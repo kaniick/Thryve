@@ -6,12 +6,19 @@ import { publicProcedure, router } from '../trpc'
 export const telemetryRouter = router({
   history: publicProcedure
     .meta({ openapi: { method: 'GET', path: '/telemetry/{sensor}', tags: ['sensors'], summary: 'Downsampled history for a sensor' } })
-    .input(z.object({ sensor: SensorId, hours: z.number().min(1).max(24 * 90).default(24), maxPoints: z.number().int().min(10).max(2000).default(300) }))
+    .input(z.object({
+      sensor: SensorId,
+      hours: z.number().min(1).max(24 * 90).default(24),
+      from: z.string().datetime({ offset: true }).optional(),
+      to: z.string().datetime({ offset: true }).optional(),
+      maxPoints: z.number().int().min(10).max(2000).default(300),
+    }))
     .output(z.array(z.object({ ts: z.string(), value: z.number() })))
     .query(({ ctx, input }) => {
       const now = (ctx.now ?? (() => new Date()))()
-      const from = new Date(now.getTime() - input.hours * 3_600_000).toISOString()
-      return ctx.store.telemetry.range(input.sensor, from, now.toISOString(), input.maxPoints).map(p => ({ ts: p.ts, value: p.value }))
+      const to = input.to ?? now.toISOString()
+      const from = input.from ?? new Date(Date.parse(to) - input.hours * 3_600_000).toISOString()
+      return ctx.store.telemetry.range(input.sensor, from, to, input.maxPoints).map(p => ({ ts: p.ts, value: p.value }))
     }),
   lightHours: publicProcedure
     .meta({ openapi: { method: 'GET', path: '/telemetry/light-hours', tags: ['sensors'], summary: 'Cumulative grow-light hours (LED aging)' } })

@@ -38,9 +38,9 @@ afterEach(cleanup)
 
 describe('dry-run guard words', () => {
   it('names each guard and says where it is set', () => {
-    expect(dryGuardLine('both')).toBe('Dry-run guard: tank level + pump current (set on the unit)')
-    expect(dryGuardLine('level')).toBe('Dry-run guard: tank level (set on the unit)')
-    expect(dryGuardLine('current')).toBe('Dry-run guard: pump current (set on the unit)')
+    expect(dryGuardLine('both')).toBe('Dry-run guard: tank level + pump current — change in Settings')
+    expect(dryGuardLine('level')).toBe('Dry-run guard: tank level — change in Settings')
+    expect(dryGuardLine('current')).toBe('Dry-run guard: pump current — change in Settings')
     expect([fmtSeconds(1200), fmtSeconds(300), fmtSeconds(5000), fmtSeconds(1250)]).toEqual(['1.2 s', '0.3 s', '5 s', '1.3 s'])
   })
 })
@@ -65,7 +65,7 @@ describe('DryGuardLine', () => {
 
   it('shows the guard read-only and the grace with its bounds', () => {
     render(<DryGuardLine limits={limits} />)
-    expect(screen.getByText('Dry-run guard: tank level + pump current (set on the unit)')).toBeTruthy()
+    expect(screen.getByText('Dry-run guard: tank level + pump current — change in Settings')).toBeTruthy()
     expect(screen.getByText('Grace before the pump-current check (0.3 s–5 s)')).toBeTruthy()
     expect(screen.getByText('1.2 s')).toBeTruthy()
     // Nothing on the line can change the guard itself.
@@ -110,7 +110,7 @@ describe('DryGuardLine', () => {
     render(<DryGuardLine limits={{ pumpMaxRunS: 900, pumpMaxDuty: 30, waterLowCm: 16 }} />)
     expect(screen.queryByTestId('dry-guard')).toBeNull()
     render(<DryGuardLine limits={{ pumpMaxRunS: 900, pumpMaxDuty: 30, waterLowCm: 16, pumpDryGuard: 'level' }} />)
-    expect(screen.getByText('Dry-run guard: tank level (set on the unit)')).toBeTruthy()
+    expect(screen.getByText('Dry-run guard: tank level — change in Settings')).toBeTruthy()
     expect(screen.queryByText(/Grace before/)).toBeNull()
     cleanup()
     for (const partial of [{ pumpDryGraceMinMs: undefined }, { pumpDryGraceMaxMs: undefined }]) {

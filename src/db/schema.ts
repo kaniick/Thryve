@@ -175,6 +175,27 @@ export const telemetry = sqliteTable('telemetry', {
   value: real().notNull(),
 }, t => [index('telemetry_sensor_ts').on(t.sensor, t.ts)])
 
+/** Every tank-level (and other) quality sample, not downsampled, for trusted-% and setup debounce. */
+export const sensorQuality = sqliteTable('sensor_quality', {
+  id: integer().primaryKey({ autoIncrement: true }),
+  ts: text().notNull(),
+  sensor: text().notNull(),
+  quality: text().notNull(),
+}, t => [index('sensor_quality_sensor_ts').on(t.sensor, t.ts)])
+
+/** Actual pump runs, including manual ones, closed when the pump stops. */
+export const pumpRuns = sqliteTable('pump_runs', {
+  id: integer().primaryKey({ autoIncrement: true }),
+  startedAt: text().notNull(),
+  endedAt: text(),
+  durationS: real().notNull().default(0),
+  source: text().notNull(),
+  scheduleId: text(),
+  scheduledDurationS: real(),
+  fault: text(),
+  level: real(),
+}, t => [index('pump_runs_started').on(t.startedAt)])
+
 export const counters = sqliteTable('counters', {
   key: text().primaryKey(),
   value: real().notNull().default(0),

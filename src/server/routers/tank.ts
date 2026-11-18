@@ -1,5 +1,7 @@
 import { TRPCError } from '@trpc/server'
 import { z } from 'zod'
+import { Limits, TankSensorCommand } from '../../hardware/contract'
+import { HalRefused } from '../../hardware/sim'
 import { TANK_ACTION_KINDS, TANK_UNITS } from '../../store/types'
 import { publicProcedure, router } from '../trpc'
 
@@ -54,5 +56,27 @@ export const tankRouter = router({
       const removed = ctx.store.tankActions.remove(input.id)
       if (removed) ctx.events.emit({ kind: 'mutation', path: 'tank' })
       return { removed }
+    }),
+  setSampling: publicProcedure
+    .meta({ openapi: { method: 'POST', path: '/tank/sensor', tags: ['tank'], summary: 'Set how the ranger is sampled: sample count, gap, and timeout; the unit holds each value to the bounds in its hal.toml' } })
+    .input(TankSensorCommand)
+    .output(Limits)
+    .mutation(async ({ ctx, input }) => {
+      try {
+        const limits = await ctx.hal.setTankSensor(input)
+        ctx.events.emit({ kind: 'mutation', path: 'tank.sampling' })
+        return limits
+      }
+      catch (e) {
+        if (e instanceof HalRefused) throw new TRPCError({ code: 'PRECONDITION_FAILED', message: e.message })
+        throw e
+      }
+    }),
+  trustedShare: publicProcedure
+    .meta({ openapi: { method: 'GET', path: '/tank/trusted', tags: ['tank'], summary: 'Share of tank-level readings trusted in the last hour' } })
+    .output(z.object({ trustedPct: z.number().nullable(), samples: z.number(), trusted: z.number(), hours: z.number() }))
+    .query(({ ctx }) => {
+      const now = (ctx.now ?? (() => new Date()))()
+      return ctx.store.sensorQuality.trustedShare('water_level_pct', now.toISOString(), 3600)
     }),
 })

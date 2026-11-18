@@ -9,6 +9,7 @@ import { SegmentedControl, Stepper, TextField, Toggle } from '@/src/components/d
 import { SubNav } from '@/src/components/ds/layout'
 import { HomeKitSection } from '@/src/components/Settings/HomeKitSection'
 import { PumpSection } from '@/src/components/Settings/PumpSection'
+import { TankSampling } from '@/src/components/Settings/TankSampling'
 import { Row, Section } from '@/src/components/Settings/Section'
 import { UpdateSection } from '@/src/components/Settings/UpdateSection'
 import type { inferRouterOutputs } from '@trpc/server'
@@ -268,6 +269,7 @@ function SettingsForm({ s, coreVersion, coreHost, system, onSave, saving }: {
                 <button type="button" className="cursor-pointer border-0 bg-transparent p-0 text-xs text-fg hover:underline" onClick={() => setD({ ...d, waterFullCm: Math.min(30, Math.max(1, Math.round(distance * 2) / 2)) })}>Set as full</button>
               </div>
             )}
+            <TankSampling />
           </Section>
 
           <PumpSection />

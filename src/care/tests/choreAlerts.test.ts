@@ -57,6 +57,15 @@ describe('chore alerts (ADR-0029)', () => {
     const { store, care } = rig({ water_level_pct: level(10, 'suspect') })
     store.grow.start('2026-09-01T12:00:00Z')
     care.tick()
+    // A single suspect reading must not raise a sensor alert, and it is never a top-off.
+    expect(active(store)).toEqual([])
+    const t0 = Date.parse(T)
+    store.sensorQuality.add(Array.from({ length: 6 }, (_, i) => ({
+      ts: new Date(t0 - (5 - i) * 2 * 60_000).toISOString(),
+      sensor: 'water_level_pct',
+      quality: 'suspect' as const,
+    })))
+    care.tick()
     // The suspect level warns about the sensor, not the tank; the calendar chores (refresh, roots) stay off Alerts.
     expect(active(store)).toEqual(['setup_water_sensor'])
   })

@@ -7,6 +7,7 @@
 //!   percentage from the configured full/empty geometry, as trusted as the
 //!   distance it came from.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -16,9 +17,62 @@ use crate::safety::median;
 
 /// How far from the median an answer may be and still agree with it (cm).
 pub const AGREE_CM: f64 = 3.0;
+/// A lone answer this close to the last trusted median is itself trusted,
+/// even when the rest of the round's pings dropped.
+pub const TRUST_NEAR_CM: f64 = 1.0;
+/// Drop a ping this far from the last trusted median, short or long. Stray
+/// echoes go both ways: the unit has seen a 3.67 cm short pulse on an 8 cm
+/// surface, not only echoes past the tank bottom.
+pub const OUTLIER_CM: f64 = 3.0;
 
 /// Last median distance and its quality, shared with [`LevelPctSensor`].
 pub type SharedDistance = Arc<Mutex<Option<(f64, Quality)>>>;
+
+/// Live sampling knobs the app may change (`tank/sensor/set`). Shared with
+/// the ranger driver so a new sample count, gap, or timeout is used on the
+/// next read, without restarting hald.
+#[derive(Debug)]
+pub struct DistanceTune {
+    samples: AtomicU64,
+    gap_ms: AtomicU64,
+    timeout_ms: AtomicU64,
+}
+
+impl DistanceTune {
+    pub fn new(samples: u64, gap_ms: u64, timeout_ms: u64) -> Self {
+        Self {
+            samples: AtomicU64::new(samples.max(1)),
+            gap_ms: AtomicU64::new(gap_ms),
+            timeout_ms: AtomicU64::new(timeout_ms),
+        }
+    }
+
+    pub fn set(&self, samples: u64, gap_ms: u64, timeout_ms: u64) {
+        self.samples.store(samples.max(1), Ordering::Relaxed);
+        self.gap_ms.store(gap_ms, Ordering::Relaxed);
+        self.timeout_ms.store(timeout_ms, Ordering::Relaxed);
+    }
+
+    pub fn samples(&self) -> usize {
+        self.samples.load(Ordering::Relaxed).max(1) as usize
+    }
+
+    pub fn gap(&self) -> Duration {
+        Duration::from_millis(self.gap_ms.load(Ordering::Relaxed))
+    }
+
+    pub fn timeout(&self) -> Duration {
+        Duration::from_millis(self.timeout_ms.load(Ordering::Relaxed))
+    }
+
+    pub fn values(&self) -> (u64, u64, u64) {
+        (
+            self.samples.load(Ordering::Relaxed).max(1),
+            self.gap_ms.load(Ordering::Relaxed),
+            self.timeout_ms.load(Ordering::Relaxed),
+        )
+    }
+}
 
 pub struct MedianSensor {
     inner: Box<dyn Sensor>,
@@ -26,6 +80,10 @@ pub struct MedianSensor {
     gap: Duration,
     max: Option<f64>,
     last: SharedDistance,
+    /// Last median that was quality `good`, for trusting a thin round and
+    /// rejecting short or long strays.
+    last_trusted: Option<f64>,
+    tune: Option<Arc<DistanceTune>>,
 }
 
 impl MedianSensor {
@@ -36,7 +94,28 @@ impl MedianSensor {
             gap: Duration::ZERO,
             max: None,
             last: Arc::new(Mutex::new(None)),
+            last_trusted: None,
+            tune: None,
         }
+    }
+
+    /// Use live sampling knobs from the app, falling back to the values
+    /// given to [`new`] / [`with_gap`] only if no tune is attached.
+    pub fn with_tune(mut self, tune: Arc<DistanceTune>) -> Self {
+        self.tune = Some(tune);
+        self
+    }
+
+    fn sample_count(&self) -> usize {
+        self.tune
+            .as_ref()
+            .map(|t| t.samples())
+            .unwrap_or(self.samples)
+            .max(1)
+    }
+
+    fn sample_gap(&self) -> Duration {
+        self.tune.as_ref().map(|t| t.gap()).unwrap_or(self.gap)
     }
 
     /// Wait this long between samples. An ultrasonic ping fired while the
@@ -58,6 +137,52 @@ impl MedianSensor {
     pub fn shared(&self) -> SharedDistance {
         self.last.clone()
     }
+
+    #[cfg(test)]
+    fn replace_inner(&mut self, inner: Box<dyn Sensor>) {
+        self.inner = inner;
+    }
+
+    /// A ping this far from the last trusted median, short or long, is a stray.
+    fn is_outlier(&self, value: f64) -> bool {
+        self.last_trusted.is_some_and(|t| (value - t).abs() > OUTLIER_CM)
+    }
+
+    /// Prefer answers near the last trusted surface. If the level has really
+    /// moved, two or more pings that agree with each other at the new value
+    /// still count; a lone far echo does not.
+    fn usable(&self, vals: &[f64]) -> Vec<f64> {
+        if vals.is_empty() {
+            return Vec::new();
+        }
+        if let Some(t) = self.last_trusted {
+            let near: Vec<f64> = vals
+                .iter()
+                .copied()
+                .filter(|v| (*v - t).abs() <= OUTLIER_CM)
+                .collect();
+            if !near.is_empty() {
+                return near;
+            }
+        }
+        let mut cluster = vals.to_vec();
+        let Some(m) = median(&mut cluster) else {
+            return Vec::new();
+        };
+        let agreed: Vec<f64> = vals
+            .iter()
+            .copied()
+            .filter(|v| (*v - m).abs() <= AGREE_CM)
+            .collect();
+        if agreed.len() >= 2 {
+            agreed
+        } else if self.last_trusted.is_some() {
+            // A single far echo after a trusted surface is a stray, not a new level.
+            Vec::new()
+        } else {
+            vals.to_vec()
+        }
+    }
 }
 
 impl Sensor for MedianSensor {
@@ -68,15 +193,24 @@ impl Sensor for MedianSensor {
         self.inner.probe()
     }
     fn read(&mut self) -> Result<Reading, DeviceError> {
-        let mut vals = Vec::with_capacity(self.samples);
+        let mut vals = Vec::with_capacity(self.sample_count());
         let mut unit = String::new();
         let mut last_err = None;
-        for i in 0..self.samples {
-            if i > 0 && !self.gap.is_zero() {
-                std::thread::sleep(self.gap);
+        // A second pass if the first round is thin: dropped pings, not
+        // disagreement, are how this ranger goes "suspect" on a still surface.
+        let attempts = self.sample_count().saturating_mul(2);
+        for i in 0..attempts {
+            if i > 0 && !self.sample_gap().is_zero() {
+                std::thread::sleep(self.sample_gap());
             }
             match self.inner.read() {
                 Ok(r) if self.max.is_some_and(|max| r.value > max) => {
+                    last_err = Some(DeviceError::Other(format!(
+                        "stray echo at {:.1} {}",
+                        r.value, r.unit
+                    )));
+                }
+                Ok(r) if self.is_outlier(r.value) => {
                     last_err = Some(DeviceError::Other(format!(
                         "stray echo at {:.1} {}",
                         r.value, r.unit
@@ -86,21 +220,35 @@ impl Sensor for MedianSensor {
                     unit = r.unit;
                     vals.push(r.value);
                 }
-                Err(e) => last_err = Some(e),
+                Err(e) => {
+                    // Keep a stray-echo error over a later timeout from a retry
+                    // with no more pings left to fire.
+                    if last_err.is_none() || !matches!(e, DeviceError::Timeout) {
+                        last_err = Some(e);
+                    }
+                }
+            }
+            if i + 1 >= self.sample_count() && self.usable(&vals).len() >= 2.min(self.sample_count()) {
+                break;
             }
         }
-        let Some(m) = median(&mut vals) else {
+        let mut usable = self.usable(&vals);
+        let Some(m) = median(&mut usable) else {
             *self.last.lock().unwrap_or_else(|e| e.into_inner()) = None;
             return Err(last_err.unwrap_or(DeviceError::Timeout));
         };
         let mut r = Reading::new(m, &unit);
-        // Fewer than two answers agreeing with the median is a guess: flag it rather
-        // than hide it. Two that agree are a reading, however many pings went
-        // unanswered (strays past the tank bottom are dropped, so a good round
-        // often keeps only a few).
-        let agree = vals.iter().filter(|v| (**v - m).abs() <= AGREE_CM).count();
-        if agree < 2.min(self.samples) {
+        // Two answers that agree are a reading, however many pings dropped.
+        // One answer within TRUST_NEAR_CM of the last trusted median is too:
+        // the unit's full tank sits at 8.04–8.11 cm and a thin round still
+        // comes back 8.08, not a new surface.
+        let agree = usable.iter().filter(|v| (**v - m).abs() <= AGREE_CM).count();
+        let near_trusted = self.last_trusted.is_some_and(|t| (m - t).abs() <= TRUST_NEAR_CM);
+        if agree < 2.min(self.sample_count()) && !near_trusted {
             r.quality = Quality::Suspect;
+        }
+        if r.quality == Quality::Good {
+            self.last_trusted = Some(m);
         }
         *self.last.lock().unwrap_or_else(|e| e.into_inner()) = Some((m, r.quality));
         Ok(r)
@@ -177,6 +325,9 @@ mod tests {
             Ok(())
         }
         fn read(&mut self) -> Result<Reading, DeviceError> {
+            if self.seq.is_empty() {
+                return Err(DeviceError::Timeout);
+            }
             match self.seq.remove(0) {
                 Ok(v) => Ok(Reading::new(v, "cm")),
                 Err(()) => Err(DeviceError::Timeout),
@@ -303,5 +454,120 @@ mod tests {
         assert_eq!(m.read().unwrap().value, 7.0);
         // Two gaps between three pings, none before the first.
         assert!(t.elapsed() >= Duration::from_millis(40));
+    }
+
+    fn seed_trusted(m: &mut MedianSensor, cm: f64) {
+        // One good round so later thin or stray rounds have a trusted median.
+        m.replace_inner(Box::new(Noisy {
+            seq: vec![Ok(cm), Ok(cm + 0.02), Ok(cm - 0.02), Ok(cm + 0.01), Ok(cm)],
+        }));
+        let r = m.read().unwrap();
+        assert_eq!(r.quality, Quality::Good);
+        assert!((r.value - cm).abs() < 0.05);
+    }
+
+    #[test]
+    fn a_thin_round_near_the_trusted_median_is_trusted() {
+        let mut m = MedianSensor::new(Box::new(Noisy { seq: vec![] }), 5);
+        seed_trusted(&mut m, 8.08);
+        // The unit's "suspect" rounds were a single 8.08 / 8.06 answer, the
+        // rest dropped, on a surface that had been 8.04–8.11 cm.
+        m.replace_inner(Box::new(Noisy {
+            seq: vec![Err(()), Err(()), Ok(8.08), Err(()), Err(())],
+        }));
+        let r = m.read().unwrap();
+        assert_eq!((r.value, r.quality), (8.08, Quality::Good));
+        m.replace_inner(Box::new(Noisy {
+            seq: vec![Ok(8.06), Err(()), Err(()), Err(()), Err(())],
+        }));
+        let r = m.read().unwrap();
+        assert_eq!((r.value, r.quality), (8.06, Quality::Good));
+    }
+
+    #[test]
+    fn a_short_stray_is_rejected_like_a_long_one() {
+        let mut m = MedianSensor::new(Box::new(Noisy { seq: vec![] }), 5).with_max(30.0);
+        seed_trusted(&mut m, 8.08);
+        // 2026-11-17T04:16:14Z: 3.67 cm, a short echo on an 8 cm surface.
+        m.replace_inner(Box::new(Noisy {
+            seq: vec![Ok(3.67), Err(()), Err(()), Err(()), Err(())],
+        }));
+        assert!(m.read().is_err(), "a lone short stray is no reading");
+        // A short stray mixed with the real surface must not pull the median.
+        m.replace_inner(Box::new(Noisy {
+            seq: vec![Ok(8.07), Ok(3.67), Ok(8.09), Err(()), Ok(8.08)],
+        }));
+        let r = m.read().unwrap();
+        assert!((r.value - 8.08).abs() < 0.05);
+        assert_eq!(r.quality, Quality::Good);
+    }
+
+    /// Published water_distance on a full tank, 2026-11-17 UTC, ~10 s telemetry.
+    /// `good` / `suspect` is what the unit recorded; the fixture also includes
+    /// a 22 s gap (a missing round) and a short stray.
+    const FULL_TANK_ROUNDS: &[(&str, Option<f64>, &str)] = &[
+        ("2026-11-17T04:13:16Z", Some(8.07), "good"),
+        ("2026-11-17T04:13:26Z", Some(8.09), "good"),
+        ("2026-11-17T04:13:36Z", Some(8.05), "good"),
+        ("2026-11-17T04:13:46Z", Some(8.11), "good"),
+        ("2026-11-17T04:13:56Z", Some(8.04), "good"),
+        ("2026-11-17T04:14:06Z", Some(8.10), "good"),
+        ("2026-11-17T04:14:16Z", Some(8.08), "good"),
+        ("2026-11-17T04:14:26Z", Some(8.07), "good"),
+        ("2026-11-17T04:14:36Z", Some(8.08), "suspect"),
+        ("2026-11-17T04:14:47Z", Some(8.06), "suspect"),
+        // 04:14:47 → 04:15:09: 22 s, one round never arrived.
+        ("2026-11-17T04:14:57Z", None, "missing"),
+        ("2026-11-17T04:15:09Z", Some(8.06), "suspect"),
+        ("2026-11-17T04:15:19Z", Some(8.07), "good"),
+        ("2026-11-17T04:15:29Z", Some(8.09), "good"),
+        ("2026-11-17T04:15:39Z", Some(8.05), "good"),
+        ("2026-11-17T04:15:49Z", Some(8.10), "good"),
+        ("2026-11-17T04:16:03Z", Some(8.08), "suspect"),
+        ("2026-11-17T04:16:14Z", Some(3.67), "suspect"),
+        ("2026-11-17T04:16:24Z", Some(8.07), "good"),
+    ];
+
+    fn pings_for(value: f64, kind: &str) -> Vec<Result<f64, ()>> {
+        match kind {
+            "good" => vec![
+                Ok(value),
+                Ok(value + 0.02),
+                Ok(value - 0.01),
+                Ok(value + 0.01),
+                Ok(value),
+            ],
+            "suspect" if (value - 3.67).abs() < 0.001 => {
+                // Lone short echo; the other four pings dropped.
+                vec![Ok(3.67), Err(()), Err(()), Err(()), Err(())]
+            }
+            "suspect" => vec![Err(()), Err(()), Ok(value), Err(()), Err(())],
+            _ => vec![Err(()), Err(()), Err(()), Err(()), Err(())],
+        }
+    }
+
+    #[test]
+    fn the_full_tank_stream_stays_trusted_through_drops_a_gap_and_a_short_stray() {
+        let mut m = MedianSensor::new(Box::new(Noisy { seq: vec![] }), 5).with_max(30.0);
+        let mut last_good = None;
+        for &(ts, value, kind) in FULL_TANK_ROUNDS {
+            if kind == "missing" {
+                // A missing telemetry round is no new median; the last good stands.
+                continue;
+            }
+            m.replace_inner(Box::new(Noisy {
+                seq: pings_for(value.unwrap(), kind),
+            }));
+            let got = m.read();
+            if (value.unwrap() - 3.67).abs() < 0.001 {
+                assert!(got.is_err(), "{ts}: short stray must not become a reading");
+                continue;
+            }
+            let r = got.unwrap_or_else(|e| panic!("{ts}: {e}"));
+            assert_eq!(r.quality, Quality::Good, "{ts} was {kind}, value {}", r.value);
+            assert!((r.value - value.unwrap()).abs() <= TRUST_NEAR_CM, "{ts}");
+            last_good = Some(r.value);
+        }
+        assert!(last_good.is_some_and(|v| (v - 8.07).abs() < 0.05));
     }
 }

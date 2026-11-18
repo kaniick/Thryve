@@ -68,6 +68,27 @@ describe('ScheduleTimeline', () => {
     expect(runs[0]?.getAttribute('aria-label')).toBe('Morning · 08:00–08:10 · 10 min')
   })
 
+  it('shows actual and manual pump runs, and hides a planned slot that already ran', () => {
+    render(
+      <ScheduleTimeline
+        lead="water"
+        curves={[day]}
+        cycles={water}
+        timezone="UTC"
+        pumpRuns={[
+          { startedAt: '2026-11-10T08:00:00Z', endedAt: '2026-11-10T08:08:00Z', durationS: 480, source: 'scheduled', scheduledDurationS: 600 },
+          { startedAt: '2026-11-10T11:00:00Z', endedAt: '2026-11-10T11:02:00Z', durationS: 120, source: 'manual', scheduledDurationS: null },
+        ]}
+      />
+    )
+    const labels = screen.getAllByTestId('label-water').map(l => l.textContent)
+    expect(labels).toContain('8 min / 10 min')
+    expect(labels).toContain('Manual')
+    const marks = screen.getAllByTestId('mark-water')
+    expect(marks.some(m => m.getAttribute('aria-label')?.startsWith('Morning ·'))).toBe(false)
+    expect(marks.some(m => m.getAttribute('aria-label')?.startsWith('Manual watering'))).toBe(true)
+  })
+
   it('puts the page\'s own row first and says what it does next', () => {
     const { unmount } = render(<ScheduleTimeline lead="light" curves={[day]} cycles={water} timezone="UTC" />)
     expect(screen.getAllByTestId(/^lane-/).map(l => l.dataset.testid)).toEqual(['lane-light', 'lane-water'])

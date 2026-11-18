@@ -27,6 +27,7 @@ import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as StatusRouteImport } from './routes/status'
 import { Route as WaterRouteImport } from './routes/water'
 import { Route as WifiRouteImport } from './routes/wifi'
+import { Route as SensorsIdRouteImport } from './routes/sensors.$id'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -118,6 +119,11 @@ const WifiRoute = WifiRouteImport.update({
   path: '/wifi',
   getParentRoute: () => rootRouteImport,
 } as any)
+const SensorsIdRoute = SensorsIdRouteImport.update({
+  id: '/$id',
+  path: '/$id',
+  getParentRoute: () => SensorsRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -133,11 +139,12 @@ export interface FileRoutesByFullPath {
   '/notifications': typeof NotificationsRoute
   '/plan': typeof PlanRoute
   '/schedule': typeof ScheduleRoute
-  '/sensors': typeof SensorsRoute
+  '/sensors': typeof SensorsRouteWithChildren
   '/settings': typeof SettingsRoute
   '/status': typeof StatusRoute
   '/water': typeof WaterRoute
   '/wifi': typeof WifiRoute
+  '/sensors/$id': typeof SensorsIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -153,11 +160,12 @@ export interface FileRoutesByTo {
   '/notifications': typeof NotificationsRoute
   '/plan': typeof PlanRoute
   '/schedule': typeof ScheduleRoute
-  '/sensors': typeof SensorsRoute
+  '/sensors': typeof SensorsRouteWithChildren
   '/settings': typeof SettingsRoute
   '/status': typeof StatusRoute
   '/water': typeof WaterRoute
   '/wifi': typeof WifiRoute
+  '/sensors/$id': typeof SensorsIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -174,11 +182,12 @@ export interface FileRoutesById {
   '/notifications': typeof NotificationsRoute
   '/plan': typeof PlanRoute
   '/schedule': typeof ScheduleRoute
-  '/sensors': typeof SensorsRoute
+  '/sensors': typeof SensorsRouteWithChildren
   '/settings': typeof SettingsRoute
   '/status': typeof StatusRoute
   '/water': typeof WaterRoute
   '/wifi': typeof WifiRoute
+  '/sensors/$id': typeof SensorsIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -201,6 +210,7 @@ export interface FileRouteTypes {
     | '/status'
     | '/water'
     | '/wifi'
+    | '/sensors/$id'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -221,6 +231,7 @@ export interface FileRouteTypes {
     | '/status'
     | '/water'
     | '/wifi'
+    | '/sensors/$id'
   id:
     | '__root__'
     | '/'
@@ -241,6 +252,7 @@ export interface FileRouteTypes {
     | '/status'
     | '/water'
     | '/wifi'
+    | '/sensors/$id'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -257,7 +269,7 @@ export interface RootRouteChildren {
   NotificationsRoute: typeof NotificationsRoute
   PlanRoute: typeof PlanRoute
   ScheduleRoute: typeof ScheduleRoute
-  SensorsRoute: typeof SensorsRoute
+  SensorsRoute: typeof SensorsRouteWithChildren
   SettingsRoute: typeof SettingsRoute
   StatusRoute: typeof StatusRoute
   WaterRoute: typeof WaterRoute
@@ -392,8 +404,26 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof WifiRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/sensors/$id': {
+      id: '/sensors/$id'
+      path: '/$id'
+      fullPath: '/sensors/$id'
+      preLoaderRoute: typeof SensorsIdRouteImport
+      parentRoute: typeof SensorsRoute
+    }
   }
 }
+
+interface SensorsRouteChildren {
+  SensorsIdRoute: typeof SensorsIdRoute
+}
+
+const SensorsRouteChildren: SensorsRouteChildren = {
+  SensorsIdRoute: SensorsIdRoute,
+}
+
+const SensorsRouteWithChildren =
+  SensorsRoute._addFileChildren(SensorsRouteChildren)
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
@@ -409,7 +439,7 @@ const rootRouteChildren: RootRouteChildren = {
   NotificationsRoute: NotificationsRoute,
   PlanRoute: PlanRoute,
   ScheduleRoute: ScheduleRoute,
-  SensorsRoute: SensorsRoute,
+  SensorsRoute: SensorsRouteWithChildren,
   SettingsRoute: SettingsRoute,
   StatusRoute: StatusRoute,
   WaterRoute: WaterRoute,
