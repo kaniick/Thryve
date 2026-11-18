@@ -1,4 +1,8 @@
-import { createFileRoute } from '@tanstack/react-router'
-import { SensorsPage } from '@/src/components/Sensors/SensorsPage'
+import { createFileRoute, Outlet } from '@tanstack/react-router'
 
-export const Route = createFileRoute('/sensors')({ component: SensorsPage })
+/** Layout so /sensors/$id can render the history view instead of the list. */
+export const Route = createFileRoute('/sensors')({
+  component: function SensorsLayout() {
+    return <Outlet />
+  },
+})
