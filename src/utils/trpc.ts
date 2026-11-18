@@ -5,6 +5,7 @@ import superjson from 'superjson'
 import { newestReadings } from '@/src/lib/readings'
 import type { AppRouter } from '@/src/server/routers/app'
 import { lazyDemoLink } from '@/src/demo/lazyLink'
+import { UNAUTHORIZED_EVENT } from '@/src/utils/authEvents'
 
 export const trpc = createTRPCReact<AppRouter>()
 
@@ -21,6 +22,12 @@ export function apiBase(): string {
   return import.meta.env.VITE_API_BASE ?? ''
 }
 
+async function fetchWithSession(url: RequestInfo | URL, opts?: RequestInit): Promise<Response> {
+  const r = await fetch(url, { ...opts, credentials: 'include' })
+  if (r.status === 401 && typeof window !== 'undefined') window.dispatchEvent(new Event(UNAUTHORIZED_EVENT))
+  return r
+}
+
 export function createTrpcClient() {
   // Spelled out, not isDemo(), so a unit's build folds this away and drops the demo with it.
   if (import.meta.env.VITE_DEMO === '1') {
@@ -30,8 +37,8 @@ export function createTrpcClient() {
     links: [
       splitLink({
         condition: op => op.type === 'subscription',
-        true: httpSubscriptionLink({ url: `${apiBase()}/api/trpc`, transformer: superjson }),
-        false: httpBatchLink({ url: `${apiBase()}/api/trpc`, transformer: superjson }),
+        true: httpSubscriptionLink({ url: `${apiBase()}/api/trpc`, transformer: superjson, eventSourceOptions: { withCredentials: true } }),
+        false: httpBatchLink({ url: `${apiBase()}/api/trpc`, transformer: superjson, fetch: fetchWithSession }),
       }),
     ],
   })

@@ -44,7 +44,7 @@ export function RestorePanel({ savedMirror, confirm, onStarted }: {
     if (!file) return
     setUploading(true)
     try {
-      const r = await fetch(`${apiBase()}/api/backup/restore`, { method: 'POST', headers: { 'content-type': 'application/gzip' }, body: file })
+      const r = await fetch(`${apiBase()}/api/backup/restore`, { method: 'POST', headers: { 'content-type': 'application/gzip' }, body: file, credentials: 'include' })
       if (r.status === 202) return onStarted()
       setError(((await r.json().catch(() => null)) as { error?: string } | null)?.error ?? `restore failed (${r.status})`)
     }

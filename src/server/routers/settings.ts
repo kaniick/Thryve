@@ -74,6 +74,10 @@ export const settingsRouter = router({
       if (patch.mirrorSecretAccessKey == null || patch.mirrorSecretAccessKey === '') delete patch.mirrorSecretAccessKey
       const starting = patch.setupComplete === true && !ctx.store.settings.get().setupComplete
       const s = ctx.store.settings.update(patch)
+      if (typeof patch.apiKey === 'string') {
+        if (patch.apiKey) ctx.session?.grant(patch.apiKey)
+        else ctx.session?.revoke()
+      }
       ctx.events.emit({ kind: 'mutation', path: 'settings' })
       // A new garden starts on Auto, unless it already has a light curve.
       if (starting && !ctx.store.schedules.list().some(x => x.kind === 'light')) {

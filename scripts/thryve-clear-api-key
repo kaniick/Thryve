@@ -1,0 +1,24 @@
+#!/bin/sh
+# Clear the optional Settings API key from loopback so the unit's web UI is
+# reachable on the LAN again. Run this on the unit over SSH. Power-cycling
+# does not clear the key.
+#
+# Usage: scripts/thryve-clear-api-key
+#        PORT=3000 scripts/thryve-clear-api-key
+set -eu
+PORT="${PORT:-3000}"
+URL="http://127.0.0.1:${PORT}/api/settings"
+# The OpenAPI facade requires application/json. `curl -d` alone sends
+# form-urlencoded and is rejected with 415, leaving the key in place.
+body="$(curl -sS -f -X PATCH "$URL" \
+  -H 'Content-Type: application/json' \
+  -d '{"apiKey":""}')" || {
+  echo "could not clear the API key at $URL (is core running?)" >&2
+  exit 1
+}
+echo "$body" | grep -q '"hasApiKey":false' || echo "$body" | grep -q '"hasApiKey": false' || {
+  echo "core answered but the API key still looks set:" >&2
+  echo "$body" >&2
+  exit 1
+}
+echo "API key cleared. The web UI on the LAN no longer requires a sign-in."

@@ -26,3 +26,16 @@ sources: [{"resource": "https://github.com/sleepypod/core", "title": "sleepypod/
 - MQTT credentials are stored in plaintext in `device_settings`, for the
   reasons [sleepypod](https://sleepypod.github.io/core/settings/mqtt/) ADR 0019 gives: anyone with the database already owns
   the unit.
+
+## Amendment (2026-11-17)
+
+The unit's own web UI on the LAN cannot send `X-API-Key`. When a key is set,
+the UI signs in once and receives an HttpOnly, SameSite=Strict session cookie
+that `apiKeyGuard` accepts on `/api/*` (including `/api/ws` and stills).
+Loopback remains exempt. `X-Forwarded-For` is honoured only when the socket
+peer is already loopback (a local reverse proxy), so a LAN client cannot
+spoof loopback to bypass the key. Saving a new key sets the session cookie
+on that response so the current browser is not locked out. Recovery from SSH is
+`curl -X PATCH http://127.0.0.1:3000/api/settings -H 'Content-Type: application/json' -d '{"apiKey":""}'`
+or `/opt/thryve/scripts/thryve-clear-api-key`.
+

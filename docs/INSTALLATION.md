@@ -282,6 +282,37 @@ so the iOS app finds it without an address. The TXT record carries `id`
 in Settings, else `0`). To turn it off, set `THRYVE_MDNS=0` in
 `thryve-core.service`.
 
+### API key and the web UI
+
+Settings → API access can set an optional key. Scripts, REST, MCP and Home
+Assistant on the LAN must send it as `X-API-Key` or `Authorization: Bearer`.
+The unit's own web UI does **not** send that header: it shows a sign-in
+screen and exchanges the key for an HttpOnly, SameSite=Strict session
+cookie, so you are not locked out of the browser after saving a key. This
+browser is signed in automatically when you save a newly generated key.
+Loopback (`127.0.0.1`) stays exempt, so SSH and local scripts keep working.
+`X-Forwarded-For` is not trusted from a non-loopback client.
+
+If you are locked out (an older release saved a key and the UI shows
+"unreachable", or you lost the key), SSH into the unit and clear it over
+loopback. Power-cycling does not clear the key. The `Content-Type` header is
+required; `curl -d` alone sends form-urlencoded and is rejected with 415,
+leaving the key in place:
+
+```sh
+curl -X PATCH http://127.0.0.1:3000/api/settings \
+  -H 'Content-Type: application/json' \
+  -d '{"apiKey":""}'
+```
+
+From 2.2.1 the same recovery is also a helper in the prefix:
+
+```sh
+/opt/thryve/scripts/thryve-clear-api-key
+```
+
+Then refresh the browser.
+
 A new install opens on **Welcome**. Choose **Set up a new garden**, or
 **Restore from a backup** if this card replaces one that died
 ([Maintenance → Restoring a backup](MAINTENANCE.md#restoring-a-backup)). From

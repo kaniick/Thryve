@@ -66,4 +66,6 @@ export interface Context {
   /** The machine core runs on (the unit's Pi, or a LAN box when the unit has a Pi Zero W); absent in the browser demo. */
   host?: { hostname: string, arch: string }
   now?: () => Date
+  /** Sets or clears the web UI session cookie when an API key is saved. Node hosts only. */
+  session?: { grant(apiKey: string): void, revoke(): void }
 }

@@ -378,11 +378,12 @@ describe('Settings: tank and API key', () => {
 
   it('generates an API key and shows it until saved', () => {
     render(<SettingsPage />)
-    expect(screen.getByText('Not set. Only devices on your network can connect.')).toBeTruthy()
+    expect(screen.getByText('Not set. Anyone on your network can open the UI and call the API.')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Generate API key' }))
     const input = screen.getByLabelText('API key') as HTMLInputElement
     expect(input.type).toBe('text')
     expect(input.value).toMatch(/^[0-9a-f]{48}$/)
+    expect(screen.getByTestId('api-key-warning').textContent).toMatch(/locked out/)
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     expect((calls.update.mock.calls[0]?.[0] as Record<string, unknown>).apiKey).toBe(input.value)
   })
@@ -390,7 +391,8 @@ describe('Settings: tank and API key', () => {
   it('says when a key is already set', () => {
     data.set('settings', { ...settings, hasApiKey: true })
     render(<SettingsPage />)
-    expect(screen.getByText('Set. Clients off this network must send it.')).toBeTruthy()
+    expect(screen.getByText('Set. This browser can use a session cookie; scripts and other clients send X-API-Key or Bearer.')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Sign out' })).toBeTruthy()
   })
 })
 
