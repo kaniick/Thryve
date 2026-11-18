@@ -1,6 +1,6 @@
 import { Link } from '@tanstack/react-router'
 import type { LucideIcon } from 'lucide-react'
-import { Archive, BellRing, Camera, ChevronDown, Cloud, CloudUpload, Download, Droplets, HardDrive, House, Info, KeyRound, LocateFixed, Radio, RefreshCw, Ruler, Settings2, Waves, Wifi } from 'lucide-react'
+import { Archive, BellRing, Camera, ChevronDown, Cloud, CloudUpload, Copy, Download, Droplets, HardDrive, House, Info, KeyRound, LocateFixed, Radio, RefreshCw, Ruler, Settings2, Waves, Wifi } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { RestorePanel, RestoreProgress } from '@/src/components/Backup/RestorePanel'
 import { Button, KeyValue } from '@/src/components/ds/core'
@@ -16,7 +16,6 @@ import type { AppRouter } from '@/src/server/routers/app'
 import { withUnit } from '@/src/lib/sensorMeta'
 import { displayUnit, fromDisplay, toDisplay, unitSystem } from '@/src/lib/units'
 import { unitPlace } from '@/src/scheduler/place'
-import { logoutSession } from '@/src/components/Auth/AuthGate'
 import { apiBase, trpc } from '@/src/utils/trpc'
 
 type SettingsView = inferRouterOutputs<AppRouter>['settings']['get']
@@ -32,7 +31,7 @@ const SECTIONS: ReadonlyArray<{ id: SectionId, label: string, icon: LucideIcon }
   { id: 'reminders', label: 'Reminders', icon: BellRing },
   { id: 'notifications', label: 'Notifications', icon: BellRing },
   { id: 'cameras', label: 'Cameras', icon: Camera },
-  { id: 'api', label: 'API access', icon: KeyRound },
+  { id: 'api', label: 'MCP access', icon: KeyRound },
   { id: 'off-device', label: 'Storage', icon: Cloud },
   { id: 'storage', label: 'SD card', icon: HardDrive },
   { id: 'backup', label: 'Backup', icon: Archive },
@@ -282,14 +281,14 @@ function SettingsForm({ s, coreVersion, coreHost, system, onSave, saving }: {
             <Row label="Keep analysis masks" sub="About 115 kB per photo. Off saves SD card space."><Toggle label="Keep analysis masks" on={!!d.analysisArtifacts} onChange={v => setD({ ...d, analysisArtifacts: v })} /></Row>
           </Section>
 
-          <Section id="api" title="API access" sub="Optional key for REST, MCP and other clients off this unit. The web UI on your LAN asks for the key once and keeps you signed in with a session cookie.">
+          <Section id="api" title="MCP access" sub="Optional key required only by MCP clients (Claude and other assistants). The web UI, REST, WebSocket and Home Assistant on the LAN do not need it.">
             <Row
-              label="API key"
-              sub={generated.api || str('apiKey') ? 'Copy it now: it is hidden once saved. After you save, this browser stays signed in; other browsers and scripts must send the key.' : s.hasApiKey ? 'Set. This browser can use a session cookie; scripts and other clients send X-API-Key or Bearer.' : 'Not set. Anyone on your network can open the UI and call the API.'}
+              label="MCP access key"
+              sub={generated.api || str('apiKey') ? 'Copy it now: it is hidden once saved. MCP clients send it as X-API-Key or Authorization: Bearer.' : s.hasApiKey ? 'Set. MCP clients must send X-API-Key or Bearer. The web UI and the rest of the API on the LAN do not need it.' : 'Not set. Any MCP client on your network can connect.'}
             >
-              <TextField aria-label="API key" className="w-[180px]" type={generated.api ? 'text' : 'password'} value={str('apiKey')} onChange={v => setD({ ...d, apiKey: v })} placeholder={s.hasApiKey ? '••••••' : 'none'} />
+              <TextField aria-label="MCP access key" className="w-[240px]" type={generated.api ? 'text' : 'password'} value={str('apiKey')} onChange={v => setD({ ...d, apiKey: v })} placeholder={s.hasApiKey ? '••••••' : 'none'} />
               <Button
-                aria-label="Generate API key"
+                aria-label="Generate MCP access key"
                 onClick={() => {
                   setGenerated({ ...generated, api: true })
                   setD({ ...d, apiKey: randomToken() })
@@ -297,17 +296,18 @@ function SettingsForm({ s, coreVersion, coreHost, system, onSave, saving }: {
               >
                 Generate
               </Button>
+              {(generated.api || !!str('apiKey')) && (
+                <Button
+                  aria-label="Copy MCP access key"
+                  icon={Copy}
+                  onClick={() => {
+                    void navigator.clipboard?.writeText(str('apiKey'))
+                  }}
+                >
+                  Copy
+                </Button>
+              )}
             </Row>
-            {(generated.api || !!str('apiKey')) && (
-              <p className="text-xs text-danger" data-testid="api-key-warning">
-                Saving this key will require it for the web UI from other devices on the network. This browser will stay signed in. Copy the key before you save — it is hidden afterwards. If you get locked out, SSH into the unit and run /opt/thryve/scripts/thryve-clear-api-key (or the curl in docs/INSTALLATION.md). Power-cycling does not clear the key.
-              </p>
-            )}
-            {s.hasApiKey && !str('apiKey') && (
-              <div className="flex justify-end">
-                <Button size="sm" onClick={() => { void logoutSession() }}>Sign out</Button>
-              </div>
-            )}
             <Row
               label="Result ingest token"
               sub={generated.ingest ? 'Copy it now: it is hidden once saved' : s.hasAnalysisIngestToken ? 'set — remote workers can post results' : 'not set — POST /api/analyses/results is off'}

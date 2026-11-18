@@ -1,10 +1,11 @@
 #!/bin/sh
-# Clear the optional Settings API key from loopback so the unit's web UI is
-# reachable on the LAN again. Run this on the unit over SSH. Power-cycling
-# does not clear the key.
+# Clear the optional Settings MCP access key (settings.apiKey) from loopback.
+# Run this on the unit over SSH. Power-cycling does not clear the key. The
+# web UI on the LAN does not need this key; MCP clients do.
 #
 # Usage: scripts/thryve-clear-api-key
 #        PORT=3000 scripts/thryve-clear-api-key
+#        /opt/thryve/scripts/thryve-clear-api-key
 set -eu
 PORT="${PORT:-3000}"
 URL="http://127.0.0.1:${PORT}/api/settings"
@@ -13,12 +14,12 @@ URL="http://127.0.0.1:${PORT}/api/settings"
 body="$(curl -sS -f -X PATCH "$URL" \
   -H 'Content-Type: application/json' \
   -d '{"apiKey":""}')" || {
-  echo "could not clear the API key at $URL (is core running?)" >&2
+  echo "could not clear the MCP access key at $URL (is core running?)" >&2
   exit 1
 }
 echo "$body" | grep -q '"hasApiKey":false' || echo "$body" | grep -q '"hasApiKey": false' || {
-  echo "core answered but the API key still looks set:" >&2
+  echo "core answered but the MCP access key still looks set:" >&2
   echo "$body" >&2
   exit 1
 }
-echo "API key cleared. The web UI on the LAN no longer requires a sign-in."
+echo "MCP access key cleared. MCP clients on the LAN no longer need a key."

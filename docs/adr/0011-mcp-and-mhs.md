@@ -40,3 +40,10 @@ rejection (DNS-rebinding guard), as in [sleepypod](https://sleepypod.github.io/c
 
 - When MHS opens, the device reference file is generated from `SystemInfo`
   plus the tool list; primitive names may be renamed to match the spec.
+
+## Amendment (2026-11-17)
+
+An optional MCP access key (Settings → MCP access, `settings.apiKey`) may
+be required on `/api/mcp` for non-loopback clients. The rest of the HTTP
+API stays LAN-trusted (ADR-0012).
+

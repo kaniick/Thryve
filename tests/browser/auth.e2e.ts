@@ -12,48 +12,55 @@ function lanOrigin(): string | null {
   return null
 }
 
-test('the web UI asks for an API key from the LAN and stays signed in after login', async ({ page, request }) => {
-  const origin = lanOrigin()
-  test.skip(!origin, 'no non-loopback address to exercise the API-key guard')
+const mcpInit = (key?: string) => ({
+  method: 'POST' as const,
+  headers: {
+    'content-type': 'application/json',
+    'accept': 'application/json, text/event-stream',
+    ...(key ? { 'x-api-key': key } : {}),
+  },
+  body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'e2e', version: '1' } } }),
+})
 
-  // Loopback is exempt, so this setup request does not need a key.
-  await request.patch('/api/settings', { data: { apiKey: 'e2e-sekret-key' } })
+test('the web UI on the LAN stays open when an MCP access key is set', async ({ page, request }) => {
+  const origin = lanOrigin()
+  test.skip(!origin, 'no non-loopback address to exercise LAN access')
+
+  await request.patch('/api/settings', { data: { apiKey: 'e2e-mcp-key' } })
   try {
     await page.goto(`${origin}/`)
-    await expect(page.getByTestId('auth-login')).toBeVisible({ timeout: 20_000 })
-    await expect(page.getByText('Sign in to this unit')).toBeVisible()
-    await page.getByLabel('API key').fill('e2e-sekret-key')
-    await page.getByRole('button', { name: 'Sign in' }).click()
     await expect(page.getByTestId('tower-3d')).toBeVisible({ timeout: 20_000 })
     await expect(page.getByTestId('auth-login')).toHaveCount(0)
+    await expect(page.getByText('Sign in to this unit')).toHaveCount(0)
 
-    await page.goto(`${origin}/settings`)
-    await page.getByRole('button', { name: 'Sign out' }).click()
-    await expect(page.getByTestId('auth-login')).toBeVisible()
+    await page.goto(`${origin}/settings#api`)
+    await expect(page.getByRole('heading', { name: 'MCP access' })).toBeVisible({ timeout: 20_000 })
+    await expect(page.getByText(/MCP clients must send/)).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Sign out' })).toHaveCount(0)
   }
   finally {
     await request.patch('/api/settings', { data: { apiKey: '' } })
   }
 })
 
-test('saving a new API key from the LAN keeps this browser signed in', async ({ page, request }) => {
+test('/api/mcp from the LAN returns 401 without the key and works with it', async ({ request }) => {
   const origin = lanOrigin()
-  test.skip(!origin, 'no non-loopback address to exercise the API-key guard')
+  test.skip(!origin, 'no non-loopback address to exercise the MCP access key')
 
-  await request.patch('/api/settings', { data: { apiKey: '' } })
+  await request.patch('/api/settings', { data: { apiKey: 'e2e-mcp-key' } })
   try {
-    await page.goto(`${origin}/settings`)
-    await expect(page.getByRole('button', { name: 'Generate API key' })).toBeVisible({ timeout: 20_000 })
-    await page.getByRole('button', { name: 'Generate API key' }).click()
-    await expect(page.getByTestId('api-key-warning')).toBeVisible()
-    const key = await page.getByRole('textbox', { name: 'API key' }).inputValue()
-    expect(key).toMatch(/^[0-9a-f]{48}$/)
-    await page.getByRole('button', { name: 'Save' }).click()
-    await expect(page.getByText(/unsaved/)).toHaveCount(0)
-    await page.reload()
-    await expect(page.getByRole('button', { name: 'Generate API key' })).toBeVisible({ timeout: 20_000 })
-    await expect(page.getByTestId('auth-login')).toHaveCount(0)
-    expect(key).toBeTruthy()
+    const denied = await fetch(`${origin}/api/mcp`, mcpInit())
+    expect(denied.status).toBe(401)
+    expect(await denied.json()).toMatchObject({ code: 'api_key_required' })
+
+    const ok = await fetch(`${origin}/api/mcp`, mcpInit('e2e-mcp-key'))
+    expect(ok.status).toBe(200)
+    const body = await ok.json() as { result?: { serverInfo?: { name?: string } } }
+    expect(body.result?.serverInfo?.name).toBe('Thryve')
+
+    // The rest of the API on the same LAN address stays open.
+    const health = await fetch(`${origin}/api/healthcheck`)
+    expect(health.status).toBe(200)
   }
   finally {
     await request.patch('/api/settings', { data: { apiKey: '' } })

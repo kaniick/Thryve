@@ -30,8 +30,8 @@ under **Settings → Off-device storage and analysis** (ADR 0019):
   the bucket.
 - **Result ingest.** With an ingest token set, a worker you run elsewhere can
   post analysis results to `POST /api/analyses/results`. Nothing leaves the
-  unit for this: the worker reads stills through the same REST API (and API
-  key, if you set one) as any other LAN client.
+  unit for this: the worker reads stills through the same REST API as any
+  other LAN client. The MCP access key, if you set one, is not required for that.
 
 **HomeKit** (Settings → Apple Home, off by default) is local too. iPhones on
 your network pair with the unit and control it directly over HAP; nothing
