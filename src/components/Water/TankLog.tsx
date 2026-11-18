@@ -1,10 +1,11 @@
-import { NotebookPen, Plus, Trash2 } from 'lucide-react'
+import { Calculator, NotebookPen, Plus, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { Button, Card, GhostIcon, InlineError } from '@/src/components/ds/core'
 import { Modal } from '@/src/components/ds/feedback'
 import { SelectValue, TextField } from '@/src/components/ds/forms'
 import { TANK_ACTION_KINDS, TANK_UNITS, type TankAction, type TankActionKind, type TankUnit } from '@/src/store/types'
 import { trpc } from '@/src/utils/trpc'
+import { FeedDose } from './FeedDose'
 import { fmtWhen } from './pumpCycles'
 
 const EYEBROW = 'font-mono text-[11px] font-medium uppercase tracking-[0.1em] text-fg-3'
@@ -35,6 +36,7 @@ export function TankLog() {
   const log = trpc.tank.logAction.useMutation(done)
   const remove = trpc.tank.removeAction.useMutation(done)
   const [draft, setDraft] = useState<Draft | null>(null)
+  const [calculating, setCalculating] = useState(false)
   const rows = actions.data ?? []
   const now = new Date()
   const amount = draft ? Number(draft.amount.replace(',', '.')) : 0
@@ -49,8 +51,9 @@ export function TankLog() {
 
   return (
     <div className="flex flex-col gap-2.5">
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <h2 className={`${EYEBROW} flex-1`}>Tank log</h2>
+        <Button icon={Calculator} onClick={() => setCalculating(true)}>Calculate feed dose</Button>
         <Button icon={Plus} onClick={() => setDraft(blank())}>Log action</Button>
       </div>
       <Card className="gap-0 p-0" data-testid="tank-log">
@@ -69,6 +72,15 @@ export function TankLog() {
       </Card>
       {(log.error ?? remove.error) && <InlineError>{(log.error ?? remove.error)?.message}</InlineError>}
 
+      {calculating && (
+        <FeedDose
+          onClose={() => setCalculating(false)}
+          onUseDose={(amount) => {
+            setCalculating(false)
+            setDraft({ ...blank(), amount, product: 'Gardyn Plant Food' })
+          }}
+        />
+      )}
       <Modal
         open={!!draft}
         onClose={() => setDraft(null)}
