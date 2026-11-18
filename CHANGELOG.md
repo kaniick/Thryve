@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 2.2.1 — 2026-11-17
+
 - Settings → API access: the unit's own web UI stays reachable when an API
   key is set. The browser shows a sign-in screen and receives an HttpOnly,
   SameSite=Strict session cookie (also set automatically when you save a
@@ -9,7 +11,8 @@
   `X-API-Key` or a Bearer token. A 401 is shown as a sign-in (or a specific
   "isn't reachable") screen instead of "core unreachable". `X-Forwarded-For`
   is not trusted from a non-loopback client. If you are locked out, SSH in
-  and run `/opt/thryve/scripts/thryve-clear-api-key` or the loopback curl in docs/INSTALLATION.md.
+  and run `/opt/thryve/scripts/thryve-clear-api-key` or the loopback curl in
+  docs/INSTALLATION.md (PR #28).
 
 ## 2.2.0 — 2026-11-16
 
