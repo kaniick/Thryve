@@ -1,6 +1,7 @@
 import { QueryClientProvider } from '@tanstack/react-query'
 import { createRouter, RouterProvider } from '@tanstack/react-router'
 import { useState } from 'react'
+import { AuthGate } from '@/src/components/Auth/AuthGate'
 import { createTrpcClient, queryClient, trpc } from '@/src/utils/trpc'
 import { routeTree } from './routeTree.gen'
 
@@ -17,7 +18,9 @@ export function App() {
   return (
     <trpc.Provider client={trpcClient} queryClient={queryClient}>
       <QueryClientProvider client={queryClient}>
-        <RouterProvider router={router} />
+        <AuthGate>
+          <RouterProvider router={router} />
+        </AuthGate>
       </QueryClientProvider>
     </trpc.Provider>
   )

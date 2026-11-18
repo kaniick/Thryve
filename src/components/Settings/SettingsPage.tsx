@@ -16,6 +16,7 @@ import type { AppRouter } from '@/src/server/routers/app'
 import { withUnit } from '@/src/lib/sensorMeta'
 import { displayUnit, fromDisplay, toDisplay, unitSystem } from '@/src/lib/units'
 import { unitPlace } from '@/src/scheduler/place'
+import { logoutSession } from '@/src/components/Auth/AuthGate'
 import { apiBase, trpc } from '@/src/utils/trpc'
 
 type SettingsView = inferRouterOutputs<AppRouter>['settings']['get']
@@ -281,10 +282,10 @@ function SettingsForm({ s, coreVersion, coreHost, system, onSave, saving }: {
             <Row label="Keep analysis masks" sub="About 115 kB per photo. Off saves SD card space."><Toggle label="Keep analysis masks" on={!!d.analysisArtifacts} onChange={v => setD({ ...d, analysisArtifacts: v })} /></Row>
           </Section>
 
-          <Section id="api" title="API access" sub="Optional key for REST and MCP clients outside localhost">
+          <Section id="api" title="API access" sub="Optional key for REST, MCP and other clients off this unit. The web UI on your LAN asks for the key once and keeps you signed in with a session cookie.">
             <Row
               label="API key"
-              sub={generated.api ? 'Copy it now: it is hidden once saved' : s.hasApiKey ? 'Set. Clients off this network must send it.' : 'Not set. Only devices on your network can connect.'}
+              sub={generated.api || str('apiKey') ? 'Copy it now: it is hidden once saved. After you save, this browser stays signed in; other browsers and scripts must send the key.' : s.hasApiKey ? 'Set. This browser can use a session cookie; scripts and other clients send X-API-Key or Bearer.' : 'Not set. Anyone on your network can open the UI and call the API.'}
             >
               <TextField aria-label="API key" className="w-[180px]" type={generated.api ? 'text' : 'password'} value={str('apiKey')} onChange={v => setD({ ...d, apiKey: v })} placeholder={s.hasApiKey ? '••••••' : 'none'} />
               <Button
@@ -297,6 +298,16 @@ function SettingsForm({ s, coreVersion, coreHost, system, onSave, saving }: {
                 Generate
               </Button>
             </Row>
+            {(generated.api || !!str('apiKey')) && (
+              <p className="text-xs text-danger" data-testid="api-key-warning">
+                Saving this key will require it for the web UI from other devices on the network. This browser will stay signed in. Copy the key before you save — it is hidden afterwards. If you get locked out, SSH into the unit and run /opt/thryve/scripts/thryve-clear-api-key (or the curl in docs/INSTALLATION.md). Power-cycling does not clear the key.
+              </p>
+            )}
+            {s.hasApiKey && !str('apiKey') && (
+              <div className="flex justify-end">
+                <Button size="sm" onClick={() => { void logoutSession() }}>Sign out</Button>
+              </div>
+            )}
             <Row
               label="Result ingest token"
               sub={generated.ingest ? 'Copy it now: it is hidden once saved' : s.hasAnalysisIngestToken ? 'set — remote workers can post results' : 'not set — POST /api/analyses/results is off'}

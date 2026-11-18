@@ -15,7 +15,7 @@ import { appRouter } from '../src/server/routers/app'
 import { IngestBatch, IngestRefused, ingestResults } from '../src/vision/ingest'
 import { MAX_MODEL_BYTES, ModelRefused } from '../src/vision/registry'
 import { podCrop } from '../src/vision/shareCodes'
-import { apiKeyGuard, timingSafeEqual } from './auth'
+import { apiKeyGuard, authorize, cookieValue, requestIsHttps, requestPeer, sessionClearCookie, sessionSetCookie, SESSION_COOKIE, timingSafeEqual } from './auth'
 
 export interface CreateAppOptions {
   ctx: Context
@@ -33,6 +33,18 @@ export interface CreateAppOptions {
 export function staticCacheControl(path: string, contentType: string | null): string {
   if (contentType?.startsWith('text/html')) return 'no-cache, no-store, must-revalidate'
   return path.startsWith('/assets/') ? 'public, max-age=31536000, immutable' : 'public, max-age=86400'
+}
+
+/**
+ * Builds the Hono app. Kept separate from `index.ts` so integration tests can
+ * mount it on an ephemeral port without touching process signals.
+ */
+
+function sessionControl(c: { req: { url: string }, header: (name: string, value: string, opts?: { append: boolean }) => void }): { grant(apiKey: string): void, revoke(): void } {
+  return {
+    grant(apiKey: string) { c.header('Set-Cookie', sessionSetCookie(apiKey, { secure: requestIsHttps(c) }), { append: true }) },
+    revoke() { c.header('Set-Cookie', sessionClearCookie(), { append: true }) },
+  }
 }
 
 /**
@@ -85,9 +97,36 @@ export function createApp({ ctx, staticRoot }: CreateAppOptions) {
   })
 
   app.use('/api/*', cors({ origin: origin => origin ?? '*' }))
+
+  // Public even when an API key is set: the web UI uses these to sign in.
+  app.get('/api/auth/status', (c) => {
+    const key = ctx.store.settings.get().apiKey
+    if (!key) return c.json({ required: false, signedIn: true })
+    const given = c.req.header('x-api-key') ?? c.req.header('authorization')?.replace(/^Bearer\s+/i, '')
+    const session = cookieValue(c.req.header('cookie'), SESSION_COOKIE)
+    return c.json({ required: true, signedIn: authorize(key, requestPeer(c), given, session) })
+  })
+  app.post('/api/login', async (c) => {
+    const key = ctx.store.settings.get().apiKey
+    if (!key) return c.json({ ok: true, required: false })
+    const body = await c.req.json().catch(() => null) as { apiKey?: unknown } | null
+    const presented = typeof body?.apiKey === 'string' ? body.apiKey : ''
+    if (!presented || !timingSafeEqual(presented, key)) return c.json({ error: 'unauthorized', code: 'api_key_required' }, 401)
+    c.header('Set-Cookie', sessionSetCookie(key, { secure: requestIsHttps(c) }), { append: true })
+    return c.json({ ok: true, required: true })
+  })
+  app.post('/api/logout', (c) => {
+    c.header('Set-Cookie', sessionClearCookie(), { append: true })
+    return c.json({ ok: true })
+  })
+
   app.use('/api/*', apiKeyGuard(ctx.store))
 
-  app.use('/api/trpc/*', trpcServer({ endpoint: '/api/trpc', router: appRouter, createContext: () => ({ ...ctx }) }))
+  app.use('/api/trpc/*', trpcServer({
+    endpoint: '/api/trpc',
+    router: appRouter,
+    createContext: (_opts, c) => ({ ...ctx, session: sessionControl(c) }),
+  }))
 
   app.get('/api/captures/:file', async (c) => {
     const id = c.req.param('file').replace(/\.jpg$/, '')
@@ -210,7 +249,23 @@ export function createApp({ ctx, staticRoot }: CreateAppOptions) {
   // Everything else under /api is the OpenAPI REST facade of the tRPC router.
   app.all('/api/*', async (c) => {
     const { createOpenApiFetchHandler } = await import('trpc-to-openapi')
-    return createOpenApiFetchHandler({ endpoint: '/api', router: appRouter, createContext: () => ({ ...ctx }), req: c.req.raw })
+    const cookies: string[] = []
+    const res = await createOpenApiFetchHandler({
+      endpoint: '/api',
+      router: appRouter,
+      createContext: () => ({
+        ...ctx,
+        session: {
+          grant(apiKey: string) { cookies.push(sessionSetCookie(apiKey, { secure: requestIsHttps(c) })) },
+          revoke() { cookies.push(sessionClearCookie()) },
+        },
+      }),
+      req: c.req.raw,
+    })
+    if (cookies.length === 0) return res
+    const out = new Response(res.body, res)
+    for (const cookie of cookies) out.headers.append('Set-Cookie', cookie)
+    return out
   })
 
   if (staticRoot) {
