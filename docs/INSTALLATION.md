@@ -269,8 +269,8 @@ off: another machine, `--no-port80`, or port 80 already taken. The installer
 ends by printing the address it set up.
 
 The forward is one nftables rule loaded by `thryve-port80.service`, so it
-comes back after a reboot, and core still sees each client's own address, which
-keeps the API key in force. It's IPv4 only, like core itself. If something else
+comes back after a reboot, and core still sees each client's own address, so
+an MCP access key (when set) is checked against the real client. It's IPv4 only, like core itself. If something else
 already listens on port 80, the installer leaves it alone and says so. On any
 other machine it leaves port 80 alone unless you run `scripts/install --port80`.
 `scripts/install --no-port80` removes the forward and keeps it off on later
@@ -278,26 +278,24 @@ installs.
 
 Core also advertises itself over Bonjour as `_thryve._tcp` on that port,
 so the iOS app finds it without an address. The TXT record carries `id`
-(the unit id), `v` (core's version) and `auth` (`1` when an API key is set
+(the unit id), `v` (core's version) and `auth` (`1` when an MCP access key is set
 in Settings, else `0`). To turn it off, set `THRYVE_MDNS=0` in
 `thryve-core.service`.
 
-### API key and the web UI
+### MCP access key
 
-Settings → API access can set an optional key. Scripts, REST, MCP and Home
-Assistant on the LAN must send it as `X-API-Key` or `Authorization: Bearer`.
-The unit's own web UI does **not** send that header: it shows a sign-in
-screen and exchanges the key for an HttpOnly, SameSite=Strict session
-cookie, so you are not locked out of the browser after saving a key. This
-browser is signed in automatically when you save a newly generated key.
-Loopback (`127.0.0.1`) stays exempt, so SSH and local scripts keep working.
-`X-Forwarded-For` is not trusted from a non-loopback client.
+Settings → MCP access can set an optional key required **only** by MCP
+clients (Claude and other assistants) calling `POST /api/mcp`. Send it as
+`X-API-Key` or `Authorization: Bearer`. The web UI, tRPC, the REST facade,
+WebSocket, stills and Home Assistant on the LAN do **not** need it (LAN
+trust, [ADR-0012](adr/0012-deployment-and-trust.md)). Loopback
+(`127.0.0.1`) is exempt, so SSH and local scripts keep working.
+`X-Forwarded-For` is not trusted from a non-loopback client. See
+[MCP](MCP.md).
 
-If you are locked out (an older release saved a key and the UI shows
-"unreachable", or you lost the key), SSH into the unit and clear it over
-loopback. Power-cycling does not clear the key. The `Content-Type` header is
-required; `curl -d` alone sends form-urlencoded and is rejected with 415,
-leaving the key in place:
+To clear the key over SSH (power-cycling does not clear it). The
+`Content-Type` header is required; `curl -d` alone sends form-urlencoded
+and is rejected with 415, leaving the key in place:
 
 ```sh
 curl -X PATCH http://127.0.0.1:3000/api/settings \
@@ -305,13 +303,11 @@ curl -X PATCH http://127.0.0.1:3000/api/settings \
   -d '{"apiKey":""}'
 ```
 
-From 2.2.1 the same recovery is also a helper in the prefix:
+Or the helper in the prefix:
 
 ```sh
 /opt/thryve/scripts/thryve-clear-api-key
 ```
-
-Then refresh the browser.
 
 A new install opens on **Welcome**. Choose **Set up a new garden**, or
 **Restore from a backup** if this card replaces one that died

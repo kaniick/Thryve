@@ -56,10 +56,12 @@ describe('POST /api/analyses/results', () => {
     expect((await dev.json() as { error: string }).error).toMatch(/on-device analyser/)
   })
 
-  it('uses its own token even when an API key guards the rest of the API', async () => {
+  it('uses its own token, independent of the MCP access key', async () => {
+    const lan = { incoming: { socket: { remoteAddress: '10.0.0.9' } } }
     const { post, app } = unit({ apiKey: 'api' })
     expect((await post(batch(), 'tok')).status).toBe(200)
-    expect((await app.request('/api/vision/analyzers', { headers: { 'x-forwarded-for': '10.0.0.9' } })).status).toBe(401)
+    expect((await app.request('/api/vision/analyzers', {}, lan)).status).toBe(200)
+    expect((await app.request('/api/mcp', { method: 'POST' }, lan)).status).toBe(401)
   })
 
   it('rejects oversized bodies before parsing them', async () => {

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Settings → MCP access: the optional key is required only by MCP clients
+  (`POST /api/mcp`, as `X-API-Key` or `Authorization: Bearer`). The web UI,
+  tRPC, REST, WebSocket and stills on the LAN no longer need it, and the
+  v2.2.1 sign-in screen and session cookie are removed. Analysis ingest and
+  `/api/models` tokens are unchanged. `scripts/thryve-clear-api-key` still
+  clears the key over loopback.
+
 ## 2.2.1 — 2026-11-17
 
 - Settings → API access: the unit's own web UI stays reachable when an API

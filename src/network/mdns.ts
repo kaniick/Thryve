@@ -1,8 +1,9 @@
 /**
  * Bonjour advertisement for core (ADR-0017): `_thryve._tcp` on the HTTP port,
  * so the iOS app finds the unit with NWBrowser instead of a typed-in address.
- * TXT `id` is the unit, `v` core's version, `auth` whether off-host requests
- * need the API key. TXT follows the API key setting and hald's unit id live.
+ * TXT `id` is the unit, `v` core's version, `auth` whether an MCP access key is
+ * set. Off-host MCP requests need that key; the web UI and the rest of the API
+ * do not. TXT follows the key setting and hald's unit id live.
  *
  * Uses ciao, the responder hap-nodejs already ships, loaded only when it
  * starts. A failure is logged and core carries on without it.

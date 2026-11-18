@@ -95,9 +95,11 @@ function Assistant() {
         </div>
         <p className="text-[12px] text-fg-3">
           {'With no key under '}
-          <Link to="/settings" hash="api" className="underline decoration-line-2 underline-offset-2 hover:text-fg">Settings → API access</Link>
-          {', any device on your network can connect; with one, send it as '}
+          <Link to="/settings" hash="api" className="underline decoration-line-2 underline-offset-2 hover:text-fg">Settings → MCP access</Link>
+          {', any MCP client on your network can connect; with one, send it as '}
           <code className="font-mono">Authorization: Bearer</code>
+          {' or '}
+          <code className="font-mono">X-API-Key</code>
           {'. '}
           <a href={MCP_DOCS} target="_blank" rel="noopener noreferrer" className="underline decoration-line-2 underline-offset-2 hover:text-fg">The tools it gets</a>
           .

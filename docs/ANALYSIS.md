@@ -656,8 +656,7 @@ analysers, and can be made primary.
    node scripts/analysis-worker.mjs --id my-model --version 1 --limit 48
    ```
 
-   It reads `GET /api/captures` and the JPEGs (add `THRYVE_API_KEY` if the
-   unit has an API key), scores each pod, and posts:
+   It reads `GET /api/captures` and the JPEGs, scores each pod, and posts:
 
    ```http
    POST /api/analyses/results
@@ -685,4 +684,4 @@ Rules the endpoint enforces:
   reported back under `skipped`.
 - **Size.** Up to 10,000 results and 5 MB per request.
 - **Token.** Ingest is off (404) while the token is empty. The token is
-  separate from the API key, which still guards every other endpoint.
+  separate from the optional MCP access key, which only guards `/api/mcp`.

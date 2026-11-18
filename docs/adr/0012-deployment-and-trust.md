@@ -39,3 +39,15 @@ on that response so the current browser is not locked out. Recovery from SSH is
 `curl -X PATCH http://127.0.0.1:3000/api/settings -H 'Content-Type: application/json' -d '{"apiKey":""}'`
 or `/opt/thryve/scripts/thryve-clear-api-key`.
 
+## Amendment (2026-11-17): MCP-only key
+
+The optional key (`settings.apiKey`, Settings → MCP access) now protects
+only `/api/mcp` and any path under it. tRPC, the REST facade, WebSocket,
+stills and the web UI on the LAN are unauthenticated again, which is the
+LAN-trust default this ADR started with. MCP clients send the key as
+`X-API-Key` or `Authorization: Bearer`. Loopback remains exempt.
+`X-Forwarded-For` is still honoured only when the socket peer is already
+loopback. The v2.2.1 web UI session cookie and sign-in screen are removed.
+Clear the key with `/opt/thryve/scripts/thryve-clear-api-key` or the
+loopback curl in `docs/INSTALLATION.md`.
+

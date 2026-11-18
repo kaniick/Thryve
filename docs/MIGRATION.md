@@ -114,7 +114,7 @@ What changed:
 
 ### Testing on the unit after migrating
 
-With water in the tank. SSH in and run these on the unit; add `-H "X-API-Key: …"` if you set an API key and run them from another machine.
+With water in the tank. SSH in and run these on the unit. They are ordinary REST calls and do not need the MCP access key.
 
 ```sh
 # what hald enforces: expect "pump_max_duty": 100.0, "pump_default_duty": 30.0, "pump_soft_start_ms": 1500

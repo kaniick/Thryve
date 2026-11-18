@@ -334,7 +334,7 @@ describe('Settings: header and section nav', () => {
     render(<SettingsPage />)
     const nav = screen.getByRole('navigation')
     const labels = Array.from(nav.querySelectorAll('button'), b => b.textContent)
-    expect(labels).toEqual(['Unit', 'Tank', 'Pump', 'Reminders', 'Notifications', 'Cameras', 'API access', 'Storage', 'SD card', 'Backup', 'Home Assistant', 'Apple Home', 'Wi-Fi', 'Updates', 'About'])
+    expect(labels).toEqual(['Unit', 'Tank', 'Pump', 'Reminders', 'Notifications', 'Cameras', 'MCP access', 'Storage', 'SD card', 'Backup', 'Home Assistant', 'Apple Home', 'Wi-Fi', 'Updates', 'About'])
     for (const id of ['unit', 'tank', 'reminders', 'notifications', 'cameras', 'api', 'off-device', 'storage', 'backup', 'home-assistant', 'homekit', 'wifi', 'update', 'about']) expect(document.getElementById(id)).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Backup' }))
     expect(scroll).toHaveBeenCalled()
@@ -356,12 +356,12 @@ describe('Settings: header and section nav', () => {
     act(() => cb([entry('cameras', true), entry('api', true)], {} as IntersectionObserver))
     expect(screen.getByRole('button', { name: 'Cameras' }).getAttribute('aria-current')).toBe('page')
     act(() => cb([entry('cameras', false)], {} as IntersectionObserver))
-    expect(screen.getByRole('button', { name: 'API access' }).getAttribute('aria-current')).toBe('page')
+    expect(screen.getByRole('button', { name: 'MCP access' }).getAttribute('aria-current')).toBe('page')
     vi.unstubAllGlobals()
   })
 })
 
-describe('Settings: tank and API key', () => {
+describe('Settings: tank and MCP access key', () => {
   it('shows the live reading and sets it as full', () => {
     data.set('sensors', { water_distance: { ts: '', value: 7.3, unit: 'cm', quality: 'good' }, water_level_pct: { ts: '', value: 83.4, unit: '%', quality: 'good' } })
     render(<SettingsPage />)
@@ -376,23 +376,24 @@ describe('Settings: tank and API key', () => {
     expect(screen.queryByTestId('tank-reading')).toBeNull()
   })
 
-  it('generates an API key and shows it until saved', () => {
+  it('generates an MCP access key and shows it until saved', () => {
     render(<SettingsPage />)
-    expect(screen.getByText('Not set. Anyone on your network can open the UI and call the API.')).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'Generate API key' }))
-    const input = screen.getByLabelText('API key') as HTMLInputElement
+    expect(screen.getByText('Not set. Any MCP client on your network can connect.')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Generate MCP access key' }))
+    const input = screen.getByLabelText('MCP access key') as HTMLInputElement
     expect(input.type).toBe('text')
     expect(input.value).toMatch(/^[0-9a-f]{48}$/)
-    expect(screen.getByTestId('api-key-warning').textContent).toMatch(/locked out/)
+    expect(screen.queryByTestId('api-key-warning')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Sign out' })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
     expect((calls.update.mock.calls[0]?.[0] as Record<string, unknown>).apiKey).toBe(input.value)
   })
 
-  it('says when a key is already set', () => {
+  it('says when a key is already set, without a sign-in or lockout warning', () => {
     data.set('settings', { ...settings, hasApiKey: true })
     render(<SettingsPage />)
-    expect(screen.getByText('Set. This browser can use a session cookie; scripts and other clients send X-API-Key or Bearer.')).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Sign out' })).toBeTruthy()
+    expect(screen.getByText('Set. MCP clients must send X-API-Key or Bearer. The web UI and the rest of the API on the LAN do not need it.')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Sign out' })).toBeNull()
   })
 })
 
@@ -513,7 +514,7 @@ describe('Settings: every field saves', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Increase Harvest' }))
     fireEvent.click(screen.getByRole('button', { name: 'Increase Nutrients' }))
     fireEvent.click(screen.getByRole('button', { name: 'Increase Capture interval' }))
-    fireEvent.change(screen.getByLabelText('API key'), { target: { value: 'k1' } })
+    fireEvent.change(screen.getByLabelText('MCP access key'), { target: { value: 'k1' } })
     fireEvent.change(screen.getByLabelText('Result ingest token'), { target: { value: 't1' } })
     fireEvent.click(screen.getByRole('button', { name: 'Connect bucket' }))
     fireEvent.change(field('Region'), { target: { value: '' } })

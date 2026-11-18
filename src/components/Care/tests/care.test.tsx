@@ -42,7 +42,7 @@ describe('CarePage', () => {
     expect(screen.getByTestId('chores')).toBeTruthy()
     expect(screen.getByTestId('tank-log')).toBeTruthy()
     expect(screen.getByTestId('mcp-command').textContent).toBe(`claude mcp add --transport http thryve ${window.location.origin}/api/mcp`)
-    expect(screen.getByRole('link', { name: 'Settings → API access' }).getAttribute('href')).toBe('/settings#api')
+    expect(screen.getByRole('link', { name: 'Settings → MCP access' }).getAttribute('href')).toBe('/settings#api')
   })
 
   it('says when the setup is complete', () => {
