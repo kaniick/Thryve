@@ -481,6 +481,31 @@ install_hal_mqtt_helper() {
   return $ok
 }
 
+
+# Cameras → Restart camera power-cycles one UVC camera's USB port (never the Pi).
+CAMERA_RESET_HELPER=/usr/local/sbin/thryve-camera-reset
+camera_reset_sudoers() {
+  echo "$1 ALL=(root) NOPASSWD: $CAMERA_RESET_HELPER upper"
+  echo "$1 ALL=(root) NOPASSWD: $CAMERA_RESET_HELPER lower"
+}
+install_camera_reset_helper() {
+  local helper="$ROOT$CAMERA_RESET_HELPER" rules="$ROOT/etc/sudoers.d/thryve-camera-reset" tmp src
+  src="$PREFIX/scripts/thryve-camera-reset.cjs"
+  [ -f "$src" ] || return 1
+  sudo mkdir -p "$(dirname "$helper")" "$(dirname "$rules")" || return 1
+  { sudo tee "$helper" >/dev/null < "$src"; } && sudo chown root:root "$helper" && sudo chmod 0755 "$helper" || return 1
+  tmp="$(mktemp)"
+  camera_reset_sudoers "$CORE_USER" > "$tmp"
+  if ! sudo visudo -cf "$tmp" >/dev/null; then
+    rm -f "$tmp"
+    return 1
+  fi
+  sudo install -m 0440 -o root -g root "$tmp" "$rules"
+  local ok=$?
+  rm -f "$tmp"
+  return $ok
+}
+
 # ---- podvision -------------------------------------------------------------------
 # Core's native pod-state runner (#191), a release binary like hald that core runs
 # at nice 19 for each capture. Without it, or with one that won't run here, core
@@ -677,6 +702,7 @@ fi
 rm -f "$SUDOERS_TMP"
 install_update_helper || warn "   couldn't install the update helper; update from the web UI is off"
 install_hal_mqtt_helper || warn "   couldn't install the hardware-broker helper; Settings cannot point hald at Home Assistant's broker"
+install_camera_reset_helper || warn "   couldn't install the camera-reset helper; Restart camera in the UI is off"
 install_podvision || warn "   couldn't install podvision; pod-state runs in TypeScript"
 
 # Backups read hal.toml, hald's state and the broker password through the thryve
