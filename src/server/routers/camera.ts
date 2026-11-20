@@ -1,5 +1,6 @@
 import { TRPCError } from '@trpc/server'
 import { z } from 'zod'
+import { listRestartLog, restartCamera } from '../cameraReset'
 import { publicProcedure, router } from '../trpc'
 
 const Cam = z.enum(['upper', 'lower'])
@@ -47,4 +48,31 @@ export const cameraRouter = router({
         throw new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: (e as Error).message })
       }
     }),
+  restart: publicProcedure
+    .meta({ openapi: { method: 'POST', path: '/camera/{camera}/restart', tags: ['camera'], summary: 'Power-cycle one camera USB port (does not reboot the Pi)' } })
+    .input(z.object({ camera: Cam }))
+    .output(z.object({
+      ok: z.boolean(),
+      camera: Cam,
+      detail: z.string(),
+      method: z.string().optional(),
+      code: z.string().optional(),
+      present: z.boolean().optional(),
+      simulated: z.boolean().optional(),
+      ts: z.string(),
+    }))
+    .mutation(async ({ input }) => restartCamera(input.camera)),
+  restarts: publicProcedure
+    .meta({ openapi: { method: 'GET', path: '/camera/restarts', tags: ['camera'], summary: 'Recent Restart camera attempts, newest first' } })
+    .output(z.array(z.object({
+      ok: z.boolean(),
+      camera: Cam,
+      detail: z.string(),
+      method: z.string().optional(),
+      code: z.string().optional(),
+      present: z.boolean().optional(),
+      simulated: z.boolean().optional(),
+      ts: z.string(),
+    })))
+    .query(() => listRestartLog().filter((r): r is typeof r & { camera: 'upper' | 'lower' } => r.camera === 'upper' || r.camera === 'lower')),
 })

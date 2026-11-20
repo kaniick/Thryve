@@ -3,9 +3,10 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-li
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { buckets, cameraFailure, CamerasPage, failureHint } from '../CamerasPage'
 
-const { data, capture, invalidate } = vi.hoisted(() => ({
+const { data, capture, restart, invalidate } = vi.hoisted(() => ({
   data: new Map<string, unknown>(),
   capture: { calls: [] as unknown[], fail: new Set<string>() },
+  restart: { calls: [] as unknown[], pending: false, last: null as { ok: boolean, detail: string, ts: string } | null },
   invalidate: vi.fn(),
 }))
 
@@ -40,6 +41,16 @@ vi.mock('@/src/utils/trpc', async () => {
             },
           }
         } },
+        restart: { useMutation: () => ({
+          isPending: restart.pending,
+          data: restart.last,
+          mutateAsync: async (input: { camera: string }) => {
+            restart.calls.push(input)
+            const result = { ok: true, camera: input.camera, detail: `Restarted the ${input.camera} camera (usbdevfs_reset). Give it a few seconds, then capture again.`, ts: '2026-11-19T20:00:00Z' }
+            restart.last = result
+            return result
+          },
+        }) },
       },
       settings: { get: { useQuery: () => ({ data: data.get('settings') }) } },
       alerts: { list: { useQuery: () => ({ data: data.get('alerts') }) } },
@@ -56,6 +67,9 @@ beforeEach(() => {
   data.clear()
   capture.calls = []
   capture.fail.clear()
+  restart.calls = []
+  restart.pending = false
+  restart.last = null
   invalidate.mockReset()
   // Newest first, as the API returns them.
   data.set('frames-upper', [frame('upper', '2026-11-01T10:00:00Z'), frame('upper', '2026-11-01T09:00:00Z'), frame('upper', '2026-10-28T09:00:00Z')])
@@ -93,9 +107,9 @@ describe('CamerasPage', () => {
   it('replaces a failing camera\'s frame with why, and retries it', () => {
     render(<CamerasPage />)
     const lower = within(screen.getByTestId('camera-lower'))
-    expect(lower.getByText(/No frame since/)).toBeTruthy()
-    expect(lower.getByText('Last capture returned 4 bytes. Check the ribbon cable, then capture again.')).toBeTruthy()
-    expect(lower.getByText('capture failed · 4 h ago')).toBeTruthy()
+    expect(lower.getByText('Lower camera is offline')).toBeTruthy()
+    expect(lower.getByText('Last capture returned 4 bytes. Check its cable at the USB hub, then capture again or restart the camera.')).toBeTruthy()
+    expect(lower.getByText(/offline · Last seen 5 h ago/)).toBeTruthy()
     expect(lower.getByText('latest capture failed')).toBeTruthy()
     expect(lower.getByTestId('failed-capture')).toBeTruthy()
     expect(lower.queryByRole('img')).toBeNull()
@@ -111,7 +125,7 @@ describe('CamerasPage', () => {
     fireEvent.click(screen.getByText('Capture both'))
     await vi.waitFor(() => expect(capture.calls).toEqual([{ camera: 'upper' }, { camera: 'lower' }]))
     const upper = within(screen.getByTestId('camera-upper'))
-    expect(upper.getByText('Last capture failed: upper camera returned no usable image. Check the ribbon cable, then capture again.')).toBeTruthy()
+    expect(upper.getByText('Last capture failed: upper camera returned no usable image. Check its cable at the USB hub, then capture again or restart the camera.')).toBeTruthy()
     expect(upper.getByText('Retry')).toBeTruthy()
   })
 
@@ -155,6 +169,18 @@ describe('CamerasPage', () => {
   })
 })
 
+it('confirms Restart camera and then calls the mutation', async () => {
+  render(<CamerasPage />)
+  const upper = within(screen.getByTestId('camera-upper'))
+  fireEvent.click(upper.getByTestId('restart-upper'))
+  const dialog = screen.getByRole('dialog')
+  expect(dialog.textContent).toMatch(/does not reboot the Pi/)
+  expect(dialog.textContent).toMatch(/not a second Raspberry Pi/)
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Restart camera' }))
+  await waitFor(() => expect(restart.calls).toEqual([{ camera: 'upper' }]))
+  expect(screen.queryByRole('dialog')).toBeNull()
+})
+
 describe('cameraFailure', () => {
   const latest = frame('lower', '2026-11-01T07:00:00Z')
   it('takes the alert that names this camera', () => {
@@ -177,8 +203,8 @@ describe('cameraFailure', () => {
 
 describe('failureHint', () => {
   it('names the byte count when the camera sent a stub', () => {
-    expect(failureHint('lower camera returned 4 bytes')).toBe('Last capture returned 4 bytes. Check the ribbon cable, then capture again.')
-    expect(failureHint('hald timed out')).toBe('Last capture failed: hald timed out. Check the ribbon cable, then capture again.')
+    expect(failureHint('lower camera returned 4 bytes')).toBe('Last capture returned 4 bytes. Check its cable at the USB hub, then capture again or restart the camera.')
+    expect(failureHint('hald timed out')).toBe('Last capture failed: hald timed out. Check its cable at the USB hub, then capture again or restart the camera.')
   })
 })
 

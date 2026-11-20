@@ -535,7 +535,7 @@ Documentation=https://github.com/$REPO/blob/main/docs/hardware/hal.md
 After=mosquitto.service
 
 [Service]
-$(if [ "$notify" -eq 1 ]; then printf '%s\n' "Type=notify" "WatchdogSec=10" "# The wait below plus a slow Pi Zero's start, before READY=1." "TimeoutStartSec=120"; fi)
+$(if [ "$notify" -eq 1 ]; then printf '%s\n' "Type=notify" "WatchdogSec=20" "# The wait below plus a slow Pi Zero's start, before READY=1." "TimeoutStartSec=120"; fi)
 # hald opens its hardware once, and starts before Wi-Fi now, so it can beat the PWM overlay
 # and udev's group ownership. Bounded, then on regardless: the pump's interlocks fail safe.
 ExecStartPre=-/usr/bin/timeout 30 /bin/sh -c 'until [ -w /sys/class/pwm/pwmchip0/export ] && [ -r /dev/i2c-${I2C_BUS:-1} ]; do sleep 1; done'

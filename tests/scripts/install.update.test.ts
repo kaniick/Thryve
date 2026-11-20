@@ -94,3 +94,21 @@ describe('the hardware-broker helper', () => {
     )
   })
 })
+
+const cameraHelper = resolve(import.meta.dirname, '../../scripts/thryve-camera-reset.cjs')
+
+describe('the camera-reset helper', () => {
+  it('lands in /usr/local/sbin with a sudoers rule for upper and lower only', () => {
+    writeFileSync(join(prefix, 'scripts/thryve-camera-reset.cjs'), readFileSync(cameraHelper))
+    const r = spawnSync('bash', ['-c', `source "${script}"; CORE_USER=thryve-core; install_camera_reset_helper`], {
+      encoding: 'utf8',
+      env: { PATH: `${bin}:${process.env.PATH}`, THRYVE_ROOT: root, THRYVE_PREFIX: prefix, THRYVE_LIB_ONLY: '1', STATE: dir },
+    })
+    expect(r).toMatchObject({ status: 0 })
+    expect(readFileSync(join(root, 'usr/local/sbin/thryve-camera-reset'), 'utf8')).toContain('never rebinds dwc_otg')
+    expect(readFileSync(join(root, 'etc/sudoers.d/thryve-camera-reset'), 'utf8').trim()).toBe(
+      'thryve-core ALL=(root) NOPASSWD: /usr/local/sbin/thryve-camera-reset upper\n'
+      + 'thryve-core ALL=(root) NOPASSWD: /usr/local/sbin/thryve-camera-reset lower',
+    )
+  })
+})

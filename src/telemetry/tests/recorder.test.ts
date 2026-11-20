@@ -29,7 +29,10 @@ describe('Recorder', () => {
     r.onHal({ type: 'actuator', id: 'pump', state: { on: false, level: 0, since: 't', fault: null, remainingS: null } })
     expect(store.alerts.list({ activeOnly: true })).toHaveLength(0)
     r.onHal({ type: 'availability', online: false })
-    expect(store.alerts.list({ activeOnly: true })[0]?.kind).toBe('hal_offline')
+    expect(store.alerts.list({ activeOnly: true }).some(a => a.kind === 'hal_offline')).toBe(false)
+    r.onHal({ type: 'availability', online: false })
+    // Still within the grace: a blip must not raise.
+    expect(store.alerts.list({ activeOnly: true }).some(a => a.kind === 'hal_offline')).toBe(false)
   })
 
   it('hands HAL alert details over as live, so a changing reading never touches the row', () => {
@@ -96,5 +99,36 @@ describe('Recorder', () => {
     t = 3 * 3_600_000
     r.stop()
     expect(store.counters.get(LIGHT_HOURS_KEY)).toBe(3)
+  })
+
+  it('does not raise hal_offline for a brief unreachable blip', () => {
+    vi.useFakeTimers()
+    const store = new MemoryStore()
+    let t = 0
+    const r = new Recorder({ store, events: createEventBus(), now: () => new Date(t), halOfflineGraceMs: 45_000 })
+    r.onHal({ type: 'availability', online: false })
+    expect(store.alerts.list({ activeOnly: true })).toHaveLength(0)
+    t = 10_000
+    r.onHal({ type: 'availability', online: true })
+    vi.advanceTimersByTime(45_000)
+    expect(store.alerts.list({ activeOnly: true })).toHaveLength(0)
+    r.stop()
+  })
+
+  it('raises hal_offline only after hald has been unreachable for the grace', () => {
+    vi.useFakeTimers()
+    const store = new MemoryStore()
+    let t = 1_000
+    const r = new Recorder({ store, events: createEventBus(), now: () => new Date(t), halOfflineGraceMs: 45_000 })
+    r.onHal({ type: 'availability', online: false })
+    t = 20_000
+    vi.advanceTimersByTime(19_000)
+    expect(store.alerts.list({ activeOnly: true })).toHaveLength(0)
+    t = 46_000
+    vi.advanceTimersByTime(26_000)
+    expect(store.alerts.list({ activeOnly: true })[0]?.kind).toBe('hal_offline')
+    r.onHal({ type: 'availability', online: true })
+    expect(store.alerts.list({ activeOnly: true })).toHaveLength(0)
+    r.stop()
   })
 })
