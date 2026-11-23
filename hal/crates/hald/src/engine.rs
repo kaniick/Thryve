@@ -399,11 +399,16 @@ impl WaterAlert {
             self.active = false;
             self.detail.clear();
         }
-        if self.active && (is_low || distance.is_none()) {
-            self.detail = match distance {
-                Some(d) => format!("water distance {d:.1} cm ≥ {low:.1} cm"),
-                None => "water level sensor unavailable".to_owned(),
-            };
+        // Do not relabel a confirmed low-water condition as a sensor fault
+        // merely because the next camera-busy telemetry round missed the ranger.
+        // Once a genuine sustained outage is established, report the sensor
+        // fault explicitly. The pump's separate safety interlock is unchanged.
+        if self.active && is_low {
+            if let Some(d) = distance {
+                self.detail = format!("water distance {d:.1} cm ≥ {low:.1} cm");
+            }
+        } else if self.active && gone {
+            self.detail = "water level sensor unavailable".to_owned();
         }
     }
 }
@@ -1804,6 +1809,16 @@ mod tests {
         alert.observe(None, 16.0);
         assert!(alert.active);
         assert_eq!(alert.detail, "water level sensor unavailable");
+    }
+
+    #[test]
+    fn water_alert_keeps_confirmed_low_water_detail_during_one_missing_round() {
+        let mut alert = WaterAlert::default();
+        alert.observe(Some(17.0), 16.0);
+        assert!(alert.active);
+        alert.observe(None, 16.0);
+        assert!(alert.active);
+        assert!(alert.detail.contains("water distance"), "one missed ranger sample must not disguise confirmed low water");
     }
 
     #[test]
