@@ -407,7 +407,7 @@ impl WaterAlert {
             if let Some(d) = distance {
                 self.detail = format!("water distance {d:.1} cm ≥ {low:.1} cm");
             }
-        } else if self.active && gone && (self.misses >= WATER_RAISE_AT || self.last_trusted_cm.is_none()) {
+        } else if self.active && gone && (self.misses >= WATER_RAISE_AT || self.detail.is_empty()) {
             self.detail = "water level sensor unavailable".to_owned();
         }
     }
