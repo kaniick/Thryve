@@ -357,6 +357,8 @@ struct WaterAlert {
     last_trusted_cm: Option<f64>,
     /// Consecutive missing rounds since that last trusted reading.
     misses: usize,
+    /// Missing telemetry rounds within the same bounded alert window.
+    missing_recent: VecDeque<bool>,
 }
 
 impl WaterAlert {
@@ -373,6 +375,10 @@ impl WaterAlert {
     fn observe(&mut self, distance: Option<f64>, low: f64) {
         let is_low = distance.is_some_and(|d| d >= low);
         let good = distance.is_some_and(|d| d < low);
+        if self.missing_recent.len() == WATER_WINDOW {
+            self.missing_recent.pop_front();
+        }
+        self.missing_recent.push_back(distance.is_none());
         if good {
             self.last_trusted_cm = distance;
             self.misses = 0;
@@ -407,7 +413,9 @@ impl WaterAlert {
             if let Some(d) = distance {
                 self.detail = format!("water distance {d:.1} cm ≥ {low:.1} cm");
             }
-        } else if self.active && gone && (self.misses >= WATER_RAISE_AT || self.detail.is_empty()) {
+        } else if self.active && gone && (self.misses >= WATER_RAISE_AT
+            || self.missing_recent.iter().filter(|missing| **missing).count() >= WATER_RAISE_AT
+            || self.detail.is_empty()) {
             self.detail = "water level sensor unavailable".to_owned();
         }
     }
