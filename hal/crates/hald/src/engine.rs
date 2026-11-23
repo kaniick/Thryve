@@ -413,13 +413,13 @@ impl WaterAlert {
             if let Some(d) = distance {
                 self.detail = format!("water distance {d:.1} cm ≥ {low:.1} cm");
             }
-        } else if self.active
-            && gone
-            && (self.misses >= WATER_RAISE_AT
-                || self.missing_recent.iter().filter(|missing| **missing).count() >= WATER_RAISE_AT
-                || self.detail.is_empty())
-        {
-            self.detail = "water level sensor unavailable".to_owned();
+        } else if self.active && distance.is_none() {
+            let missing_in_window = self.missing_recent.iter().filter(|missing| **missing).count();
+            if gone && (self.misses >= WATER_RAISE_AT || self.detail.is_empty())
+                || missing_in_window >= WATER_RAISE_AT
+            {
+                self.detail = "water level sensor unavailable".to_owned();
+            }
         }
     }
 }
