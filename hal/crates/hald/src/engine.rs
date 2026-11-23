@@ -1818,7 +1818,10 @@ mod tests {
         assert!(alert.active);
         alert.observe(None, 16.0);
         assert!(alert.active);
-        assert!(alert.detail.contains("water distance"), "one missed ranger sample must not disguise confirmed low water");
+        assert!(
+            alert.detail.contains("water distance"),
+            "one missed ranger sample must not disguise confirmed low water"
+        );
     }
 
     #[test]
@@ -1834,7 +1837,6 @@ mod tests {
         assert!(!alert.active, "a complete window of good levels clears the alert");
         assert!(alert.detail.is_empty());
     }
-
 
     fn system(actuators: Vec<ActuatorId>) -> SystemInfo {
         SystemInfo {
