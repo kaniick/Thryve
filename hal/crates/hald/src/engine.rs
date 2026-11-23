@@ -1779,6 +1779,48 @@ mod tests {
     use super::*;
     use hal_core::{Caps, Limits, CONTRACT_VERSION};
 
+    // Phase 1: guard against transient ranger dropouts during camera capture.
+    // These tests intentionally exercise the existing alert state machine
+    // without changing the live pump interlock or calibration.
+    #[test]
+    fn water_alert_ignores_isolated_missing_round_on_wet_tank() {
+        let mut alert = WaterAlert::default();
+        alert.observe(Some(8.0), 16.0);
+        for _ in 0..8 {
+            alert.observe(None, 16.0);
+            assert!(!alert.active, "one missing round must not alarm on a wet tank");
+            alert.observe(Some(8.0), 16.0);
+        }
+    }
+
+    #[test]
+    fn water_alert_requires_sustained_loss_when_last_level_is_safe() {
+        let mut alert = WaterAlert::default();
+        alert.observe(Some(8.0), 16.0);
+        for _ in 0..(WATER_RAISE_AT - 1) {
+            alert.observe(None, 16.0);
+            assert!(!alert.active);
+        }
+        alert.observe(None, 16.0);
+        assert!(alert.active);
+        assert_eq!(alert.detail, "water level sensor unavailable");
+    }
+
+    #[test]
+    fn water_alert_distinguishes_low_water_from_sensor_loss() {
+        let mut alert = WaterAlert::default();
+        alert.observe(Some(8.0), 16.0);
+        alert.observe(Some(16.5), 16.0);
+        assert!(alert.active, "a trusted low level must alert immediately");
+        assert!(alert.detail.contains("water distance"));
+        for _ in 0..WATER_WINDOW {
+            alert.observe(Some(8.0), 16.0);
+        }
+        assert!(!alert.active, "a complete window of good levels clears the alert");
+        assert!(alert.detail.is_empty());
+    }
+
+
     fn system(actuators: Vec<ActuatorId>) -> SystemInfo {
         SystemInfo {
             contract: CONTRACT_VERSION,
