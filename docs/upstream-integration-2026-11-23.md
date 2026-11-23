@@ -1,3 +1,12 @@
+---
+type: "Implementation plan"
+title: "Selective upstream integration — assessment and execution plan"
+description: "Four-phase implementation plan for safe selective Seedypod integration into Thryve."
+status: "draft"
+generated: {"by": "ChatGPT", "at": "2026-11-23T00:00:00+00:00"}
+sources: [{"resource": "https://github.com/seedypod/core", "title": "Seedypod upstream"}, {"resource": "https://github.com/kaniick/Thryve", "title": "Thryve fork"}]
+---
+
 # Selective upstream integration — assessment and execution plan
 
 Date: 2026-11-23
