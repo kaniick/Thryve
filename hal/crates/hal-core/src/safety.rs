@@ -1259,9 +1259,8 @@ mod tests {
 
     // ---- the current guard (#220) -------------------------------------------
 
-    /// Pump-current traces: the 4 Hz ones as `hald --pump-trace` writes them, the
-    /// 10 Hz ones at the rate hald now feeds the guard. The synthetic ones stand
-    /// in until the unit's wet and dry runs are recorded; add those here.
+    /// Synthetic 30% traces at the capture rate (4 Hz) and the rate hald
+    /// now feeds the guard (10 Hz). Measured 100% traces are tested separately.
     const WET_TRACES: &[(&str, &str)] = &[
         (
             "wet.synthetic",
@@ -1321,8 +1320,12 @@ mod tests {
 
     /// Plays a trace through a running pump with a full tank: when (ms) it tripped and why.
     fn replay(g: &mut PumpGuard, csv: &str) -> Option<(u64, String)> {
+        replay_with(g, csv, &on(None, None))
+    }
+
+    fn replay_with(g: &mut PumpGuard, csv: &str, command: &ActuatorCommand) -> Option<(u64, String)> {
         let t0 = Instant::now();
-        g.request(&on(None, None), wet(), t0).unwrap();
+        g.request(command, wet(), t0).unwrap();
         trace(csv).into_iter().find_map(|(ms, a)| {
             let env = Env {
                 pump_current_a: a,
@@ -1331,6 +1334,50 @@ mod tests {
             let stop = g.tick(env, t0 + Duration::from_millis(ms));
             stop.map(|_| (ms, g.fault().unwrap_or("no fault").to_owned()))
         })
+    }
+
+    // Seedypod's supervised wet and air-locked runs at 100% duty, 2026-11-16.
+    // Replay only. The trace profile is not a default or a calibration for another pump.
+    // Source: https://github.com/seedypod/core/pull/275
+    const MEASURED_WET: &str = include_str!("../fixtures/pump_current/wet.unit-2026-11-16.csv");
+    const MEASURED_DRY: &str = include_str!("../fixtures/pump_current/dry.unit-2026-11-16.csv");
+
+    fn measured_guard(grace_ms: u64) -> PumpGuard {
+        PumpGuard::new(PumpLimits {
+            dry_current_a: Some(0.8),
+            dry_grace_ms: grace_ms,
+            soft_start_ms: 0,
+            ..PumpLimits::default()
+        })
+    }
+
+    #[test]
+    fn measured_wet_run_distinguishes_spin_up_from_a_dry_fault() {
+        assert!(trace(MEASURED_WET).len() > 100);
+        let full_duty = on(Some(100.0), Some(180));
+        assert_eq!(
+            replay_with(&mut measured_guard(3000), MEASURED_WET, &full_duty),
+            None
+        );
+        let (at, fault) = replay_with(&mut measured_guard(1000), MEASURED_WET, &full_duty)
+            .expect("the recorded wet pump was still spinning up");
+        assert!((1000..3000).contains(&at), "tripped at {at} ms");
+        assert!(is_dry_run(&fault), "{fault}");
+    }
+
+    #[test]
+    fn measured_air_locked_run_trips_after_the_intake_loses_water() {
+        assert!(trace(MEASURED_DRY).len() > 100);
+        let (at, fault) = replay_with(
+            &mut measured_guard(3000),
+            MEASURED_DRY,
+            &on(Some(100.0), Some(180)),
+        )
+        .expect("the guard must trip when the measured current drops");
+        // Wet for 30 s; readings are consistently below the cutoff after ~31.07 s.
+        assert!((31_000..=32_100).contains(&at), "tripped at {at} ms");
+        assert!(is_dry_run(&fault), "{fault}");
+        assert!(fault.contains("below 0.8 A"), "{fault}");
     }
 
     #[test]
