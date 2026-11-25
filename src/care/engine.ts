@@ -14,7 +14,7 @@ import type { Store, TankActionKind } from '../store/types'
 import { chores, type Chore, type ChoreId } from './chores'
 import { FOLLOW_ALERT, type FollowChange } from './follow'
 import { runProtocol } from './protocol'
-import { SETUP_ALERTS, setupReport, type SetupReport } from './setup'
+import { assessSetup, SETUP_ALERTS, TANK_SENSOR_ALERT, type SetupReport } from './setup'
 
 const TICK_MS = 15 * 60_000
 /** HAL bursts need one care check. This does not debounce any actuator or HAL fault. */
@@ -58,10 +58,13 @@ export class CareEngine {
     }
     // The runner has written its needs-you items already, before marking each Then done.
     for (const n of notices) events.emit({ kind: 'mutation', path: `alerts.${n.kind}` })
-    const setup = setupReport(store, snap)
-    const list = chores(store, snap, now)
     const active = store.alerts.list({ activeOnly: true })
-    for (const kind of SETUP_ALERTS) this.sync(active.find(a => a.kind === kind), kind, setup.issues.find(i => i.alert === kind)?.detail ?? null, false)
+    const { report: setup, tankKnown } = assessSetup(store, snap, now, active.find(a => a.kind === TANK_SENSOR_ALERT) ?? null)
+    const list = chores(store, snap, now)
+    for (const kind of SETUP_ALERTS) {
+      if (kind === TANK_SENSOR_ALERT && !tankKnown) continue
+      this.sync(active.find(a => a.kind === kind), kind, setup.issues.find(i => i.alert === kind)?.detail ?? null, false)
+    }
     for (const [id, kind] of Object.entries(CHORE_ALERTS)) {
       const c = list.find(x => x.id === id)
       // A chore's detail carries the reading, so it changes every sample: held in memory, and dismissal goes by kind.
