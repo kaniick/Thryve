@@ -10,8 +10,9 @@ import type { AutomationRule, Condition } from '../autopilot/types'
 import type { ChannelConfig, ChannelSecrets, NotificationChannel, NotificationRule, NotificationRun, NotifyPriority, NotifyTrigger } from '../notify/types'
 import type { ActivityToken, ApnsEnvironment, FeedItem, FeedLevel, IosDevice } from '../notify/ios/types'
 import * as t from '../db/schema'
-import { downsample } from './memory'
-import type { AlertRow, Automation, AutomationRun, AnalysisPoint, AnalysisRow, AnalyzerStats, BackupRecord, Capture, CustomPlant, DeviceSettings, FlashSample, GrowCycle, GrowProtocolState, GrowStage, LightSpec, PlanRow, PlantProfile, Pod, PodCodePair, PodCodeRead, PodLabel, PodLabelCursor, PodLabelInput, PodLabelSource, PodLabelValue, PumpSpec, SavedCycle, SavedSchedule, Schedule, ScheduleRun, Store, SuggestionDismissal, TankAction, TankActionKind, TelemetryPoint, QualitySample, PumpRun } from './types'
+import { qualityCounts, trustedShareOf } from './memory'
+import { SqliteTelemetryReader } from './sqliteTelemetry'
+import type { AlertQuery, AlertRow, Automation, AutomationRun, AnalysisPoint, AnalysisRow, AnalyzerStats, BackupRecord, Capture, CustomPlant, DeviceSettings, FlashSample, GrowCycle, GrowProtocolState, GrowStage, LightSpec, PlanRow, PlantProfile, Pod, PodCodePair, PodCodeRead, PodLabel, PodLabelCursor, PodLabelInput, PodLabelSource, PodLabelValue, PumpSpec, SavedCycle, SavedSchedule, Schedule, ScheduleRun, Store, SuggestionDismissal, TankAction, TankActionKind, TelemetryPoint, QualityCounts, QualitySample, PumpRun } from './types'
 import { DEFAULT_SETTINGS, POD_LABELS, profileKey } from './types'
 
 export interface SqliteStoreOptions {
@@ -26,6 +27,12 @@ const here = dirname(fileURLToPath(import.meta.url))
 
 /** About ten hours of a stock unit's rows, under 1 MB: enough to ride out a bad card without growing on a 426 MB board. */
 export const MAX_HELD_TELEMETRY = 5_000
+/** Cap separately so the high-frequency ranger cannot exhaust RAM during a card fault. */
+export const MAX_HELD_QUALITY = 10_000
+const BATCH_SIZE = 1_000
+const DEFAULT_BUSY_MS = 5_000
+/** A buffered write can wait for the next flush instead of blocking the event loop. */
+const TELEMETRY_BUSY_MS = 100
 
 /**
  * Migrations live in src/db/migrations. From source (vitest/tsx) that is next
@@ -45,6 +52,10 @@ export function defaultMigrationsFolder(): string {
 export class SqliteStore implements Store {
   private readonly sqlite: Database.Database
   private readonly db
+  private readonly telemetryReader
+  private readonly countQuality
+  private readonly selectSettings
+  private cachedSettings: DeviceSettings | null = null
   /** Rows waiting for the next flush (ADR-0021). */
   private heldTelemetry: TelemetryPoint[] = []
   private heldQuality: QualitySample[] = []
@@ -58,10 +69,18 @@ export class SqliteStore implements Store {
     if (opts.url !== ':memory:') mkdirSync(dirname(resolve(opts.url)), { recursive: true })
     this.sqlite = new Database(opts.url)
     this.sqlite.pragma('journal_mode = WAL')
-    this.sqlite.pragma('busy_timeout = 5000')
+    this.sqlite.pragma(`busy_timeout = ${DEFAULT_BUSY_MS}`)
     this.db = drizzle(this.sqlite, { schema: t })
     migrate(this.db, { migrationsFolder: opts.migrationsFolder ?? defaultMigrationsFolder() })
     this.seed(opts.podCount ?? 30)
+    this.telemetryReader = new SqliteTelemetryReader(this.sqlite)
+    this.selectSettings = this.db.select().from(t.deviceSettings).where(eq(t.deviceSettings.id, 1)).prepare()
+    this.countQuality = this.sqlite.prepare<unknown[], QualityCounts>(`
+      SELECT count(*) AS samples,
+        count(CASE WHEN quality = 'good' THEN 1 END) AS good,
+        count(CASE WHEN quality = 'suspect' THEN 1 END) AS suspect
+      FROM sensor_quality WHERE sensor = ? AND ts BETWEEN ? AND ?
+    `)
   }
 
   private seed(podCount: number) {
@@ -74,14 +93,25 @@ export class SqliteStore implements Store {
 
   settings = {
     get: (): DeviceSettings => {
-      const row = this.db.select().from(t.deviceSettings).where(eq(t.deviceSettings.id, 1)).get()
-      if (!row) throw new Error('device_settings row missing')
-      const rest: DeviceSettings & { id?: number } = { ...row }
-      delete rest.id
-      return rest
+      if (!this.cachedSettings) {
+        const row = this.selectSettings.get()
+        if (!row) throw new Error('device_settings row missing')
+        const settings: DeviceSettings & { id?: number } = row
+        delete settings.id
+        this.cachedSettings = settings
+      }
+      // Keep the cache private, including the three JSON-valued fields.
+      const settings = this.cachedSettings
+      return {
+        ...settings,
+        libraryLightsOff: settings.libraryLightsOff && [...settings.libraryLightsOff],
+        autoLightsOff: settings.autoLightsOff && [...settings.autoLightsOff],
+        podRegions: settings.podRegions && structuredClone(settings.podRegions),
+      }
     },
     update: (patch: Partial<Omit<DeviceSettings, 'updatedAt'>>): DeviceSettings => {
       this.db.update(t.deviceSettings).set({ ...patch, updatedAt: new Date().toISOString() }).where(eq(t.deviceSettings.id, 1)).run()
+      this.cachedSettings = null
       return this.settings.get()
     },
   }
@@ -112,10 +142,14 @@ export class SqliteStore implements Store {
   }
 
   alerts = {
-    list: (opts?: { activeOnly?: boolean }): AlertRow[] => {
-      const q = this.db.select().from(t.alerts)
-      const rows = opts?.activeOnly ? q.where(eq(t.alerts.active, true)).all() : q.all()
-      return rows.map(r => ({ ...r, detail: this.liveDetail.get(r.id) ?? r.detail })).sort((a, b) => b.raisedAt.localeCompare(a.raisedAt))
+    list: (opts?: AlertQuery): AlertRow[] => {
+      const q = this.db.select().from(t.alerts).where(and(
+        opts?.activeOnly ? eq(t.alerts.active, true) : undefined,
+        opts?.kind === undefined ? undefined : eq(t.alerts.kind, opts.kind),
+        opts?.since === undefined ? undefined : gte(t.alerts.raisedAt, opts.since),
+      )).orderBy(desc(t.alerts.raisedAt), asc(t.alerts.id))
+      const rows = opts?.offset ? q.limit(opts.limit ?? Number.MAX_SAFE_INTEGER).offset(opts.offset).all() : opts?.limit === undefined ? q.all() : q.limit(opts.limit).all()
+      return rows.map(r => ({ ...r, detail: this.liveDetail.get(r.id) ?? r.detail }))
     },
     raise: (kind: string, detail: string, ts: string, opts?: { live?: boolean }): AlertRow => {
       const existing = this.db.select().from(t.alerts).where(and(eq(t.alerts.kind, kind), eq(t.alerts.active, true))).get()
@@ -252,34 +286,39 @@ export class SqliteStore implements Store {
 
   telemetry = {
     add: (pts: TelemetryPoint[]): void => {
-      this.heldTelemetry.push(...pts)
-      if (this.heldTelemetry.length < MAX_HELD_TELEMETRY) return
-      if (!this.capFlushFailed) {
-        this.telemetry.flush()
-        this.capFlushFailed = this.heldTelemetry.length > 0
-      }
-      // A card that refuses writes must not grow memory: the oldest rows go first.
-      this.heldTelemetry.splice(0, this.heldTelemetry.length - MAX_HELD_TELEMETRY)
+      for (const p of pts) this.heldTelemetry.push(p)
+      this.flushAtCapacity()
     },
-    range: (sensor: SensorId, fromTs: string, toTs: string, maxPoints = 500): TelemetryPoint[] => {
-      const rows = this.db.select({ ts: t.telemetry.ts, sensor: t.telemetry.sensor, value: t.telemetry.value }).from(t.telemetry)
-        .where(and(eq(t.telemetry.sensor, sensor), gte(t.telemetry.ts, fromTs), lte(t.telemetry.ts, toTs))).orderBy(asc(t.telemetry.ts)).all() as TelemetryPoint[]
-      // Merged rather than flushed, so a chart polling every minute costs no write.
-      const held = this.heldTelemetry.filter(p => p.sensor === sensor && p.ts >= fromTs && p.ts <= toTs)
-      const all = held.length ? [...rows, ...held].sort((a, b) => a.ts.localeCompare(b.ts)) : rows
-      return maxPoints < 0 ? all : downsample(all, maxPoints)
-    },
+    range: (sensor: SensorId, fromTs: string, toTs: string, maxPoints = 500): TelemetryPoint[] =>
+      this.telemetryReader.range(sensor, fromTs, toTs, maxPoints, this.heldTelemetry),
+    count: (sensor: SensorId, fromTs: string, toTs: string): number =>
+      this.telemetryReader.count(sensor, fromTs, toTs, this.heldTelemetry),
+    scan: (sensor: SensorId, fromTs: string, toTs: string): Iterable<TelemetryPoint> =>
+      this.telemetryReader.scan(sensor, fromTs, toTs, this.heldTelemetry),
     flush: (): void => {
       if (this.heldTelemetry.length === 0 && this.heldQuality.length === 0) return
       try {
-        if (this.heldTelemetry.length) this.db.insert(t.telemetry).values(this.heldTelemetry).run()
-        if (this.heldQuality.length) this.db.insert(t.sensorQuality).values(this.heldQuality).run()
+        this.sqlite.pragma(`busy_timeout = ${TELEMETRY_BUSY_MS}`)
+        // A quality insert that fails after telemetry must not duplicate
+        // the earlier inserts when both buffers are retried.
+        this.sqlite.transaction(() => {
+          for (let start = 0; start < this.heldTelemetry.length; start += BATCH_SIZE) {
+            this.db.insert(t.telemetry).values(this.heldTelemetry.slice(start, start + BATCH_SIZE)).run()
+          }
+          for (let start = 0; start < this.heldQuality.length; start += BATCH_SIZE) {
+            this.db.insert(t.sensorQuality).values(this.heldQuality.slice(start, start + BATCH_SIZE)).run()
+          }
+        }).immediate()
         this.heldTelemetry = []
         this.heldQuality = []
         this.capFlushFailed = false
       }
       catch (e) {
-        console.warn(`telemetry flush failed, holding ${this.heldTelemetry.length} rows: ${(e as Error).message}`)
+        console.warn(`telemetry flush failed, holding ${this.heldTelemetry.length} rows and ${this.heldQuality.length} quality samples: ${(e as Error).message}`)
+      }
+      finally {
+        // This synchronous transaction never yields with another operation's timeout changed.
+        this.sqlite.pragma(`busy_timeout = ${DEFAULT_BUSY_MS}`)
       }
     },
     thin: (sensors: readonly SensorId[], fromTs: string, toTs: string, bucketMin: number): number => {
@@ -300,7 +339,8 @@ export class SqliteStore implements Store {
   sensorQuality = {
     add: (samples: QualitySample[]): void => {
       if (samples.length === 0) return
-      this.heldQuality.push(...samples)
+      for (const sample of samples) this.heldQuality.push(sample)
+      this.flushAtCapacity()
     },
     range: (sensor: string, fromTs: string, toTs: string): QualitySample[] => {
       const rows = this.db.select({ ts: t.sensorQuality.ts, sensor: t.sensorQuality.sensor, quality: t.sensorQuality.quality })
@@ -310,17 +350,27 @@ export class SqliteStore implements Store {
       const held = this.heldQuality.filter(s => s.sensor === sensor && s.ts >= fromTs && s.ts <= toTs)
       return held.length ? [...rows, ...held].sort((a, b) => a.ts.localeCompare(b.ts)) : rows
     },
+    counts: (sensor: string, fromTs: string, toTs: string): QualityCounts => {
+      const stored = this.countQuality.get(sensor, fromTs, toTs) ?? { samples: 0, good: 0, suspect: 0 }
+      const held = qualityCounts(this.heldQuality.filter(s => s.sensor === sensor && s.ts >= fromTs && s.ts <= toTs))
+      return { samples: stored.samples + held.samples, good: stored.good + held.good, suspect: stored.suspect + held.suspect }
+    },
     trustedShare: (sensor: string, nowTs: string, windowS: number) => {
       const fromTs = new Date(Date.parse(nowTs) - windowS * 1000).toISOString()
-      const rows = this.sensorQuality.range(sensor, fromTs, nowTs)
-      const trusted = rows.filter(s => s.quality === 'good').length
-      return {
-        trustedPct: rows.length ? Math.round((trusted / rows.length) * 1000) / 10 : null,
-        samples: rows.length,
-        trusted,
-        hours: windowS / 3600,
-      }
+      return trustedShareOf(this.sensorQuality.counts(sensor, fromTs, nowTs), windowS)
     },
+  }
+
+  private flushAtCapacity(): void {
+    if (this.heldTelemetry.length < MAX_HELD_TELEMETRY && this.heldQuality.length < MAX_HELD_QUALITY) return
+    // A failing card gets one attempt at capacity. Future samples don't retry
+    // synchronously on every event, but the normal flush timer still tries.
+    if (!this.capFlushFailed) {
+      this.telemetry.flush()
+      this.capFlushFailed = this.heldTelemetry.length > 0 || this.heldQuality.length > 0
+    }
+    if (this.heldTelemetry.length > MAX_HELD_TELEMETRY) this.heldTelemetry.splice(0, this.heldTelemetry.length - MAX_HELD_TELEMETRY)
+    if (this.heldQuality.length > MAX_HELD_QUALITY) this.heldQuality.splice(0, this.heldQuality.length - MAX_HELD_QUALITY)
   }
 
   pumpRuns = {
@@ -390,6 +440,7 @@ export class SqliteStore implements Store {
     this.telemetry.flush()
     // A copy without these rows would look fine and lose them on a restore.
     if (this.heldTelemetry.length > 0) throw new Error(`the card refused ${this.heldTelemetry.length} telemetry rows, so a backup would leave them out`)
+    if (this.heldQuality.length > 0) throw new Error(`the card refused ${this.heldQuality.length} quality samples, so a backup would leave them out`)
     await this.sqlite.backup(path)
     const copy = new Database(path)
     try {

@@ -19,6 +19,26 @@ advice are mixed here:
   specific to, or verified on, every Gardyn model; where the hardware itself
   is unverified, the [hardware map](hardware/pin-map.md) says so.
 
+## Recovery from Settings
+
+**Settings → Maintenance** shows the running Core build, Core and Pi uptime, HALD and pump state, the latest event-loop delay, and the boot log. Start with **Restart Core** for a sluggish UI. **Reboot Pi** restarts the whole gateway, including HALD, Wi-Fi and SSH. Neither button can reach an already-unresponsive Core.
+
+Owner actions are off until the maintenance helper is installed and an owner opts in. Run the updated `scripts/install` once, then run this as your normal SSH login with sudo access:
+
+```sh
+sudo /usr/local/sbin/thryve-maintenance --provision
+```
+
+The command prints the separate owner maintenance key. Keep it private. It is not the MCP key and cannot be set or read from the browser. To disable the actions, remove the key with `sudo rm /etc/thryve-maintenance.key`.
+
+Open the UI at your HTTPS address (the proxy must preserve the public Host), or use a localhost tunnel from your computer:
+
+```sh
+ssh -N -L 13000:127.0.0.1:3000 your-login@thryve-gateway.local
+```
+
+With the tunnel open, visit `http://127.0.0.1:13000/settings#maintenance`. Select the action, enter the owner key and confirm. The UI reports that the request was queued, not that the reboot completed. It is refused if HALD cannot verify the pump is off, a pump or doser is active, or installation, updating or restoring is in progress. Use **Refresh status** and check uptime once the unit returns. If you're away, keep your normal private access path rather than exposing the recovery endpoint directly.
+
 ## Routine care
 
 | How often | What | thryve helps by |

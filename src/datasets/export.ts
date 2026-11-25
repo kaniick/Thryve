@@ -67,7 +67,7 @@ export function summarize(ctx: Context, w: ExportWindow): DatasetSummary {
     ...w,
     captures: captures.length,
     analyses: ctx.store.analyses.range(w.from, w.to).length,
-    telemetry: telemetryIn(ctx, w).length,
+    telemetry: SensorId.options.reduce((n, s) => n + ctx.store.telemetry.count(s, w.from, w.to), 0),
     labels: ctx.store.podLabels.range(w.from, w.to).length,
     imageBytes: captures.reduce((n, c) => n + c.bytes, 0),
   }

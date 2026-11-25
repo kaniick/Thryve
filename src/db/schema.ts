@@ -3,6 +3,7 @@
  * same file (one unit, modest volume); split into a second DB like sleepypod's
  * biometrics.db only if it grows.
  */
+import { sql } from 'drizzle-orm'
 import { index, integer, real, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core'
 import type { RegionCalibration } from '../vision/regions'
 
@@ -105,7 +106,12 @@ export const alerts = sqliteTable('alerts', {
   clearedAt: text(),
   acknowledgedAt: text(),
   dismissedAt: text(),
-}, t => [index('alerts_kind_active').on(t.kind, t.active)])
+}, t => [
+  index('alerts_kind_active').on(t.kind, t.active),
+  index('alerts_raised_id').on(sql`${t.raisedAt} DESC`, t.id),
+  index('alerts_active_raised_id').on(t.active, sql`${t.raisedAt} DESC`, t.id),
+  index('alerts_kind_raised_id').on(t.kind, sql`${t.raisedAt} DESC`, t.id),
+])
 
 export const growCycles = sqliteTable('grow_cycles', {
   id: text().primaryKey(),
@@ -243,6 +249,7 @@ export const analysisResults = sqliteTable('analysis_results', {
 }, t => [
   uniqueIndex('analysis_results_key').on(t.captureId, t.analyzer, t.version, t.slot, t.metric),
   index('analysis_results_series').on(t.analyzer, t.metric, t.slot, t.ts),
+  index('analysis_results_analyzer_version').on(t.analyzer, t.version),
 ])
 
 /**

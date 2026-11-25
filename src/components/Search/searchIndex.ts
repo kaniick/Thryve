@@ -4,7 +4,7 @@
  * guides, ranked with BM25.
  */
 import type { LucideIcon } from 'lucide-react'
-import { Archive, BellRing, BookOpen, CloudUpload, Code, Database, HardDrive, House, Info, KeyRound, Monitor, Radio, RefreshCw, Ruler, Settings, Sprout, Timer, Camera, Wand2, Waves, Wifi } from 'lucide-react'
+import { Archive, BellRing, BookOpen, CloudUpload, Code, Database, HardDrive, House, Info, KeyRound, Monitor, Power, Radio, RefreshCw, Ruler, Settings, Sprout, Timer, Camera, Wand2, Waves, Wifi } from 'lucide-react'
 import { navItems } from '@/src/components/AppShell/navItems'
 import { createBm25Index, tokenize } from '@/src/lib/bm25'
 import { DOCS_BASE, type DocsIndex } from './docsIndex'
@@ -65,6 +65,7 @@ const SETTINGS: ReadonlyArray<Omit<SearchEntry, 'crumbs' | 'href'> & { anchor: s
   { id: 'api', anchor: 'api', title: 'MCP access', description: 'An optional key required only by MCP clients; the web UI and the rest of the API on the LAN do not need it', keywords: 'api key mcp access token rest auth authentication security ingest results remote worker assistant claude', icon: KeyRound },
   { id: 'mirror', anchor: 'off-device', title: 'Off-device storage', description: 'Copy photos to an S3 bucket', keywords: 'mirror s3 r2 minio bucket off-device cloud', icon: CloudUpload },
   { id: 'update', anchor: 'update', title: 'Updates', description: 'Check for a new release and update, from the stable or dev channel', keywords: 'update upgrade release version channel stable dev latest install rollback', icon: RefreshCw },
+  { id: 'maintenance', anchor: 'maintenance', title: 'Maintenance', description: 'Restart Core or reboot the Pi with the owner key; see uptime, event-loop delay and boot diagnostics', keywords: 'reboot restart core pi maintenance recovery uptime boot log diagnostics', icon: Power },
   { id: 'about', anchor: 'about', title: 'About', description: 'Core and hardware daemon versions, unit id', keywords: 'version core hald daemon unit id about', icon: Info },
 ]
 

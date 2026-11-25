@@ -17,6 +17,8 @@ import { runProtocol } from './protocol'
 import { SETUP_ALERTS, setupReport, type SetupReport } from './setup'
 
 const TICK_MS = 15 * 60_000
+/** HAL bursts need one care check. This does not debounce any actuator or HAL fault. */
+export const CARE_HAL_BATCH_MS = 5_000
 
 /** The chores a reading can make due, and the alert each raises. */
 export const CHORE_ALERTS = { top_off: 'chore_top_off', feed: 'chore_feed', thin: 'chore_thin' } as const satisfies Partial<Record<ChoreId, string>>
@@ -30,7 +32,7 @@ export function choreDoneKind(alert: string): TankActionKind | null {
 export class CareEngine {
   private timer: ReturnType<typeof setInterval> | null = null
   private unsub: (() => void) | null = null
-  private lastQuality: string | undefined
+  private halBatch: ReturnType<typeof setTimeout> | null = null
   /** A tick is running, and whether something asked for another while it did. */
   private ticking = false
   private again = false
@@ -58,20 +60,19 @@ export class CareEngine {
     for (const n of notices) events.emit({ kind: 'mutation', path: `alerts.${n.kind}` })
     const setup = setupReport(store, snap)
     const list = chores(store, snap, now)
-    const rows = store.alerts.list()
-    for (const kind of SETUP_ALERTS) this.sync(rows, kind, setup.issues.find(i => i.alert === kind)?.detail ?? null, false)
+    const active = store.alerts.list({ activeOnly: true })
+    for (const kind of SETUP_ALERTS) this.sync(active.find(a => a.kind === kind), kind, setup.issues.find(i => i.alert === kind)?.detail ?? null, false)
     for (const [id, kind] of Object.entries(CHORE_ALERTS)) {
       const c = list.find(x => x.id === id)
       // A chore's detail carries the reading, so it changes every sample: held in memory, and dismissal goes by kind.
-      this.sync(rows, kind, c?.state === 'due' && c.basis === 'reading' ? c.reason : null, true)
+      this.sync(active.find(a => a.kind === kind), kind, c?.state === 'due' && c.basis === 'reading' ? c.reason : null, true)
     }
     return { setup, chores: list, followed }
   }
 
-  private sync(rows: ReturnType<Store['alerts']['list']>, kind: string, detail: string | null, live: boolean): void {
+  private sync(active: ReturnType<Store['alerts']['list']>[number] | undefined, kind: string, detail: string | null, live: boolean): void {
     const { store, events } = this.deps
     const ts = this.now().toISOString()
-    const active = rows.find(a => a.kind === kind && a.active)
     if (detail === null) {
       if (active) {
         store.alerts.clear(kind, ts)
@@ -83,7 +84,7 @@ export class CareEngine {
     if (active?.detail === detail) return
     if (!active) {
       // Dismissed stays dismissed until the problem changes (setup) or goes away and comes back.
-      const last = rows.find(a => a.kind === kind)
+      const [last] = store.alerts.list({ kind, limit: 1 })
       const resolved = this.resolvedAt.get(kind)
       if (last?.dismissedAt && (live || last.detail === detail) && (!resolved || resolved < last.dismissedAt)) return
     }
@@ -94,31 +95,40 @@ export class CareEngine {
   start(): void {
     this.stop()
     this.unsub = this.deps.events.subscribe((e) => {
+      // Process fast status/reading streams at a bounded rate. The Recorder
+      // still receives every sample, and the tick sees the latest HAL snapshot.
+      if (e.kind === 'hal' && (e.event.type === 'system' || (e.event.type === 'sensor' && e.event.id === 'water_level_pct'))) {
+        this.scheduleHalTick()
+        return
+      }
       const relevant = (e.kind === 'schedule' && e.action === 'changed')
         || (e.kind === 'mutation' && (e.path === 'pods' || e.path === 'grow' || e.path === 'devices' || e.path === 'tank' || e.path === 'captures'))
-        || (e.kind === 'hal' && (e.event.type === 'availability' || e.event.type === 'system' || e.event.type === 'devices'))
-        // Every tank-level reading is scored; raise/clear is debounced in setupReport.
-        || (e.kind === 'hal' && e.event.type === 'sensor' && e.event.id === 'water_level_pct')
-      if (e.kind === 'hal' && e.event.type === 'sensor' && e.event.id === 'water_level_pct') this.lastQuality = e.event.reading.quality
+        || (e.kind === 'hal' && (e.event.type === 'availability' || e.event.type === 'devices'))
       if (relevant) this.safeTick()
     })
     this.safeTick()
     this.timer = setInterval(() => this.safeTick(), TICK_MS)
   }
 
-  /**
-   * One tick at a time: a tick that moves the watering announces the schedule
-   * change, which this engine listens for, so that asks for one more tick
-   * after this one rather than one nested inside it.
-   */
+  private scheduleHalTick(): void {
+    this.halBatch ??= setTimeout(() => {
+      this.halBatch = null
+      this.safeTick()
+    }, CARE_HAL_BATCH_MS)
+  }
+
+  /** A synchronous schedule notification may request a follow-up, not re-enter. */
   private safeTick(): void {
     if (this.ticking) {
       this.again = true
       return
     }
+    if (this.halBatch) clearTimeout(this.halBatch)
+    this.halBatch = null
     this.ticking = true
     try {
-      do {
+      // Let HTTP and MQTT run before processing any further cascading work.
+      for (let i = 0; i < 2; i++) {
         this.again = false
         try {
           this.tick()
@@ -126,7 +136,9 @@ export class CareEngine {
         catch (err) {
           console.warn(`care: ${(err as Error).message}`)
         }
-      } while (this.again)
+        if (!this.again) return
+      }
+      this.scheduleHalTick()
     }
     finally {
       this.ticking = false
@@ -136,6 +148,8 @@ export class CareEngine {
   stop(): void {
     this.unsub?.()
     this.unsub = null
+    if (this.halBatch) clearTimeout(this.halBatch)
+    this.halBatch = null
     if (this.timer) clearInterval(this.timer)
     this.timer = null
   }

@@ -8,6 +8,7 @@
 
 mod board;
 mod boot_log;
+mod camera_activity;
 mod cameras;
 mod config;
 mod devices;
@@ -325,6 +326,7 @@ async fn main() -> anyhow::Result<()> {
     info!(unit = %unit_id, model = %system.model, sensors = ?system.caps.sensors, actuators = ?system.caps.actuators, "hald starting");
 
     let snapshot: SharedSnapshot = Arc::default();
+    let camera_activity = camera_activity::CameraActivity::default();
     let engine = Engine::new(
         system.clone(),
         EngineConfig {
@@ -344,6 +346,7 @@ async fn main() -> anyhow::Result<()> {
         Some(state::StateFile::new(&state_dir)),
         snapshot.clone(),
     )
+    .with_camera_activity(camera_activity.clone())
     .with_devices(engine::Devices {
         entries: engine::Devices::from_boot(&built.status, &cfg.extra_sensors),
         user: cfg.extra_sensors.clone(),
@@ -393,6 +396,7 @@ async fn main() -> anyhow::Result<()> {
         snapshot,
         cameras: Arc::new(built.cameras),
         camera_health: http::CameraHealth::default(),
+        camera_activity,
         state_dir: state_dir.clone(),
         started: Instant::now(),
         mqtt_connected: mqtt_connected.clone(),
