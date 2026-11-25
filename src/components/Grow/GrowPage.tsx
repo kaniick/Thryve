@@ -8,6 +8,7 @@ import { apiBase, trpc } from '@/src/utils/trpc'
 import { LineChart } from '@/src/components/ds/charts'
 import { cameraOf, podRegions, type RegionCalibration } from '@/src/vision/regions'
 import { CATALOG } from './plants/catalog'
+import { PlantCare } from './PlantCare'
 import { PlantModel } from './PlantModel'
 import { ProtocolCard } from './ProtocolCard'
 import { PlantThumb, podForm } from './PlantThumb'
@@ -475,6 +476,8 @@ function PodPanel({ pod, tower, coverPerDay, light, plantedAt, draft, dirty, sav
         <Row label="Seeded"><span className="font-mono">{plantedAt ? shortDate(plantedAt) : '—'}</span></Row>
         <Row label="Harvest window" last><span className="font-mono">{harvestWindow}</span></Row>
       </div>
+
+      {pod.plant && pod.status !== 'empty' && <PlantCare plant={pod.plant} />}
 
       {dirty
         ? (

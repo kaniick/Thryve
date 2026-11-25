@@ -12,6 +12,7 @@ describe('grow reminders', () => {
     const due = dueReminders(cycle, s, new Date('2026-01-15T12:00:00Z'))
     expect(due.map(d => d.kind)).toEqual(['reminder_thinning', 'reminder_nutrients'])
     expect(due.find(d => d.kind === 'reminder_nutrients')?.dueDay).toBe(14)
+    expect(due.find(d => d.kind === 'reminder_thinning')?.detail).toContain('3 for herbs and small flowers')
   })
 
   it('engine issues each reminder once and acknowledge clears it', () => {
