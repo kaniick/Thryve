@@ -1,6 +1,5 @@
 import { TRPCError } from '@trpc/server'
 import { z } from 'zod'
-import { listRestartLog, restartCamera } from '../cameraReset'
 import { publicProcedure, router } from '../trpc'
 
 const Cam = z.enum(['upper', 'lower'])
@@ -61,7 +60,11 @@ export const cameraRouter = router({
       simulated: z.boolean().optional(),
       ts: z.string(),
     }))
-    .mutation(async ({ input }) => restartCamera(input.camera)),
+    .mutation(({ ctx, input }) => {
+      if (ctx.cameraRecovery) return ctx.cameraRecovery.restart(input.camera)
+      // The browser demo has no root helper or filesystem.
+      return { ok: true, camera: input.camera, ts: (ctx.now?.() ?? new Date()).toISOString(), method: 'simulated', simulated: true, present: true, detail: `Simulated a restart of the ${input.camera} camera.` }
+    }),
   restarts: publicProcedure
     .meta({ openapi: { method: 'GET', path: '/camera/restarts', tags: ['camera'], summary: 'Recent Restart camera attempts, newest first' } })
     .output(z.array(z.object({
@@ -74,5 +77,5 @@ export const cameraRouter = router({
       simulated: z.boolean().optional(),
       ts: z.string(),
     })))
-    .query(() => listRestartLog().filter((r): r is typeof r & { camera: 'upper' | 'lower' } => r.camera === 'upper' || r.camera === 'lower')),
+    .query(({ ctx }) => (ctx.cameraRecovery?.recent() ?? []).filter(r => r.camera === 'upper' || r.camera === 'lower')),
 })

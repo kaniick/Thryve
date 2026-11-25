@@ -15,10 +15,20 @@ function caller() {
   const events = createEventBus()
   const core = createCore({ hal, store: new MemoryStore(), events, version: 'test' })
   const c = createCallerFactory(appRouter)(core.ctx)
-  return { hal, events, c, store: core.ctx.store }
+  return { hal, events, c, ctx: core.ctx, store: core.ctx.store }
 }
 
 describe('routers', () => {
+  it('simulates camera restart in the browser context and delegates on a Node host', async () => {
+    const { c, ctx } = caller()
+    expect(await c.camera.restart({ camera: 'upper' })).toMatchObject({ ok: true, simulated: true, camera: 'upper' })
+    expect(await c.camera.restarts()).toEqual([])
+    const failure = { ok: false, camera: 'lower' as const, code: 'hub_missing', detail: 'Camera hub absent', ts: '2026-11-25T00:00:00Z' }
+    ctx.cameraRecovery = { restart: async camera => ({ ...failure, camera }), recent: () => [failure] }
+    expect(await c.camera.restart({ camera: 'lower' })).toEqual(failure)
+    expect(await c.camera.restarts()).toEqual([failure])
+  })
+
   it('sensors.latest validates with a partial sensor set', async () => {
     const { c } = caller()
     const s = await c.sensors.latest()
