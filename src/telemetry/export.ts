@@ -1,3 +1,4 @@
+import { setImmediate } from 'node:timers/promises'
 import { SensorId } from '../hardware/contract'
 import type { Store, TelemetryPoint } from '../store/types'
 
@@ -8,43 +9,48 @@ export interface TelemetryExportOpts {
   format: 'csv' | 'json'
 }
 
-function points(store: Store, sensor: string, from: string, to: string): TelemetryPoint[] {
-  return store.telemetry.range(sensor as TelemetryPoint['sensor'], from, to, -1)
-}
+const ROWS_PER_CHUNK = 128
 
-/** Streamed CSV or JSON (an array) of telemetry points, not downsampled. */
+/** Stream without queuing all history on the event loop or in memory. */
 export function telemetryExportStream(store: Store, opts: TelemetryExportOpts): ReadableStream<Uint8Array> {
   const enc = new TextEncoder()
-  const ids = opts.sensor ? [opts.sensor] : [...(SensorId.options as string[])]
-  const format = opts.format
+  const ids = opts.sensor ? [opts.sensor as TelemetryPoint['sensor']] : SensorId.options
+  const csv = opts.format === 'csv'
+  const scans = ids.map(id => store.telemetry.scan(id, opts.from, opts.to))
+  let canceled = false
+
+  function* chunks() {
+    let text = csv ? 'sensor,ts,value\n' : '['
+    let first = true
+    let rows = 0
+    for (const scan of scans) {
+      for (const { sensor, ts, value } of scan) {
+        text += csv ? `${sensor},${ts},${value}\n` : `${first ? '' : ','}${JSON.stringify({ sensor, ts, value })}`
+        first = false
+        if (++rows === ROWS_PER_CHUNK) {
+          yield text
+          text = ''
+          rows = 0
+        }
+      }
+    }
+    if (!csv) text += ']'
+    if (text) yield text
+  }
+
+  const iterator = chunks()
   return new ReadableStream({
-    start(controller) {
-      const push = (s: string) => controller.enqueue(enc.encode(s))
-      try {
-        if (format === 'csv') {
-          push('sensor,ts,value\n')
-          for (const id of ids) {
-            for (const p of points(store, id, opts.from, opts.to)) {
-              push(`${id},${p.ts},${p.value}\n`)
-            }
-          }
-        }
-        else {
-          push('[')
-          let first = true
-          for (const id of ids) {
-            for (const p of points(store, id, opts.from, opts.to)) {
-              push(`${first ? '' : ','}${JSON.stringify({ sensor: id, ts: p.ts, value: p.value })}`)
-              first = false
-            }
-          }
-          push(']')
-        }
-        controller.close()
-      }
-      catch (e) {
-        controller.error(e)
-      }
+    async pull(controller) {
+      // Let actuator timers and HTTP handlers run even with a fast downloader.
+      await setImmediate()
+      if (canceled) return
+      const chunk = iterator.next()
+      if (chunk.done) controller.close()
+      else controller.enqueue(enc.encode(chunk.value))
+    },
+    cancel() {
+      canceled = true
+      iterator.return()
     },
   })
 }

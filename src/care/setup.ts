@@ -75,15 +75,13 @@ const MIN_SAMPLES = 3
 export function tankLevelSuspect(store: Store, snap: HalSnapshot, nowTs?: string): boolean {
   const reading = snap.sensors.water_level_pct
   const now = nowTs ?? reading?.ts ?? new Date().toISOString()
-  const from = new Date(Date.parse(now) - SUSPECT_WINDOW_MS).toISOString()
-  const samples = store.sensorQuality.range('water_level_pct', from, now)
-  const n = samples.length
-  const share = n ? samples.filter(s => s.quality === 'suspect').length / n : 0
-  const active = store.alerts.list({ activeOnly: true }).some(a => a.kind === 'setup_water_sensor' && a.detail.includes('suspect'))
+  const active = store.alerts.list({ activeOnly: true, kind: 'setup_water_sensor', limit: 1 })[0]?.detail.includes('suspect') ?? false
   const latestSuspect = reading?.quality === 'suspect'
   // A lone blip, or a window that already went back to good, must not raise.
   if (!active && !latestSuspect) return false
-  if (n < MIN_SAMPLES) return active && latestSuspect
-  if (!active) return share >= RAISE_AT
-  return share > CLEAR_BELOW
+  const from = new Date(Date.parse(now) - SUSPECT_WINDOW_MS).toISOString()
+  const { samples, suspect } = store.sensorQuality.counts('water_level_pct', from, now)
+  if (samples < MIN_SAMPLES) return active && latestSuspect
+  const share = suspect / samples
+  return active ? share > CLEAR_BELOW : share >= RAISE_AT
 }

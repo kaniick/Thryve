@@ -38,6 +38,7 @@ import { createWorkerExecutor } from '../src/vision/workerExecutor'
 import { createApp } from './app'
 import { flushCompileCacheSoon } from './compileCache'
 import { readVersion } from './version'
+import { startCorePerformance } from './performance'
 
 const PORT = Number(process.env.PORT ?? 3000)
 const HOST = process.env.HOST ?? '0.0.0.0'
@@ -108,7 +109,8 @@ const haBridge = superviseBridge(() => connectBridge({ store, hal, events, unitI
 const bootLog = () => readFile(join(backupPaths(process.env, DATA_DIR).stateDir, 'boot-log'), 'utf8').catch(() => null)
 const core = createCore({ hal, store, events, version, sink: mirror, mirror, backup, restore, update, bootLog, homekit, startServices: process.env.CI !== '1', analysisExecutor: native?.run ?? vision?.run, models, podvision: native && podvision ? { bin: podvision, lastError: native.lastError } : undefined, codeReader: podvision ? podvisionCodeReader(podvision) : null, wifi, clockTrusted: () => nodeClockTrusted(), flashSource: nodeFlashSource(), database, logging, disk: nodeDiskUsage(DATA_DIR), bridge: () => bridgeStatus(store.settings.get().mqttUrl, haBridge.bridge(), haBridge.error()), hardwareBroker: { status: loadHalBrokerStatus, canApply: (sim: boolean) => !sim && !!halMqttCommand(), apply: applyHalBroker }, host: { hostname: hostname(), arch: arch() }, apns: new ApnsClient() })
 
-const { app, injectWebSocket } = createApp({ ctx: core.ctx, staticRoot: './web/dist' })
+const performance = startCorePerformance()
+const { app, injectWebSocket } = createApp({ ctx: core.ctx, staticRoot: './web/dist', performanceWindow: performance.latest })
 
 const server = serve({ fetch: app.fetch, port: PORT, hostname: HOST }, (info) => {
   console.log(`thryve core ${core.ctx.version} listening on http://${info.address}:${info.port}`)
@@ -122,6 +124,7 @@ void mdns.start()
 
 for (const sig of ['SIGINT', 'SIGTERM'] as const) {
   process.on(sig, () => {
+    performance.stop()
     // First, so a teardown step that hangs or fails can't cost the held telemetry.
     store.telemetry.flush()
     haBridge.stop()

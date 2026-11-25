@@ -24,9 +24,11 @@ vi.mock('@/src/utils/trpc', () => {
     trpc: {
       useUtils: () => ({ alerts: { invalidate }, pump: { invalidate } }),
       alerts: {
-        list: { useQuery: (input: { activeOnly: boolean }) => {
+        list: { useQuery: (input: { activeOnly: boolean, offset?: number, limit?: number }) => {
           calls.list(input)
-          return { data: data.get(input.activeOnly ? 'open' : 'all') }
+          const rows = data.get(input.activeOnly ? 'open' : 'all') as Array<unknown> | undefined
+          const offset = input.offset ?? 0
+          return { data: rows?.slice(offset, input.limit === undefined ? undefined : offset + input.limit) }
         } },
         acknowledge: mutation('acknowledge'),
         dismiss: mutation('dismiss'),
@@ -115,11 +117,24 @@ describe('AlertsPage', () => {
   it('shows history with when each alert cleared, and no actions', () => {
     render(<AlertsPage />)
     fireEvent.click(screen.getByRole('tab', { name: 'History' }))
-    expect(calls.list).toHaveBeenCalledWith({ activeOnly: false })
+    expect(calls.list).toHaveBeenCalledWith({ activeOnly: false, limit: 51, offset: 0 })
     const old = within(screen.getByTestId('alert-water_low'))
     expect(old.getByText(/cleared .* · cleared by you/)).toBeTruthy()
     expect(old.queryByText('Clear fault')).toBeNull()
     expect(screen.queryByText('Plants · from Grow')).toBeNull()
+  })
+
+  it('shows fifty history items at a time and makes older alerts reachable', () => {
+    data.set('all', Array.from({ length: 51 }, (_, i) => row(100 - i, `history-${i}`, '', { active: false })))
+    render(<AlertsPage />)
+    fireEvent.click(screen.getByRole('tab', { name: 'History' }))
+    expect(screen.queryByTestId('alert-history-50')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Older' }))
+    expect(calls.list).toHaveBeenCalledWith({ activeOnly: false, limit: 51, offset: 50 })
+    expect(screen.getByTestId('alert-history-50')).toBeTruthy()
+    expect(screen.queryByTestId('alert-history-0')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Newer' }))
+    expect(screen.getByTestId('alert-history-0')).toBeTruthy()
   })
 
   it('says when there is nothing to see', () => {
