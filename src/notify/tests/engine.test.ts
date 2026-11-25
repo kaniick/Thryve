@@ -69,25 +69,6 @@ function harness(opts?: { rules?: NotificationRule[], channels?: NotificationCha
 }
 
 describe('notification engine', () => {
-  it('sends each watering move without a false resolution or duplicate notice', async () => {
-    const store = new MemoryStore(30)
-    const hal = new SimHal({ tickMs: 0 })
-    const h = harness({ rules: [
-      rule({ trigger: { kind: 'event', event: 'alert_raised', alertKind: FOLLOW_ALERT }, messageTemplate: '{{alert.detail}}', cooldownMin: 0 }),
-      rule({ id: 2, trigger: { kind: 'event', event: 'alert_cleared', alertKind: FOLLOW_ALERT }, cooldownMin: 0 }),
-    ] })
-    await h.engine.tick()
-    noteFollow(store, 'Watering moved to Seedlings', '2026-11-17T20:00:00Z')
-    h.setSnap(eventSnapshot(hal, store, null))
-    await h.engine.tick()
-    noteFollow(store, 'Watering moved to Young plants', '2026-11-23T20:00:00Z')
-    h.setSnap(eventSnapshot(hal, store, null))
-    await h.engine.tick()
-    await h.engine.tick()
-    expect(h.runs.map(r => [r.ruleId, r.outcome])).toEqual([[1, 'sent'], [1, 'sent']])
-    expect(h.posts.map(p => new URLSearchParams(p.body).get('message'))).toEqual(['Watering moved to Seedlings', 'Watering moved to Young plants'])
-  })
-
   it('sends once when a threshold is crossed, then dedups until it clears', async () => {
     const h = harness()
     await h.engine.tick() // first sample, rising edge
@@ -126,5 +107,24 @@ describe('notification engine', () => {
     expect(out.message).toBe('Tank is at 40%.')
     expect(out.results[0]?.ok).toBe(true)
     expect(h.posts).toHaveLength(1)
+  })
+
+  it('sends each watering move without a false resolution or duplicate notice', async () => {
+    const store = new MemoryStore(30)
+    const hal = new SimHal({ tickMs: 0 })
+    const h = harness({ rules: [
+      rule({ trigger: { kind: 'event', event: 'alert_raised', alertKind: FOLLOW_ALERT }, messageTemplate: '{{alert.detail}}', cooldownMin: 0 }),
+      rule({ id: 2, trigger: { kind: 'event', event: 'alert_cleared', alertKind: FOLLOW_ALERT }, cooldownMin: 0 }),
+    ] })
+    await h.engine.tick()
+    noteFollow(store, 'Watering moved to Seedlings', '2026-11-17T20:00:00Z')
+    h.setSnap(eventSnapshot(hal, store, null))
+    await h.engine.tick()
+    noteFollow(store, 'Watering moved to Young plants', '2026-11-23T20:00:00Z')
+    h.setSnap(eventSnapshot(hal, store, null))
+    await h.engine.tick()
+    await h.engine.tick()
+    expect(h.runs.map(r => [r.ruleId, r.outcome])).toEqual([[1, 'sent'], [1, 'sent']])
+    expect(h.posts.map(p => new URLSearchParams(p.body).get('message'))).toEqual(['Watering moved to Seedlings', 'Watering moved to Young plants'])
   })
 })
