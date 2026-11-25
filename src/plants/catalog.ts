@@ -41,9 +41,13 @@ export const Plant = z.object({
 })
 export type Plant = z.infer<typeof Plant>
 
+const Days = z.tuple([z.number().int(), z.number().int()])
+
 const Catalog = z.object({
   version: z.literal(1),
   sources: z.record(z.string(), z.string()),
+  categorySproutMedians: z.record(z.string(), Days),
+  sproutDays: z.record(z.string(), Days),
   plants: z.array(Plant),
 })
 
@@ -51,6 +55,17 @@ const catalog = Catalog.parse(raw)
 
 export const PLANTS: readonly Plant[] = catalog.plants
 export const CATALOG_SOURCES = catalog.sources
+
+/** Days from sowing to the first sprout, [from, to]; `estimated` when it is the category's median because neither source gives one for the plant. */
+export interface SproutWindow { days: [number, number], estimated: boolean }
+
+/** A plant's sprouting window from Gardyn's Plant Book or Iowa State's germination table, else its category's median; null for a category neither has a plant in. */
+export function sproutWindow(p: Pick<Plant, 'id' | 'category'>): SproutWindow | null {
+  const own = catalog.sproutDays[p.id]
+  if (own) return { days: own, estimated: false }
+  const median = catalog.categorySproutMedians[p.category]
+  return median ? { days: median, estimated: true } : null
+}
 
 export interface PlantFilter {
   q?: string

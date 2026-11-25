@@ -3,6 +3,7 @@ import type { AlertQuery, AlertRow, Automation, AutomationRun, AnalysisPoint, An
 import type { NotificationChannel, NotificationRule, NotificationRun } from '../notify/types'
 import type { ActivityToken, FeedItem, IosDevice } from '../notify/ios/types'
 import type { AutomationRule } from '../autopilot/types'
+import type { AgreementReading, OmittedAnalysisSlots } from './types'
 import { DEFAULT_SETTINGS, POD_LABELS, profileKey } from './types'
 
 /** In-memory Store for tests and the browser demo. Same semantics as SqliteStore. */
@@ -366,7 +367,14 @@ export class MemoryStore implements Store {
   }
 
   analyses = {
-    add: (rows: AnalysisRow[]): void => {
+    add: (rows: AnalysisRow[], omitted?: OmittedAnalysisSlots): void => {
+      if (omitted?.slots.length && omitted.runs.length) {
+        for (let i = this.analysisRows.length - 1; i >= 0; i--) {
+          const r = this.analysisRows[i]
+          if (r?.source === 'device' && r.captureId === omitted.captureId && omitted.slots.includes(r.slot)
+            && omitted.runs.some(a => a.analyzer === r.analyzer && a.version === r.version)) this.analysisRows.splice(i, 1)
+        }
+      }
       for (const r of rows) {
         const i = this.analysisRows.findIndex(x => x.captureId === r.captureId && x.analyzer === r.analyzer && x.version === r.version && x.slot === r.slot && x.metric === r.metric)
         if (i >= 0) this.analysisRows[i] = { ...r }
@@ -386,6 +394,9 @@ export class MemoryStore implements Store {
     forCapture: (captureId: string): AnalysisRow[] =>
       this.analysisRows.filter(r => r.captureId === captureId)
         .sort((a, b) => a.analyzer.localeCompare(b.analyzer) || a.version - b.version || a.slot - b.slot || a.metric.localeCompare(b.metric)),
+    agreementReadings: (): AgreementReading[] => this.analysisRows
+      .filter(r => (r.metric === 'green_fraction' || r.metric === 'pod_state') && this.labelRows.has(`${r.captureId}#${r.slot}`))
+      .map(({ captureId, slot, analyzer, version, metric, value, detail }) => ({ captureId, slot, analyzer, version, metric, value, detail })),
     removeDevice: (captureId: string): void => {
       const keep = this.analysisRows.filter(r => r.captureId !== captureId || r.source !== 'device')
       this.analysisRows.splice(0, this.analysisRows.length, ...keep)
@@ -422,6 +433,13 @@ export class MemoryStore implements Store {
     range: (fromTs: string, toTs: string): PodLabel[] =>
       [...this.labelRows.values()].filter(l => l.ts >= fromTs && l.ts <= toTs)
         .sort((a, b) => a.ts.localeCompare(b.ts) || a.captureId.localeCompare(b.captureId) || a.slot - b.slot).map(l => ({ ...l })),
+    forSlot: (slot: number, q: { from?: string, to?: string, limit: number }): PodLabel[] => {
+      // Code-unit order, as SQLite compares text.
+      const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
+      return [...this.labelRows.values()]
+        .filter(l => l.slot === slot && (q.from === undefined || l.ts >= q.from) && (q.to === undefined || l.ts <= q.to))
+        .sort((a, b) => cmp(b.ts, a.ts) || cmp(b.captureId, a.captureId)).slice(0, q.limit).reverse().map(l => ({ ...l }))
+    },
     list: (q: { label?: PodLabelValue, camera?: 'upper' | 'lower', limit: number, before?: PodLabelCursor }): PodLabel[] => {
       // Code-unit order, as SQLite compares text, so both stores page alike.
       const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)

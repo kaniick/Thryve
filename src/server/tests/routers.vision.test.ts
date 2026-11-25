@@ -135,6 +135,7 @@ describe('vision router (ADR-0019)', () => {
     expect((await c.vision.capture({ captureId: 'upper-x' })).find(r => r.slot === 1 && r.analyzer === 'green-threshold')?.value).toBe(1)
 
     await expect(c.vision.setRegions({ camera: 'upper', regions: [{ slot: 16, x: 0, y: 0, w: 0.1, h: 0.1 }] })).rejects.toThrow(/pod 16 is not on the upper camera/)
+    await expect(c.vision.setRegions({ camera: 'upper', regions: [], removed: [28] })).rejects.toThrow(/pod 28 is not on the upper camera/)
     await c.vision.setRegions({ camera: 'lower', regions: null })
     await c.vision.setRegions({ camera: 'upper', regions: [] })
     expect(ctx.store.settings.get().podRegions).toBeNull()
@@ -148,6 +149,25 @@ describe('vision router (ADR-0019)', () => {
     const saved = await c.vision.setRegions({ camera: 'upper', regions: [{ slot: 2, ...box, coreX: 0.45, coreY: 0.9 }] })
     expect(saved.regions[1]).toEqual({ slot: 2, ...box, coreX: 0.45, coreY: 0.6667, moved: true })
     expect((await c.vision.regions())[0]).toEqual(saved)
+  })
+
+  it('removes a box the camera can\'t see its pod in, so the pod isn\'t scored there, and puts it back', async () => {
+    const { c, ctx } = await scored(0)
+    // A removed box wins over one sent for the same pod.
+    const lower = await c.vision.setRegions({ camera: 'lower', regions: [{ slot: 28, x: 0.1, y: 0.1, w: 0.1, h: 0.1 }], removed: [28] })
+    expect([lower.calibrated, lower.removed, lower.regions.length]).toEqual([true, [28], 14])
+    expect(lower.regions.some(r => r.slot === 28)).toBe(false)
+    expect(ctx.store.settings.get().podRegions).toEqual({ lower: { 28: null } })
+    expect((await c.vision.regions()).map(r => r.removed)).toEqual([[], [28]])
+
+    const capture = { id: 'lower-x', camera: 'lower' as const, ts: '2026-02-01T00:00:00Z', path: 'lower-x.jpg', bytes: 1 }
+    ctx.analysis.enqueue(capture, jpeg(200, 100, true))
+    await ctx.analysis.idle()
+    const slots = new Set((await c.vision.capture({ captureId: 'lower-x' })).map(r => r.slot))
+    expect([slots.has(27), slots.has(28)]).toEqual([true, false])
+
+    await c.vision.setRegions({ camera: 'lower', regions: [] })
+    expect(ctx.store.settings.get().podRegions).toBeNull()
   })
 
   it('labels pods in a capture for training, relabels, clears and counts them', async () => {
@@ -182,6 +202,48 @@ describe('vision router (ADR-0019)', () => {
     expect((await c.vision.labels({ captureId: 'upper-0' })).map(l => l.slot)).toEqual([3])
     await expect(c.vision.setLabel({ captureId: 'nope', slot: 1, label: 'ready' })).rejects.toThrow(/no capture nope/)
     await expect(c.vision.setLabel({ captureId: 'upper-0', slot: 16, label: 'ready' })).rejects.toThrow(/pod 16 is not on the upper camera/)
+  })
+
+  it('lists one pod\'s labels over a window of photo times', async () => {
+    const { c } = await scored(3)
+    expect(await c.vision.podLabels({ slot: 1, limit: 200 })).toEqual([])
+    await c.vision.setLabel({ captureId: 'upper-2', slot: 1, label: 'sprouted' })
+    await c.vision.setLabel({ captureId: 'upper-0', slot: 1, label: 'seeded' })
+    await c.vision.setLabel({ captureId: 'upper-1', slot: 1, label: 'seeded' })
+    await c.vision.setLabel({ captureId: 'upper-1', slot: 2, label: 'growing' })
+    expect(await c.vision.podLabels({ slot: 1, limit: 200 })).toEqual([
+      { captureId: 'upper-0', ts: '2026-01-01T00:00:00Z', label: 'seeded', source: 'picked' },
+      // Carried from the photo before, so the suggestion was accepted.
+      { captureId: 'upper-1', ts: '2026-01-02T00:00:00Z', label: 'seeded', source: 'accepted' },
+      { captureId: 'upper-2', ts: '2026-01-03T00:00:00Z', label: 'sprouted', source: 'picked' },
+    ])
+    expect((await c.vision.podLabels({ slot: 1, from: '2026-01-02T00:00:00Z', to: '2026-01-02T00:00:00Z', limit: 200 })).map(l => l.captureId)).toEqual(['upper-1'])
+    expect((await c.vision.podLabels({ slot: 1, limit: 1 })).map(l => l.captureId)).toEqual(['upper-2'])
+    await expect(c.vision.podLabels({ slot: 1, limit: 1001 })).rejects.toThrow()
+  })
+
+  it('scores each analyser against the labels on the same photo and pod', async () => {
+    const { c, ctx } = await scored(2)
+    expect(await c.vision.agreement()).toEqual({ pods: 0, analyzers: [] })
+    const posted = (captureId: string, slot: number, metric: string, value: number, detail: Record<string, unknown> | null = null) => ({ captureId, ts: '2026-01-01T00:00:00Z', camera: 'upper' as const, analyzer: 'leaf-unet', version: 2, source: 'remote' as const, slot, metric, value, detail, artifact: null })
+    ctx.store.analyses.add([
+      posted('upper-0', 1, 'green_fraction', 0),
+      posted('upper-0', 2, 'green_fraction', 0.01),
+      posted('upper-1', 1, 'green_fraction', 0.3),
+      posted('upper-0', 1, 'pod_state', 0, { state: 'empty', confidence: 0.9 }),
+    ])
+    await c.vision.setLabel({ captureId: 'upper-0', slot: 1, label: 'seeded' })
+    await c.vision.setLabel({ captureId: 'upper-0', slot: 2, label: 'growing' })
+    await c.vision.setLabel({ captureId: 'upper-1', slot: 1, label: 'sprouted' })
+    await c.vision.setLabel({ captureId: 'upper-1', slot: 2, label: 'unhealthy' })
+    const got = await c.vision.agreement()
+    expect(got.pods).toBe(4)
+    expect(got.analyzers.filter(a => a.analyzer === 'leaf-unet')).toEqual([
+      { analyzer: 'leaf-unet', version: 2, metric: 'green_fraction', agree: 2, total: 3 },
+      { analyzer: 'leaf-unet', version: 2, metric: 'pod_state', agree: 1, total: 1 },
+    ])
+    // The unit's own analysers scored every pod on both photos; the unhealthy one isn't counted.
+    expect(got.analyzers.filter(a => a.analyzer !== 'leaf-unet').map(a => [a.analyzer, a.total]).sort()).toEqual([['exg-otsu', 3], ['green-threshold', 3]])
   })
 
   it('suggests each pod\'s label from its last one or a confident pod-state, and records how each was saved (#261)', async () => {
@@ -303,6 +365,23 @@ describe('vision router (ADR-0019)', () => {
 
     await expect(c.vision.dismissSuggestion({ captureId: 'upper-1', slot: 16 })).rejects.toThrow(/pod 16 is not on the upper camera/)
     await expect(c.vision.dismissSuggestion({ captureId: 'nope', slot: 2 })).rejects.toThrow(/no capture nope/)
+  })
+
+  it('accepts only the pods Teach shows, and names a box dismissed on photo after photo until it moves', async () => {
+    const { c, ctx } = await scored(3)
+    ctx.now = () => new Date('2026-01-05T08:00:00.000Z')
+    for (const slot of [1, 2, 3]) await c.vision.setLabel({ captureId: 'upper-0', slot, label: 'seeded' })
+    expect(await c.vision.acceptSuggestions({ captureId: 'upper-1', slots: [1, 3] })).toEqual({ captureId: 'upper-1', slots: [1, 3] })
+    expect((await c.vision.labels({ captureId: 'upper-1' })).map(l => l.slot)).toEqual([1, 3])
+    await expect(c.vision.acceptSuggestions({ captureId: 'upper-1', slots: [31] })).rejects.toThrow()
+
+    expect(await c.vision.boxesOff()).toEqual([])
+    await c.vision.dismissSuggestion({ captureId: 'upper-1', slot: 2 })
+    expect(await c.vision.boxesOff()).toEqual([])
+    await c.vision.dismissSuggestion({ captureId: 'upper-2', slot: 2 })
+    expect(await c.vision.boxesOff()).toEqual([{ camera: 'upper', slot: 2, photos: 2 }])
+    await c.vision.setRegions({ camera: 'upper', regions: [], removed: [2] })
+    expect(await c.vision.boxesOff()).toEqual([])
   })
 
   it('keeps a sown pod\'s plant with each label, but not a planned one or one sown after the photo\'s day', async () => {

@@ -278,6 +278,18 @@ for (const [name, make] of impls) {
       expect(store.analyses.stats().find(s => s.analyzer === 'green-threshold')).toMatchObject({ firstTs: '2026-01-01T00:00:00Z', lastTs: '2026-01-02T00:00:00Z' })
     })
 
+    it('drops removed-box scores only for the device version just scored, and joins labels on frame and slot', () => {
+      store = make()
+      const base: AnalysisRow = { captureId: 'a', ts: '2026-01-01T00:00:00Z', camera: 'upper', analyzer: 'green-threshold', version: 2, source: 'device', slot: 1, metric: 'green_fraction', value: 0.1, detail: null, artifact: null }
+      store.analyses.add([base, { ...base, version: 1 }, { ...base, slot: 2 }, { ...base, captureId: 'b' }, { ...base, analyzer: 'remote', source: 'remote' }, { ...base, metric: 'leaf_count' }])
+      store.podLabels.set({ captureId: base.captureId, camera: base.camera, ts: base.ts, labelledAt: base.ts, slot: 1, label: 'growing', plant: null, plantedAt: null })
+      expect(store.analyses.agreementReadings().map(r => [r.analyzer, r.version]).sort()).toEqual([['green-threshold', 1], ['green-threshold', 2], ['remote', 2]])
+      store.analyses.add([], { captureId: 'a', runs: [{ analyzer: 'green-threshold', version: 2 }], slots: [1] })
+      expect(store.analyses.agreementReadings().map(r => [r.analyzer, r.version]).sort()).toEqual([['green-threshold', 1], ['remote', 2]])
+      expect(store.analyses.forCapture('a').map(r => [r.analyzer, r.version, r.slot])).toEqual([['green-threshold', 1, 1], ['green-threshold', 2, 2], ['remote', 2, 1]])
+      expect(store.analyses.forCapture('b')).toHaveLength(1)
+    })
+
     it('automations round-trip their AST, update in place and keep a pruned run log', () => {
       store = make()
       const rule = { name: 'pH high', enabled: true, dryRun: true, priority: 50, cooldownMin: 30, trigger: { kind: 'tick' as const, everyMin: 5 }, conditions: { kind: 'compare' as const, op: '>' as const, left: { kind: 'signal' as const, signal: 'sensor.ph' }, right: { kind: 'literal' as const, value: 6.5 } }, actions: [{ kind: 'notify' as const, message: 'high' }] }
@@ -444,6 +456,26 @@ for (const [name, make] of impls) {
       expect(store.podLabels.remove('upper-b', 2)).toBe(true)
       expect(store.podLabels.remove('upper-b', 2)).toBe(false)
       expect(store.podLabels.forCapture('upper-b')).toEqual([{ captureId: 'upper-b', ts: '2026-11-02T00:00:00.000Z', camera: 'upper', slot: 4, label: 'unhealthy', labelledAt: '2026-11-09T00:00:00.000Z', plant: null, plantedAt: null, source: 'picked', suggested: null, suggestedBy: null, suggestedConfidence: null }])
+    })
+
+    it('pod labels list one pod\'s newest within a window, oldest first', () => {
+      store = make()
+      const at = (captureId: string, ts: string, slot: number, label: PodLabelValue) =>
+        store.podLabels.set({ captureId, ts, camera: 'upper', slot, label, labelledAt: '2026-11-09T00:00:00.000Z', plant: null, plantedAt: null })
+      expect(store.podLabels.forSlot(3, { limit: 10 })).toEqual([])
+      at('upper-c', '2026-11-03T00:00:00.000Z', 3, 'sprouted')
+      at('upper-a', '2026-11-01T00:00:00.000Z', 3, 'seeded')
+      at('upper-b', '2026-11-02T00:00:00.000Z', 3, 'seeded')
+      at('upper-b2', '2026-11-02T00:00:00.000Z', 3, 'seeded')
+      at('upper-b', '2026-11-02T00:00:00.000Z', 4, 'growing')
+      const ids = (q: { from?: string, to?: string, limit: number }) => store.podLabels.forSlot(3, q).map(l => l.captureId)
+      expect(ids({ limit: 10 })).toEqual(['upper-a', 'upper-b', 'upper-b2', 'upper-c'])
+      expect(ids({ from: '2026-11-02T00:00:00.000Z', limit: 10 })).toEqual(['upper-b', 'upper-b2', 'upper-c'])
+      expect(ids({ to: '2026-11-02T00:00:00.000Z', limit: 10 })).toEqual(['upper-a', 'upper-b', 'upper-b2'])
+      expect(ids({ from: '2026-11-02T00:00:00.000Z', to: '2026-11-02T00:00:00.000Z', limit: 10 })).toEqual(['upper-b', 'upper-b2'])
+      // The newest of them, still oldest first.
+      expect(ids({ limit: 2 })).toEqual(['upper-b2', 'upper-c'])
+      expect(store.podLabels.forSlot(4, { limit: 10 }).map(l => [l.captureId, l.label, l.source])).toEqual([['upper-b', 'growing', 'picked']])
     })
 
     it('pod labels keep how they were saved, count by source and find each pod\'s last label (#261)', () => {

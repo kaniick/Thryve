@@ -32,6 +32,25 @@ describe('AnalysisService', () => {
     expect(svc.status()).toMatchObject({ running: null, waiting: [], dropped: 0, failed: 0, backfill: null })
   })
 
+  it('rescoring a removed box clears its current device score, not other methods or remote scores', async () => {
+    const { store, sink, svc } = setup()
+    const capture = cap('a')
+    const bytes = jpeg(120, 100, true)
+    store.captures.add(capture)
+    await sink.put(capture.path, bytes)
+    svc.enqueue(capture, bytes)
+    await svc.idle()
+    const first = store.analyses.forCapture(capture.id).find(r => r.analyzer === 'green-threshold' && r.slot === 1)
+    if (!first) throw new Error('Missing the original score')
+    store.analyses.add([{ ...first, analyzer: 'remote', source: 'remote' }])
+    store.settings.update({ podRegions: { upper: { 1: null } } })
+    svc.rerun('green-threshold')
+    await svc.idle()
+    const rows = store.analyses.forCapture(capture.id)
+    expect(rows.filter(r => r.slot === 1).map(r => r.analyzer)).toEqual(['exg-otsu', 'remote'])
+    expect(rows.some(r => r.slot === 2 && r.analyzer === 'green-threshold')).toBe(true)
+  })
+
   it('keeps one waiting still per camera, replacing older ones that never started', async () => {
     let release = () => {}
     const gate = new Promise<void>(r => (release = r))

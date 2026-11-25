@@ -251,6 +251,12 @@ export interface AnalysisRow {
   artifact: string | null
 }
 export interface AnalysisPoint { ts: string, value: number, captureId: string }
+export type AgreementReading = Pick<AnalysisRow, 'captureId' | 'slot' | 'analyzer' | 'version' | 'metric' | 'value' | 'detail'>
+export interface OmittedAnalysisSlots {
+  captureId: string
+  runs: Array<{ analyzer: string, version: number }>
+  slots: number[]
+}
 /** What the table holds per analyser@version. */
 export interface AnalyzerStats { analyzer: string, version: number, source: 'device' | 'remote', rows: number, captures: number, firstTs: string, lastTs: string }
 export interface TelemetryPoint { ts: string, sensor: SensorId, value: number }
@@ -494,10 +500,13 @@ export interface Store {
   }
   analyses: {
     /** Upsert on (capture, analyser, version, slot, metric): re-running is idempotent. */
-    add(rows: AnalysisRow[]): void
+    /** If present, drop device scores from these removed boxes for the versions just scored. */
+    add(rows: AnalysisRow[], omitted?: OmittedAnalysisSlots): void
     /** Oldest → newest for one pod; `version` defaults to the newest version that has rows. */
     series(q: { analyzer: string, version?: number, slot: number, metric: string, limit?: number }): AnalysisPoint[]
     forCapture(captureId: string): AnalysisRow[]
+    /** Agreement metrics on labelled capture/slot pairs, with only the fields required to score them. */
+    agreementReadings(): AgreementReading[]
     /** Remove what the unit itself scored for one capture; remote results stay. */
     removeDevice(captureId: string): void
     /** Rows whose capture time falls in [fromTs, toTs], oldest first. */
@@ -515,6 +524,8 @@ export interface Store {
     forCapture(captureId: string): PodLabel[]
     /** Labels whose capture time falls in [fromTs, toTs], oldest first, then by slot. */
     range(fromTs: string, toTs: string): PodLabel[]
+    /** One pod's newest `limit` labels whose capture time falls in [from, to] (either end open), oldest first. */
+    forSlot(slot: number, q: { from?: string, to?: string, limit: number }): PodLabel[]
     /** Newest capture first, then by pod; `before` continues after a page's last row. */
     list(q: { label?: PodLabelValue, camera?: 'upper' | 'lower', limit: number, before?: PodLabelCursor }): PodLabel[]
     /** How many pods carry each label. */

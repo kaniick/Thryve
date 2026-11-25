@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3'
-import { and, asc, desc, eq, gt, gte, isNull, lt, lte, notInArray, or, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, gte, inArray, isNull, lt, lte, notInArray, or, sql } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { existsSync, mkdirSync } from 'node:fs'
@@ -12,6 +12,7 @@ import type { ActivityToken, ApnsEnvironment, FeedItem, FeedLevel, IosDevice } f
 import * as t from '../db/schema'
 import { qualityCounts, trustedShareOf } from './memory'
 import { SqliteTelemetryReader } from './sqliteTelemetry'
+import type { AgreementReading, OmittedAnalysisSlots } from './types'
 import type { AlertQuery, AlertRow, Automation, AutomationRun, AnalysisPoint, AnalysisRow, AnalyzerStats, BackupRecord, Capture, CustomPlant, DeviceSettings, FlashSample, GrowCycle, GrowProtocolState, GrowStage, LightSpec, PlanRow, PlantProfile, Pod, PodCodePair, PodCodeRead, PodLabel, PodLabelCursor, PodLabelInput, PodLabelSource, PodLabelValue, PumpSpec, SavedCycle, SavedSchedule, Schedule, ScheduleRun, Store, SuggestionDismissal, TankAction, TankActionKind, TelemetryPoint, QualityCounts, QualitySample, PumpRun } from './types'
 import { DEFAULT_SETTINGS, POD_LABELS, profileKey } from './types'
 
@@ -462,9 +463,16 @@ export class SqliteStore implements Store {
   }
 
   analyses = {
-    add: (rows: AnalysisRow[]): void => {
-      if (rows.length === 0) return
+    add: (rows: AnalysisRow[], omitted?: OmittedAnalysisSlots): void => {
+      if (rows.length === 0 && !omitted?.slots.length) return
+      const a = t.analysisResults
       this.sqlite.transaction(() => {
+        if (omitted?.slots.length && omitted.runs.length) {
+          for (const run of omitted.runs) {
+            this.db.delete(a).where(and(eq(a.captureId, omitted.captureId), eq(a.source, 'device'),
+              eq(a.analyzer, run.analyzer), eq(a.version, run.version), inArray(a.slot, omitted.slots))).run()
+          }
+        }
         for (const r of rows) {
           const values = { ...r, detail: r.detail ? JSON.stringify(r.detail) : null }
           this.db.insert(t.analysisResults).values(values).onConflictDoUpdate({
@@ -485,6 +493,14 @@ export class SqliteStore implements Store {
     forCapture: (captureId: string): AnalysisRow[] =>
       this.db.select().from(t.analysisResults).where(eq(t.analysisResults.captureId, captureId))
         .orderBy(asc(t.analysisResults.analyzer), asc(t.analysisResults.version), asc(t.analysisResults.slot), asc(t.analysisResults.metric)).all().map(rowToAnalysis),
+    agreementReadings: (): AgreementReading[] => {
+      const a = t.analysisResults
+      const l = t.podLabels
+      return this.db.select({ captureId: a.captureId, slot: a.slot, analyzer: a.analyzer, version: a.version, metric: a.metric, value: a.value, detail: a.detail })
+        .from(l).innerJoin(a, and(eq(a.captureId, l.captureId), eq(a.slot, l.slot)))
+        .where(inArray(a.metric, ['green_fraction', 'pod_state'])).all()
+        .map(r => ({ ...r, detail: r.detail ? JSON.parse(r.detail) as Record<string, unknown> : null }))
+    },
     removeDevice: (captureId: string): void => {
       this.db.delete(t.analysisResults).where(and(eq(t.analysisResults.captureId, captureId), eq(t.analysisResults.source, 'device'))).run()
     },
@@ -523,6 +539,12 @@ export class SqliteStore implements Store {
     range: (fromTs: string, toTs: string): PodLabel[] =>
       this.db.select().from(t.podLabels).where(and(gte(t.podLabels.ts, fromTs), lte(t.podLabels.ts, toTs)))
         .orderBy(asc(t.podLabels.ts), asc(t.podLabels.captureId), asc(t.podLabels.slot)).all().map(rowToLabel),
+    forSlot: (slot: number, q: { from?: string, to?: string, limit: number }): PodLabel[] =>
+      this.db.select().from(t.podLabels).where(and(
+        eq(t.podLabels.slot, slot),
+        q.from === undefined ? undefined : gte(t.podLabels.ts, q.from),
+        q.to === undefined ? undefined : lte(t.podLabels.ts, q.to),
+      )).orderBy(desc(t.podLabels.ts), desc(t.podLabels.captureId)).limit(q.limit).all().reverse().map(rowToLabel),
     list: (q: { label?: PodLabelValue, camera?: 'upper' | 'lower', limit: number, before?: PodLabelCursor }): PodLabel[] => {
       const b = q.before
       return this.db.select().from(t.podLabels).where(and(

@@ -7,10 +7,13 @@ import { podCodeViews } from '../../vision/podCodes'
 import { podOrder, swapPodRecords } from '../../vision/podOrder'
 import { shareablePairs, shareUrl, unitFingerprint } from '../../vision/shareCodes'
 import { CATALOG } from '../../components/Grow/plants/catalog'
+import { agreement } from '../../vision/agreement'
 import { podTrends } from '../../vision/analyze'
 import { POD_STATE_ID } from '../../vision/podState'
+import { boxesOff } from '../../vision/boxesOff'
+import { seenEmpty } from '../../vision/seenEmpty'
 import { suggestLabel, type Suggestion } from '../../vision/suggestLabel'
-import { CAMERAS, cameraOf, cameraSlots, clampRegion, DEFAULT_REGIONS, podRegions, type Camera, type PodRegions } from '../../vision/regions'
+import { CAMERAS, cameraOf, cameraSlots, clampRegion, DEFAULT_REGIONS, podRegions, type Camera, type PodRegions, type RegionCalibration } from '../../vision/regions'
 import type { Context } from '../context'
 import { publicProcedure, router } from '../trpc'
 
@@ -90,12 +93,19 @@ const Result = z.object({
 })
 const CameraName = z.enum(['upper', 'lower'])
 const Region = z.object({ slot: z.number().int(), x: z.number().min(0).max(1), y: z.number().min(0).max(1), w: z.number().gt(0).max(1), h: z.number().gt(0).max(1), coreX: z.number().min(0).max(1).optional(), coreY: z.number().min(0).max(1).optional() })
-const CameraRegions = z.object({ camera: CameraName, calibrated: z.boolean(), regions: z.array(Region.extend({ moved: z.boolean() })) })
+const CameraRegions = z.object({ camera: CameraName, calibrated: z.boolean(), regions: z.array(Region.extend({ moved: z.boolean() })), removed: z.array(z.number().int()) })
+type OwnRegions = NonNullable<RegionCalibration[Camera]>
 
-/** One camera's boxes as rows, each marked moved when it isn't the measured default. */
-function regionRows(camera: Camera, own: PodRegions | undefined) {
+/** One camera's boxes as rows, each marked moved when it isn't the measured default; removed boxes are listed apart. */
+function regionRows(camera: Camera, own: OwnRegions | undefined) {
   const boxes = podRegions(camera, { [camera]: own })
-  return { camera, calibrated: !!own && Object.keys(own).length > 0, regions: cameraSlots(camera).map(slot => ({ slot, ...(boxes[slot] as PodRegions[number]), moved: !!own?.[slot] })) }
+  const slots = cameraSlots(camera)
+  return {
+    camera,
+    calibrated: !!own && Object.keys(own).length > 0,
+    regions: slots.filter(slot => boxes[slot]).map(slot => ({ slot, ...(boxes[slot] as PodRegions[number]), moved: !!own?.[slot] })),
+    removed: slots.filter(slot => !boxes[slot]),
+  }
 }
 
 const LabelValue = z.enum(POD_LABELS)
@@ -160,8 +170,9 @@ function suggestionsFor(ctx: Context, captureId: string, shot: Shot): Map<number
   const version = Math.max(0, ...rows.map(r => r.version))
   const model = new Map(rows.filter(r => r.version === version).map(r => [r.slot, r.detail]))
   const out = new Map<number, Suggestion>()
+  const boxes = podRegions(shot.camera, ctx.store.settings.get().podRegions)
   for (const slot of cameraSlots(shot.camera)) {
-    if (dismissed.has(slot)) continue
+    if (!boxes[slot] || dismissed.has(slot)) continue
     const pod = inPhoto(pods.get(slot), day)
     const l = last.get(slot)
     const d = model.get(slot)
@@ -210,6 +221,14 @@ export const visionRouter = router({
     .input(z.object({ analyzer: z.string().optional() }).optional())
     .output(z.array(Trend))
     .query(({ ctx, input }) => podTrends(ctx.store, 30, input?.analyzer)),
+  boxesOff: publicProcedure
+    .meta({ openapi: { method: 'GET', path: '/vision/boxes-off', tags: ['vision'], summary: 'Pod boxes that look off their pod: a suggestion dismissed on two photos or more this week while the box is still the measured default' } })
+    .output(z.array(z.object({ camera: CameraName, slot: z.number(), photos: z.number() })))
+    .query(({ ctx }) => boxesOff(ctx.store, ctx.now?.() ?? new Date())),
+  seenEmpty: publicProcedure
+    .meta({ openapi: { method: 'GET', path: '/vision/seen-empty', tags: ['vision'], summary: 'Pods the cameras see empty though their record holds a plant' } })
+    .output(z.array(z.object({ slot: z.number(), confidence: z.number(), ts: z.string() })))
+    .query(({ ctx }) => seenEmpty(ctx.store, ctx.now?.() ?? new Date())),
   podSeries: publicProcedure
     .meta({ openapi: { method: 'GET', path: '/vision/pods/{slot}', tags: ['vision'] } })
     .input(z.object({ slot: z.number().int().min(1).max(60) }))
@@ -276,6 +295,11 @@ export const visionRouter = router({
     .input(z.object({ captureId: z.string() }))
     .output(z.array(Label))
     .query(({ ctx, input }) => ctx.store.podLabels.forCapture(input.captureId)),
+  podLabels: publicProcedure
+    .meta({ openapi: { method: 'GET', path: '/vision/pods/{slot}/labels', tags: ['vision'], summary: 'One pod\'s labels over a window of photo times (from and to, either open), oldest first: the newest `limit` of them, each with its photo and how it was saved' } })
+    .input(z.object({ slot: z.number().int().min(1).max(60), from: z.string().optional(), to: z.string().optional(), limit: z.number().int().min(1).max(1000).default(200) }))
+    .output(z.array(z.object({ captureId: z.string(), ts: z.string(), label: LabelValue, source: z.enum(LABEL_SOURCES) })))
+    .query(({ ctx, input }) => ctx.store.podLabels.forSlot(input.slot, input).map(({ captureId, ts, label, source }) => ({ captureId, ts, label, source }))),
   labelStats: publicProcedure
     .meta({ openapi: { method: 'GET', path: '/vision/labels', tags: ['vision'], summary: 'How many pods carry each label, and the labelled captures, newest first' } })
     .input(z.object({ limit: z.number().int().min(1).max(500).default(50) }).optional())
@@ -309,6 +333,14 @@ export const visionRouter = router({
         captures: ctx.store.podLabels.captures(input?.limit ?? 50),
       }
     }),
+  agreement: publicProcedure
+    .meta({ openapi: { method: 'GET', path: '/vision/agreement', tags: ['vision'], summary: 'How often each analyser@version agrees with the grower\'s labels on the same photo and pod: green area under 2 % on an empty or seeded pod and 2 % or more on a sprouted, growing or ready one (unhealthy pods are left out); a pod-state class that matches the label, seeded counting as empty' } })
+    .output(z.object({ pods: z.number(), analyzers: z.array(z.object({ analyzer: z.string(), version: z.number(), metric: z.string(), agree: z.number(), total: z.number() })) }))
+    .query(({ ctx }) => {
+      const labels = ctx.store.podLabels.range('', '9999')
+      const rows = ctx.store.analyses.agreementReadings()
+      return { pods: labels.length, analyzers: agreement(labels, rows) }
+    }),
   labelList: publicProcedure
     .meta({ openapi: { method: 'GET', path: '/vision/labels/pods', tags: ['vision'], summary: 'Every labelled pod, newest photo first, with its plant and age then; pass next back as cursor for the following page' } })
     .input(z.object({ label: LabelValue.optional(), camera: CameraName.optional(), limit: z.number().int().min(1).max(500).default(60), cursor: z.string().optional() }))
@@ -335,15 +367,17 @@ export const visionRouter = router({
     .output(z.array(SuggestionOut))
     .query(({ ctx, input }) => [...suggestionsFor(ctx, input.captureId, shotOf(ctx, input.captureId))].map(([slot, s]) => ({ slot, ...s }))),
   acceptSuggestions: publicProcedure
-    .meta({ openapi: { method: 'POST', path: '/vision/captures/{captureId}/suggestions/accept', tags: ['vision'], summary: 'Accept the rest (#261): save every unlabelled pod\'s suggestion in one capture as accepted; pods with no suggestion, or a dismissed one, stay unlabelled' } })
-    .input(z.object({ captureId: z.string() }))
+    .meta({ openapi: { method: 'POST', path: '/vision/captures/{captureId}/suggestions/accept', tags: ['vision'], summary: 'Accept the rest (#261): save every unlabelled pod\'s suggestion in one capture as accepted, or only those in `slots`; pods with no suggestion, or a dismissed one, stay unlabelled' } })
+    .input(z.object({ captureId: z.string(), slots: z.array(z.number().int().min(1).max(30)).max(15).optional() }))
     .output(z.object({ captureId: z.string(), slots: z.array(z.number()) }))
     .mutation(({ ctx, input }) => {
       const shot = shotOf(ctx, input.captureId)
       const labelled = new Set(ctx.store.podLabels.forCapture(input.captureId).map(l => l.slot))
       const slots: number[] = []
+      // Only the pods the tagger shows, when it says which: a removed box has no pod to label.
+      const only = input.slots && new Set(input.slots)
       for (const [slot, s] of suggestionsFor(ctx, input.captureId, shot)) {
-        if (labelled.has(slot)) continue
+        if (labelled.has(slot) || (only && !only.has(slot))) continue
         saveLabel(ctx, input.captureId, shot, slot, s.label, s)
         slots.push(slot)
       }
@@ -450,15 +484,18 @@ export const visionRouter = router({
       return CAMERAS.map(c => regionRows(c, own?.[c]))
     }),
   setRegions: publicProcedure
-    .meta({ openapi: { method: 'PUT', path: '/vision/regions/{camera}', tags: ['vision'], summary: 'Calibrate one camera\'s pod boxes; boxes left out keep their defaults, and null resets the camera' } })
-    .input(z.object({ camera: CameraName, regions: z.array(Region).max(15).nullable() }))
+    .meta({ openapi: { method: 'PUT', path: '/vision/regions/{camera}', tags: ['vision'], summary: 'Calibrate one camera\'s pod boxes; boxes left out keep their defaults, removed ones aren\'t scored, and null resets the camera' } })
+    .input(z.object({ camera: CameraName, regions: z.array(Region).max(15).nullable(), removed: z.array(z.number().int()).max(15).optional() }))
     .output(CameraRegions)
     .mutation(({ ctx, input }) => {
       const slots = cameraSlots(input.camera)
-      const stray = input.regions?.find(r => !slots.includes(r.slot))
-      if (stray) throw new TRPCError({ code: 'BAD_REQUEST', message: `pod ${stray.slot} is not on the ${input.camera} camera` })
-      const own: PodRegions = {}
+      const stray = [...(input.regions ?? []).map(r => r.slot), ...(input.removed ?? [])].find(s => !slots.includes(s))
+      if (stray !== undefined) throw new TRPCError({ code: 'BAD_REQUEST', message: `pod ${stray} is not on the ${input.camera} camera` })
+      const own: OwnRegions = {}
+      // A camera that can't see a pod (its cup out of frame, or hidden) has no box to score it on.
+      for (const slot of input.removed ?? []) own[slot] = null
       for (const { slot, ...box } of input.regions ?? []) {
+        if (own[slot] === null) continue
         const r = clampRegion(box)
         const d = DEFAULT_REGIONS[input.camera][slot] as PodRegions[number]
         // A box put back where it started is a default again, not a calibration.
