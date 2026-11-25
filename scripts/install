@@ -506,6 +506,27 @@ install_camera_reset_helper() {
   return $ok
 }
 
+# A narrowly scoped root helper for explicit, key-authorized UI recovery. The
+# maintenance key is not created here. Only a separate owner sudo login can opt in.
+install_maintenance_helper() {
+  local helper=/usr/local/sbin/thryve-maintenance
+  local src="$PREFIX/scripts/thryve-maintenance.cjs"
+  local rules="$ROOT/etc/sudoers.d/thryve-maintenance" tmp result
+  [ -f "$src" ] || return 1
+  sudo mkdir -p "$ROOT/usr/local/sbin" "$ROOT/etc/sudoers.d" || return 1
+  sudo install -m 0755 -o root -g root "$src" "$ROOT$helper" || return 1
+  tmp="$(mktemp)"
+  printf '%s ALL=(root) NOPASSWD: %s restart-core, %s reboot\n' "$CORE_USER" "$helper" "$helper" > "$tmp"
+  result=0
+  if sudo visudo -cf "$tmp" >/dev/null; then
+    sudo install -m 0440 -o root -g root "$tmp" "$rules" || result=1
+  else
+    result=1
+  fi
+  rm -f "$tmp"
+  return "$result"
+}
+
 # ---- podvision -------------------------------------------------------------------
 # Core's native pod-state runner (#191), a release binary like hald that core runs
 # at nice 19 for each capture. Without it, or with one that won't run here, core
@@ -703,6 +724,7 @@ rm -f "$SUDOERS_TMP"
 install_update_helper || warn "   couldn't install the update helper; update from the web UI is off"
 install_hal_mqtt_helper || warn "   couldn't install the hardware-broker helper; Settings cannot point hald at Home Assistant's broker"
 install_camera_reset_helper || warn "   couldn't install the camera-reset helper; Restart camera in the UI is off"
+install_maintenance_helper || warn "   couldn't install the maintenance helper; manual recovery stays off"
 install_podvision || warn "   couldn't install podvision; pod-state runs in TypeScript"
 
 # Backups read hal.toml, hald's state and the broker password through the thryve

@@ -67,7 +67,8 @@ export function TodayTimeline() {
   const backup = trpc.backup.status.useQuery()
   const autoRuns = trpc.automations.runs.useQuery({ limit: 500 })
   const rules = trpc.automations.list.useQuery()
-  const alerts = trpc.alerts.list.useQuery({ activeOnly: false })
+  const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString()
+  const alerts = trpc.alerts.list.useQuery({ activeOnly: false, since: midnight })
 
   const lit = light.data ? (light.data.on ? light.data.level : 0) : null
   const lightLane = lightSeries(today.curve, nowMin, lit)

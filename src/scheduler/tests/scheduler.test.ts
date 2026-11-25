@@ -61,6 +61,32 @@ describe('Scheduler', () => {
     return { store, hal, events, s, setNow: (iso: string) => (now = new Date(iso)) }
   }
 
+  it('logs a scheduled database failure and only waters after the run can be recorded', async () => {
+    vi.useFakeTimers()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const { store, hal, s } = setup('2026-10-31T07:00:00Z')
+    const command = vi.spyOn(hal, 'setActuator')
+    store.schedules.upsert({ id: 'p', kind: 'pump', name: 'morning', enabled: true, days: 127, spec: { minute: 420, durationS: 30 } })
+    const record = vi.spyOn(store.schedules, 'recordRun').mockImplementationOnce(() => {
+      throw new Error('database is locked')
+    })
+    try {
+      s.start(1000)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(warn).toHaveBeenCalledWith('scheduler tick failed: database is locked')
+      expect(command).not.toHaveBeenCalled()
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(record).toHaveBeenCalledTimes(2)
+      expect(command).toHaveBeenCalledExactlyOnceWith('pump', { on: true, level: undefined, durationS: 30 })
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(command).toHaveBeenCalledTimes(1)
+    }
+    finally {
+      s.stop()
+      vi.useRealTimers()
+    }
+  })
+
   it('applies the light curve and only re-sends on change', async () => {
     const { store, hal, s, setNow } = setup('2026-10-31T07:00:00Z')
     store.schedules.upsert({ id: 'l', kind: 'light', name: 'day', enabled: true, days: 127, spec: { setpoints: [{ minute: 360, level: 0 }, { minute: 480, level: 60 }] } })

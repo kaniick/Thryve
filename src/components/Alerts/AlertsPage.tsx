@@ -112,10 +112,13 @@ export function openSummary(open: Array<Pick<AlertRow, 'kind'>>): string {
   return `${open.length} open · ${parts.join(', ')}`
 }
 
+const HISTORY_PAGE_SIZE = 50
+
 export function AlertsPage() {
   const utils = trpc.useUtils()
   const [view, setView] = useState<'active' | 'all'>('active')
-  const alerts = trpc.alerts.list.useQuery({ activeOnly: view === 'active' })
+  const [page, setPage] = useState(0)
+  const history = trpc.alerts.list.useQuery({ activeOnly: false, limit: HISTORY_PAGE_SIZE + 1, offset: page * HISTORY_PAGE_SIZE }, { enabled: view === 'all' })
   const open = trpc.alerts.list.useQuery({ activeOnly: true })
   const pods = trpc.grow.pods.useQuery()
   const ack = trpc.alerts.acknowledge.useMutation({
@@ -127,7 +130,8 @@ export function AlertsPage() {
   const dismiss = trpc.alerts.dismiss.useMutation({ onSuccess: () => utils.alerts.invalidate() })
   const [now] = useState(() => Date.now())
   const attention = (pods.data ?? []).filter(p => p.status === 'attention')
-  const rows = alerts.data ?? []
+  const alerts = view === 'all' ? history : open
+  const rows = view === 'all' ? (history.data ?? []).slice(0, HISTORY_PAGE_SIZE) : open.data ?? []
 
   return (
     <div className="mx-auto flex max-w-[860px] flex-col gap-6">
@@ -136,11 +140,20 @@ export function AlertsPage() {
           <h1 className="text-2xl font-semibold">Alerts</h1>
           <p className="text-[13px] text-fg-2">{openSummary(open.data ?? [])}</p>
         </div>
-        <SegmentedControl ariaLabel="Alerts" value={view} onChange={setView} options={[{ value: 'active', label: 'Open' }, { value: 'all', label: 'History' }]} />
+        <SegmentedControl
+          ariaLabel="Alerts"
+          value={view}
+          onChange={(next) => {
+            setView(next)
+            setPage(0)
+          }}
+          options={[{ value: 'active', label: 'Open' }, { value: 'all', label: 'History' }]}
+        />
       </div>
 
       <div className="flex flex-col gap-3">
-        {rows.length === 0 && (
+        {alerts.isPending && <p className="text-[13px] text-fg-2">Loading alerts…</p>}
+        {!alerts.isPending && rows.length === 0 && (
           <div className="rounded-[14px] border border-dashed border-line-2 px-5 py-4 text-[13px] text-fg-2">
             Nothing to see. Faults stay here until you clear them or they resolve by themselves; reminders clear when you mark the chore done.
           </div>
@@ -190,6 +203,14 @@ export function AlertsPage() {
           )
         })}
       </div>
+
+      {view === 'all' && (page > 0 || (history.data?.length ?? 0) > HISTORY_PAGE_SIZE) && (
+        <nav aria-label="Alert history pages" className="flex items-center justify-center gap-3">
+          <Button disabled={page === 0 || history.isFetching} onClick={() => setPage(p => p - 1)}>Newer</Button>
+          <span className="text-sm text-fg-2">{`Page ${page + 1}`}</span>
+          <Button disabled={history.isFetching || (history.data?.length ?? 0) <= HISTORY_PAGE_SIZE} onClick={() => setPage(p => p + 1)}>Older</Button>
+        </nav>
+      )}
 
       {view === 'active' && attention.length > 0 && (
         <section className="flex flex-col gap-2.5">

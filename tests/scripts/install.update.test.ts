@@ -112,3 +112,20 @@ describe('the camera-reset helper', () => {
     )
   })
 })
+
+describe('the maintenance helper', () => {
+  it('grants only the two queued commands and leaves owner setup to sudo', () => {
+    const maintenance = resolve(import.meta.dirname, '../../scripts/thryve-maintenance.cjs')
+    writeFileSync(join(prefix, 'scripts/thryve-maintenance.cjs'), readFileSync(maintenance))
+    const r = spawnSync('bash', ['-c', `source "${script}"; CORE_USER=thryve-core; install_maintenance_helper`], {
+      encoding: 'utf8',
+      env: { PATH: `${bin}:${process.env.PATH}`, THRYVE_ROOT: root, THRYVE_PREFIX: prefix, THRYVE_LIB_ONLY: '1', STATE: dir },
+    })
+    expect(r).toMatchObject({ status: 0 })
+    expect(readFileSync(join(root, 'usr/local/sbin/thryve-maintenance'), 'utf8')).toBe(readFileSync(maintenance, 'utf8'))
+    expect(readFileSync(join(root, 'etc/sudoers.d/thryve-maintenance'), 'utf8').trim()).toBe(
+      'thryve-core ALL=(root) NOPASSWD: /usr/local/sbin/thryve-maintenance restart-core, /usr/local/sbin/thryve-maintenance reboot',
+    )
+    expect(existsSync(join(root, 'etc/thryve-maintenance.key'))).toBe(false)
+  })
+})

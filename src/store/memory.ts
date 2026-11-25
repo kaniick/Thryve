@@ -1,5 +1,5 @@
 import type { SensorId } from '../hardware/contract'
-import type { AlertRow, Automation, AutomationRun, AnalysisPoint, AnalysisRow, AnalyzerStats, BackupRecord, Capture, CustomPlant, DeviceSettings, FlashSample, GrowCycle, GrowProtocolState, GrowStage, PlanRow, PlantProfile, Pod, PodCodePair, PodCodeRead, PodLabel, PodLabelCursor, PodLabelInput, PodLabelSource, PodLabelValue, SavedSchedule, Schedule, ScheduleRun, Store, SuggestionDismissal, TankAction, TankActionKind, TelemetryPoint, QualitySample, PumpRun, PumpSpec } from './types'
+import type { AlertQuery, AlertRow, Automation, AutomationRun, AnalysisPoint, AnalysisRow, AnalyzerStats, BackupRecord, Capture, CustomPlant, DeviceSettings, FlashSample, GrowCycle, GrowProtocolState, GrowStage, PlanRow, PlantProfile, Pod, PodCodePair, PodCodeRead, PodLabel, PodLabelCursor, PodLabelInput, PodLabelSource, PodLabelValue, SavedSchedule, Schedule, ScheduleRun, Store, SuggestionDismissal, TankAction, TankActionKind, TelemetryPoint, QualitySample, PumpRun, PumpSpec } from './types'
 import type { NotificationChannel, NotificationRule, NotificationRun } from '../notify/types'
 import type { ActivityToken, FeedItem, IosDevice } from '../notify/ios/types'
 import type { AutomationRule } from '../autopilot/types'
@@ -90,8 +90,12 @@ export class MemoryStore implements Store {
   }
 
   alerts = {
-    list: (opts?: { activeOnly?: boolean }): AlertRow[] =>
-      this.alertRows.filter(a => !opts?.activeOnly || a.active).slice().sort((a, b) => b.raisedAt.localeCompare(a.raisedAt)),
+    list: (opts?: AlertQuery): AlertRow[] => {
+      const rows = this.alertRows.filter(a => (!opts?.activeOnly || a.active) && (opts?.kind === undefined || a.kind === opts.kind) && (opts?.since === undefined || a.raisedAt >= opts.since))
+        .sort((a, b) => b.raisedAt.localeCompare(a.raisedAt) || a.id - b.id)
+      const offset = opts?.offset ?? 0
+      return rows.slice(offset, opts?.limit === undefined ? undefined : offset + opts.limit)
+    },
     raise: (kind: string, detail: string, ts: string): AlertRow => {
       const existing = this.alertRows.find(a => a.kind === kind && a.active)
       if (existing) {
@@ -248,6 +252,10 @@ export class MemoryStore implements Store {
       const rows = this.points.filter(p => p.sensor === sensor && p.ts >= fromTs && p.ts <= toTs)
       return maxPoints < 0 ? rows : downsample(rows, maxPoints)
     },
+    scan: (sensor: SensorId, fromTs: string, toTs: string): Iterable<TelemetryPoint> =>
+      this.telemetry.range(sensor, fromTs, toTs, -1).sort((a, b) => a.ts.localeCompare(b.ts)),
+    count: (sensor: SensorId, fromTs: string, toTs: string): number =>
+      this.points.reduce((n, p) => n + Number(p.sensor === sensor && p.ts >= fromTs && p.ts <= toTs), 0),
     flush: (): void => {
       // nothing is held
     },
@@ -272,7 +280,11 @@ export class MemoryStore implements Store {
     },
     range: (sensor: string, fromTs: string, toTs: string): QualitySample[] =>
       this.qualityRows.filter(s => s.sensor === sensor && s.ts >= fromTs && s.ts <= toTs),
-    trustedShare: (sensor: string, nowTs: string, windowS: number) => trustedShareOf(this.qualityRows, sensor, nowTs, windowS),
+    counts: (sensor: string, fromTs: string, toTs: string) => qualityCounts(this.sensorQuality.range(sensor, fromTs, toTs)),
+    trustedShare: (sensor: string, nowTs: string, windowS: number) => {
+      const from = new Date(Date.parse(nowTs) - windowS * 1000).toISOString()
+      return trustedShareOf(this.sensorQuality.counts(sensor, from, nowTs), windowS)
+    },
   }
 
   pumpRuns = {
@@ -701,14 +713,22 @@ function clone<T>(v: T): T {
   return JSON.parse(JSON.stringify(v)) as T
 }
 
-function trustedShareOf(rows: QualitySample[], sensor: string, nowTs: string, windowS: number) {
-  const from = new Date(Date.parse(nowTs) - windowS * 1000).toISOString()
-  const samples = rows.filter(s => s.sensor === sensor && s.ts >= from && s.ts <= nowTs)
-  const trusted = samples.filter(s => s.quality === 'good').length
+export function qualityCounts(rows: QualitySample[]) {
+  let good = 0
+  let suspect = 0
+  for (const row of rows) {
+    if (row.quality === 'good') good++
+    if (row.quality === 'suspect') suspect++
+  }
+  return { samples: rows.length, good, suspect }
+}
+
+export function trustedShareOf(counts: { samples: number, good: number }, windowS: number) {
+  const { samples, good } = counts
   return {
-    trustedPct: samples.length ? Math.round((trusted / samples.length) * 1000) / 10 : null,
-    samples: samples.length,
-    trusted,
+    trustedPct: samples ? Math.round((good / samples) * 1000) / 10 : null,
+    samples,
+    trusted: good,
     hours: windowS / 3600,
   }
 }

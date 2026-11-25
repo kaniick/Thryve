@@ -95,6 +95,8 @@ describe('routers', () => {
     expect((await c.alerts.list({ activeOnly: false, kind: 'chore_feed', limit: 1 })).map(a => a.detail)).toEqual(['b'])
     expect((await c.alerts.list({ activeOnly: false, kind: 'chore_feed' })).map(a => a.detail)).toEqual(['b', 'a'])
     expect((await c.alerts.list({ activeOnly: false })).length).toBeGreaterThanOrEqual(3)
+    expect((await c.alerts.list({ activeOnly: false, since: '2026-11-02T00:00:00Z' })).map(a => a.detail)).toEqual(['c', 'b'])
+    expect((await c.alerts.list({ activeOnly: false, limit: 1, offset: 1 })).map(a => a.detail)).toEqual(['b'])
   })
 
   it('pump.runOnce maps a HAL refusal to PRECONDITION_FAILED', async () => {

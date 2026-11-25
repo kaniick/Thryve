@@ -11,6 +11,10 @@ const { data, calls } = vi.hoisted(() => ({
 
 vi.mock('@tanstack/react-router', () => ({ Link: ({ to, children, className }: { to: string, children: unknown, className?: string }) => <a href={to} className={className}>{children as string}</a> }))
 
+vi.mock('@/src/components/Settings/MaintenanceSection', () => ({
+  MaintenanceSection: () => <section id="maintenance" aria-label="Maintenance" />,
+}))
+
 vi.mock('@/src/utils/trpc', () => {
   const query = (name: string) => ({ useQuery: () => ({ data: data.get(name), refetch: vi.fn() }) })
   const mutation = (name: 'update' | 'testBridge' | 'applyHalBroker' | 'test' | 'sync' | 'run' | 'undo' | 'browse' | 'fromBucket') => ({ useMutation: () => ({
@@ -335,7 +339,7 @@ describe('Settings: header and section nav', () => {
     render(<SettingsPage />)
     const nav = screen.getByRole('navigation')
     const labels = Array.from(nav.querySelectorAll('button'), b => b.textContent)
-    expect(labels).toEqual(['Unit', 'Tank', 'Pump', 'Reminders', 'Notifications', 'Cameras', 'MCP access', 'Storage', 'SD card', 'Backup', 'Home Assistant', 'Apple Home', 'Wi-Fi', 'Updates', 'About'])
+    expect(labels).toEqual(['Unit', 'Tank', 'Pump', 'Reminders', 'Notifications', 'Cameras', 'MCP access', 'Storage', 'SD card', 'Backup', 'Home Assistant', 'Apple Home', 'Wi-Fi', 'Updates', 'Maintenance', 'About'])
     for (const id of ['unit', 'tank', 'reminders', 'notifications', 'cameras', 'api', 'off-device', 'storage', 'backup', 'home-assistant', 'homekit', 'wifi', 'update', 'about']) expect(document.getElementById(id)).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Backup' }))
     expect(scroll).toHaveBeenCalled()
@@ -352,7 +356,7 @@ describe('Settings: header and section nav', () => {
       disconnect = vi.fn()
     })
     render(<SettingsPage />)
-    expect(observe).toHaveBeenCalledTimes(15)
+    expect(observe).toHaveBeenCalledTimes(16)
     const entry = (id: string, isIntersecting: boolean) => ({ target: document.getElementById(id), isIntersecting }) as unknown as IntersectionObserverEntry
     act(() => cb([entry('cameras', true), entry('api', true)], {} as IntersectionObserver))
     expect(screen.getByRole('button', { name: 'Cameras' }).getAttribute('aria-current')).toBe('page')
