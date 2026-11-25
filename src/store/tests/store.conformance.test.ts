@@ -7,8 +7,8 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createEventBus } from '../../lib/eventBus'
 import { Recorder } from '../../telemetry/recorder'
-import { MemoryStore } from '../memory'
-import { defaultMigrationsFolder, MAX_HELD_TELEMETRY, SqliteStore } from '../sqlite'
+import { downsample, MemoryStore } from '../memory'
+import { defaultMigrationsFolder, MAX_HELD_QUALITY, MAX_HELD_TELEMETRY, SqliteStore } from '../sqlite'
 import type { AnalysisRow, PodLabel, PodLabelValue, Store, TelemetryPoint } from '../types'
 
 const impls: [string, () => Store][] = [
@@ -584,6 +584,42 @@ for (const [name, make] of impls) {
 }
 
 describe('SqliteStore on disk', () => {
+  it('refreshes cached settings after an update and keeps returned JSON fields isolated', () => {
+    const store = new SqliteStore({ url: ':memory:' })
+    try {
+      const input = { lower: { 16: { x: 0.1, y: 0.2, w: 0.3, h: 0.25 } } }
+      const returned = store.settings.update({ pumpPower: 77, libraryLightsOff: ['one'], autoLightsOff: ['two'], podRegions: input })
+      returned.pumpPower = 2
+      returned.libraryLightsOff?.push('not saved')
+      returned.autoLightsOff?.push('not saved')
+      const box = returned.podRegions?.lower?.[16]
+      if (box) box.x = 0.7
+      expect(store.settings.get()).toMatchObject({ pumpPower: 77, libraryLightsOff: ['one'], autoLightsOff: ['two'], podRegions: input })
+      expect(store.settings.update({ apiKey: 'rotated', pumpPower: 64 })).toMatchObject({ apiKey: 'rotated', pumpPower: 64 })
+    }
+    finally {
+      store.close()
+    }
+  })
+
+  it('filters and pages alert history on SQLite without losing current live detail or tie order', () => {
+    const store = new SqliteStore({ url: ':memory:' })
+    const current = '2026-11-02T00:00:00.000Z'
+    try {
+      store.alerts.raise('job1', 'old', '2026-11-01T00:00:00.000Z')
+      store.alerts.clear('job1', current)
+      const a = store.alerts.raise('job1', 'on disk', current)
+      const b = store.alerts.raise('job2', 'second', current)
+      store.alerts.raise('job1', 'live detail', current, { live: true })
+      expect(store.alerts.list({ since: current, limit: 1 })).toMatchObject([{ id: a.id, detail: 'live detail' }])
+      expect(store.alerts.list({ since: current, limit: 1, offset: 1 })).toMatchObject([{ id: b.id }])
+      expect(store.alerts.list({ activeOnly: true, kind: 'job1' })).toMatchObject([{ id: a.id, detail: 'live detail' }])
+    }
+    finally {
+      store.close()
+    }
+  })
+
   it('migrates pod_growth into analysis_results as green-threshold@1', () => {
     const root = mkdtempSync(join(tmpdir(), 'store-'))
     const url = join(root, 'core.db')
@@ -871,6 +907,60 @@ describe('SqliteStore on disk', () => {
       expect(store.telemetry.range('air_temp', from, to).map(p => p.value)).toEqual([1, 3, 5])
       expect(store.telemetry.range('air_temp', point(2).ts, point(4).ts).map(p => p.value)).toEqual([3])
       expect(store.telemetry.range('air_temp', from, to, 2)).toHaveLength(2)
+      store.close()
+    }))
+
+    it('returns the same exact stride samples with or without held rows, including equal timestamps', onDisk(({ store }) => {
+      store.telemetry.add(Array.from({ length: 527 }, (_, i) => ({ ...point(i % 175), value: i })))
+      store.telemetry.flush()
+      for (const limit of [1, 3, 51, 500]) expect(store.telemetry.range('air_temp', from, to, limit)).toEqual(downsample(store.telemetry.range('air_temp', from, to, -1), limit))
+      store.telemetry.add([{ ...point(3), value: -3 }, { ...point(3), value: -4 }, point(900), { ...point(4), sensor: 'humidity' }])
+      const full = store.telemetry.range('air_temp', from, to, -1)
+      expect(store.telemetry.count('air_temp', from, to)).toBe(full.length)
+      for (const limit of [0, 1, 2, 3, 7, 150, 500]) expect(store.telemetry.range('air_temp', from, to, limit)).toEqual(downsample(full, limit))
+      store.close()
+    }))
+
+    it('pages duplicate timestamps, with no repeat when buffered points flush mid-export', onDisk(({ store }) => {
+      store.telemetry.add(Array.from({ length: 600 }, (_, i) => ({ ...point(3), value: i })))
+      store.telemetry.flush()
+      store.telemetry.add([point(0), { ...point(3), value: -3 }, point(7)])
+      const expected = store.telemetry.range('air_temp', from, to, -1)
+      const scan = store.telemetry.scan('air_temp', from, to)[Symbol.iterator]()
+      const read = Array.from({ length: 270 }, () => scan.next().value)
+      store.telemetry.flush()
+      store.telemetry.add([point(11)])
+      store.telemetry.flush()
+      for (let next = scan.next(); !next.done; next = scan.next()) read.push(next.value)
+      expect(read).toEqual(expected)
+      store.close()
+    }))
+
+    it('aggregates held and stored quality, with stale samples still in the denominator', onDisk(({ store }) => {
+      const sample = { sensor: 'water_level_pct', ts: point(5).ts, quality: 'good' as const }
+      store.sensorQuality.add([sample, { ...sample, quality: 'stale' }])
+      store.telemetry.flush()
+      store.sensorQuality.add([{ ...sample, quality: 'suspect' }, { ...sample, sensor: 'water_distance' }, { ...sample, ts: point(7).ts }])
+      expect(store.sensorQuality.counts(sample.sensor, point(4).ts, sample.ts)).toEqual({ samples: 3, good: 1, suspect: 1 })
+      expect(store.sensorQuality.trustedShare(sample.sensor, sample.ts, 3600)).toEqual({ trustedPct: 33.3, samples: 3, trusted: 1, hours: 1 })
+      expect(store.sensorQuality.trustedShare(sample.sensor, point(1).ts, 3600).trustedPct).toBeNull()
+      store.close()
+    }))
+
+    it('caps quality retries and rolls back telemetry when the quality half of a flush fails', onDisk(({ store, card }) => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      card.exec('CREATE TRIGGER quality_failed BEFORE INSERT ON sensor_quality BEGIN SELECT RAISE(ABORT, \'I/O error\'); END')
+      store.telemetry.add([point(42)])
+      const sample = { sensor: 'water_level_pct', ts: point(3).ts, quality: 'suspect' as const }
+      store.sensorQuality.add([{ ...sample, quality: 'good' }, ...Array.from({ length: MAX_HELD_QUALITY }, () => sample)])
+      store.sensorQuality.add([sample])
+      expect(warn).toHaveBeenCalledTimes(1)
+      expect(stored(card)).toBe(0)
+      expect(store.sensorQuality.counts(sample.sensor, from, to)).toEqual({ samples: MAX_HELD_QUALITY, good: 0, suspect: MAX_HELD_QUALITY })
+      card.exec('DROP TRIGGER quality_failed')
+      store.telemetry.flush()
+      expect(stored(card)).toBe(1)
+      expect(card.prepare('SELECT count(*) AS n FROM sensor_quality').get()).toEqual({ n: MAX_HELD_QUALITY })
       store.close()
     }))
 

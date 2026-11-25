@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { MemoryStore } from '../../store/memory'
 import { telemetryExportFilename, telemetryExportStream } from '../export'
 import type { TelemetryPoint } from '../../store/types'
@@ -43,5 +43,30 @@ describe('telemetry export', () => {
     ]))
     expect(telemetryExportFilename({ from: '', to: '', format: 'csv' })).toBe('thryve-telemetry-all.csv')
     expect(telemetryExportFilename({ from: '', to: '', sensor: 'ph', format: 'json' })).toBe('thryve-telemetry-ph.json')
+  })
+
+  it('does not build the whole export eagerly and stops reading when the client cancels', async () => {
+    const store = new MemoryStore()
+    let seen = 0
+    const closed = vi.fn()
+    const ts = '2026-11-10T00:00:00.000Z'
+    vi.spyOn(store.telemetry, 'scan').mockImplementation(function* () {
+      try {
+        for (let i = 0; i < 400; i++) {
+          seen++
+          yield { sensor: 'air_temp', ts, value: i }
+        }
+      }
+      finally {
+        closed()
+      }
+    })
+    const reader = telemetryExportStream(store, { from: ts, to: ts, sensor: 'air_temp', format: 'csv' }).getReader()
+    expect(seen).toBe(0)
+    const first = await reader.read()
+    expect(new TextDecoder().decode(first.value)).toContain('air_temp,2026-11-10T00:00:00.000Z,0')
+    await reader.cancel()
+    expect(seen).toBeLessThan(400)
+    expect(closed).toHaveBeenCalledOnce()
   })
 })

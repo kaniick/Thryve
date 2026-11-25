@@ -12,7 +12,7 @@ import { appRouter } from '../../server/routers/app'
 import { createCallerFactory } from '../../server/trpc'
 import { MemoryStore } from '../../store/memory'
 import type { Schedule } from '../../store/types'
-import { CareEngine } from '../engine'
+import { CARE_HAL_BATCH_MS, CareEngine } from '../engine'
 import { setupReport } from '../setup'
 
 const NOW = new Date('2026-11-09T12:00:00Z')
@@ -150,7 +150,7 @@ describe('CareEngine', () => {
     expect(active(store)).toEqual(['setup_light_schedule'])
   })
 
-  it('re-checks when a schedule, a pod, the devices or the tank level change, without waiting for its tick', () => {
+  it('checks interactive changes immediately and batches tank readings without changing hysteresis', () => {
     vi.useFakeTimers()
     const { store, care, events, reshape } = rig()
     care.start()
@@ -174,16 +174,41 @@ describe('CareEngine', () => {
     reshape(s => ({ ...s, sensors: { ...s.sensors, water_level_pct: level('suspect') } }))
     events.emit({ kind: 'hal', event: { type: 'sensor', id: 'water_level_pct', reading: level('suspect') } })
     expect(active(store)).toEqual([])
+    vi.advanceTimersByTime(CARE_HAL_BATCH_MS)
+    expect(active(store)).toEqual([])
     seedQuality(store, 'suspect')
-    events.emit({ kind: 'hal', event: { type: 'sensor', id: 'water_level_pct', reading: level('suspect') } })
+    const tick = vi.spyOn(care, 'tick')
+    for (let i = 0; i < 50; i++) events.emit({ kind: 'hal', event: { type: 'sensor', id: 'water_level_pct', reading: level('suspect') } })
+    vi.advanceTimersByTime(CARE_HAL_BATCH_MS - 1)
+    expect(tick).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(1)
+    expect(tick).toHaveBeenCalledTimes(1)
     expect(active(store)).toEqual(['setup_water_sensor'])
     // A majority of good samples in the window clears it; one good reading is not enough.
     reshape(s => ({ ...s, sensors: { ...s.sensors, water_level_pct: level('good') } }))
     events.emit({ kind: 'hal', event: { type: 'sensor', id: 'water_level_pct', reading: level('good') } })
+    vi.advanceTimersByTime(CARE_HAL_BATCH_MS)
     expect(active(store)).toEqual(['setup_water_sensor'])
     seedQuality(store, 'good', 20, T, 20_000)
     events.emit({ kind: 'hal', event: { type: 'sensor', id: 'water_level_pct', reading: level('good') } })
+    vi.advanceTimersByTime(CARE_HAL_BATCH_MS)
     expect(active(store)).toEqual([])
+  })
+
+  it('cancels a pending HAL batch on stop', () => {
+    vi.useFakeTimers()
+    const { care, events } = rig()
+    const tick = vi.spyOn(care, 'tick')
+    care.start()
+    stop = () => {
+      care.stop()
+      vi.useRealTimers()
+      tick.mockRestore()
+    }
+    events.emit({ kind: 'hal', event: { type: 'sensor', id: 'water_level_pct', reading: level('good') } })
+    care.stop()
+    vi.advanceTimersByTime(CARE_HAL_BATCH_MS)
+    expect(tick).toHaveBeenCalledTimes(1)
   })
 
   it('logs and carries on when a check throws', () => {

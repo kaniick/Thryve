@@ -117,6 +117,8 @@ export interface Schedule {
 
 export interface ScheduleRun { scheduleId: string, key: string, firedAt: string, result: string }
 
+export interface AlertQuery { activeOnly?: boolean, kind?: string, since?: string, limit?: number, offset?: number }
+
 export interface AlertRow {
   id: number
   kind: string
@@ -257,6 +259,8 @@ export type ReadingQuality = 'good' | 'stale' | 'suspect'
 
 export interface QualitySample { ts: string, sensor: string, quality: ReadingQuality }
 
+export interface QualityCounts { samples: number, good: number, suspect: number }
+
 export interface TrustedShare { trustedPct: number | null, samples: number, trusted: number, hours: number }
 
 export interface PumpRun {
@@ -392,7 +396,7 @@ export interface Store {
     recentRuns(limit?: number): ScheduleRun[]
   }
   alerts: {
-    list(opts?: { activeOnly?: boolean }): AlertRow[]
+    list(opts?: AlertQuery): AlertRow[]
     /**
      * Raise (or refresh detail of) the active alert of this kind. A raise is always written.
      * `live` marks a refresh as a reading that changes every sample: it stays in memory, `list`
@@ -450,6 +454,9 @@ export interface Store {
     /** Held in memory until the next `flush` (ADR-0021); `range` sees it straight away. */
     add(points: TelemetryPoint[]): void
     range(sensor: SensorId, fromTs: string, toTs: string, maxPoints?: number): TelemetryPoint[]
+    /** Unreduced history in timestamp order, with bounded reads for streaming. */
+    scan(sensor: SensorId, fromTs: string, toTs: string): Iterable<TelemetryPoint>
+    count(sensor: SensorId, fromTs: string, toTs: string): number
     /** Writes held rows in one transaction. A failed write keeps them for the next try. */
     flush(): void
     /** Keeps each sensor's first row of each `bucketMin` in [fromTs, toTs), in one transaction, and says how many went. */
@@ -460,6 +467,7 @@ export interface Store {
   sensorQuality: {
     add(samples: QualitySample[]): void
     range(sensor: string, fromTs: string, toTs: string): QualitySample[]
+    counts(sensor: string, fromTs: string, toTs: string): QualityCounts
     trustedShare(sensor: string, nowTs: string, windowS: number): TrustedShare
   }
   pumpRuns: {

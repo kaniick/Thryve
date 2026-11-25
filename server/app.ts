@@ -17,11 +17,13 @@ import { IngestBatch, IngestRefused, ingestResults } from '../src/vision/ingest'
 import { MAX_MODEL_BYTES, ModelRefused } from '../src/vision/registry'
 import { podCrop } from '../src/vision/shareCodes'
 import { apiKeyGuard, timingSafeEqual } from './auth'
+import type { CorePerformanceWindow } from './performance'
 
 export interface CreateAppOptions {
   ctx: Context
   /** Directory of the built SPA; omit to skip static serving (tests). */
   staticRoot?: string
+  performanceWindow?: () => CorePerformanceWindow | null
 }
 
 /**
@@ -41,7 +43,7 @@ export function staticCacheControl(path: string, contentType: string | null): st
  * mount it on an ephemeral port without touching process signals.
  */
 
-export function createApp({ ctx, staticRoot }: CreateAppOptions) {
+export function createApp({ ctx, staticRoot, performanceWindow }: CreateAppOptions) {
   const app = new Hono()
   const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app })
 
@@ -87,6 +89,12 @@ export function createApp({ ctx, staticRoot }: CreateAppOptions) {
   })
 
   app.use('/api/*', cors({ origin: origin => origin ?? '*' }))
+
+  // In addition to /api/healthcheck, which is a compatibility endpoint used by the updater.
+  if (performanceWindow) app.get('/api/system/performance', (c) => {
+    c.header('Cache-Control', 'no-store')
+    return c.json({ core: performanceWindow() })
+  })
 
   // The MCP access key only applies here; the rest of /api/* is LAN-trusted (ADR-0012).
   app.use('/api/mcp', apiKeyGuard(ctx.store))

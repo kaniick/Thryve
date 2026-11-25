@@ -15,15 +15,14 @@ export const alertsRouter = router({
       activeOnly: z.boolean().default(true),
       /** Only this kind, as the chore rows ask for a skipped chore's last alert. */
       kind: z.string().optional(),
+      /** Ignore alerts raised before this timestamp. */
+      since: z.iso.datetime({ offset: true }).optional(),
       /** The newest this many. */
       limit: z.number().int().min(1).max(500).optional(),
+      offset: z.number().int().nonnegative().optional(),
     }))
     .output(z.array(AlertOut))
-    .query(({ ctx, input }) => {
-      const rows = ctx.store.alerts.list({ activeOnly: input.activeOnly })
-      const kind = input.kind === undefined ? rows : rows.filter(a => a.kind === input.kind)
-      return input.limit === undefined ? kind : kind.slice(0, input.limit)
-    }),
+    .query(({ ctx, input }) => ctx.store.alerts.list({ ...input, since: input.since && new Date(input.since).toISOString() })),
   /** Acknowledge: for HAL latched faults this also clears the latch in the daemon; for reminders it marks the chore done, and for a chore alert logs it in the tank log. */
   acknowledge: publicProcedure
     .meta({ openapi: { method: 'POST', path: '/alerts/{id}/acknowledge', tags: ['alerts'], summary: 'Acknowledge an alert; clears a latched hardware fault so the actuator may re-enable' } })
