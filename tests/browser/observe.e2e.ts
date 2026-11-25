@@ -8,10 +8,16 @@ test('cameras: a failed capture shows the failure with Retry, and raises an aler
   await expect(main.getByText(/Timelapse every \d+ min/)).toBeVisible()
   // A retried run starts with the first run's failure, so either button may show.
   await upper.getByRole('button', { name: /^(Capture now|Retry)$/ }).click()
-  await expect(upper.getByText(/^capture failed ·/)).toBeVisible()
+  await expect(upper.getByText('Upper camera is offline')).toBeVisible()
   await expect(upper.getByText(/Last capture returned 4 bytes/)).toBeVisible()
   await expect(upper.getByTestId('failed-capture')).toBeVisible()
   await expect(upper.getByRole('button', { name: 'Retry' })).toBeVisible()
+  await upper.getByRole('button', { name: 'Restart camera' }).click()
+  const restart = page.getByRole('dialog', { name: 'Restart the upper camera?' })
+  await expect(restart).toBeVisible()
+  await expect(restart.getByText(/It does not reboot the Pi/)).toBeVisible()
+  await restart.getByRole('button', { name: 'Cancel' }).click()
+  await expect(restart).toHaveCount(0)
 
   await page.goto('/alerts')
   await expect(main.getByText(/\d+ open · .*\d+ hardware/)).toBeVisible()
