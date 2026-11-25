@@ -70,4 +70,17 @@ describe('seenEmpty', () => {
     scored(5, 'empty', 0.9, '2026-11-16T10:00:00Z', 2, 'c1')
     expect(seenEmpty(store, NOW).map(s => s.slot)).toEqual([5])
   })
+
+  it('keeps historical scores but does not flag removed boxes or future captures', () => {
+    const { store, plant, scored } = unit()
+    plant(4)
+    plant(5)
+    plant(6)
+    scored(4, 'empty', 0.96)
+    scored(5, 'empty', 0.96)
+    scored(6, 'empty', 0.96, '2026-11-17T10:00:00Z')
+    store.settings.update({ podRegions: { upper: { 4: null } } })
+    expect(seenEmpty(store, NOW).map(s => s.slot)).toEqual([5])
+    expect(store.analyses.forCapture('upper-2026-11-16T10:00:00Z')).toHaveLength(2)
+  })
 })
