@@ -23,12 +23,13 @@ const { state, calls, invalidate } = vi.hoisted(() => ({
     plans: [] as unknown[],
     applied: null as null | { seeded: number[], scheduled: { slot: number, plantName: string, sowOn: string }[] },
     custom: [] as unknown[],
+    seenEmpty: [] as { slot: number, confidence: number, ts: string }[],
     /** The layout query has not answered yet; `loading` holds back every query. */
     layoutPending: false,
     podsPending: false,
     loading: false,
   },
-  calls: { catalog: vi.fn(), layout: vi.fn(), save: vi.fn(), apply: vi.fn(), remove: vi.fn(), addPlant: vi.fn(), updatePlant: vi.fn(), removePlant: vi.fn() },
+  calls: { catalog: vi.fn(), layout: vi.fn(), save: vi.fn(), apply: vi.fn(), remove: vi.fn(), addPlant: vi.fn(), updatePlant: vi.fn(), removePlant: vi.fn(), swapPods: vi.fn() },
   invalidate: vi.fn(),
 }))
 
@@ -41,6 +42,7 @@ vi.mock('@/src/utils/trpc', async () => {
   const mutation = (fn: (i: unknown) => void, data?: () => unknown) => ({
     useMutation: (o?: { onSuccess?: () => void }) => ({
       isPending: false,
+      reset: () => {},
       data: data?.(),
       mutate: (input: unknown) => {
         fn(input)
@@ -50,7 +52,7 @@ vi.mock('@/src/utils/trpc', async () => {
   })
   return {
     trpc: {
-      useUtils: () => ({ planner: { invalidate, plans: { invalidate } }, grow: { invalidate } }),
+      useUtils: () => ({ planner: { invalidate, plans: { invalidate } }, grow: { invalidate }, vision: { seenEmpty: { invalidate } } }),
       planner: {
         zones: { useQuery: ({ model }: { model: Model }) => ({ data: state.loading ? undefined : { ...MODELS[model], slots: slots(model), counts: zoneCounts(model) } }) },
         catalog: { useQuery: (i: { q?: string, category?: string }) => {
@@ -72,7 +74,8 @@ vi.mock('@/src/utils/trpc', async () => {
         updatePlant: mutation(calls.updatePlant),
         removePlant: mutation(calls.removePlant),
       },
-      grow: { pods: { useQuery: () => ({ data: state.loading || state.podsPending ? undefined : state.pods }) } },
+      grow: { pods: { useQuery: () => ({ data: state.loading || state.podsPending ? undefined : state.pods }) }, swapPods: mutation(calls.swapPods) },
+      vision: { seenEmpty: { useQuery: () => ({ data: state.seenEmpty }) } },
     },
   }
 })
@@ -82,6 +85,7 @@ beforeEach(() => {
   state.plans = []
   state.applied = null
   state.custom = []
+  state.seenEmpty = []
   state.layoutPending = false
   state.loading = false
   state.podsPending = false
@@ -101,6 +105,35 @@ const flat = () => fireEvent.click(screen.getByRole('tab', { name: '2D' }))
 const towerPods = () => tower.props?.pods as PodState[]
 
 describe('PlanPage', () => {
+  it('shows the empty-camera hint without changing the inventory, and requires confirmation to record a move', () => {
+    const start = { slot: 1, plant: 'Basil', status: 'growing' }
+    state.pods = [start, { slot: 2, plant: null, status: 'empty' }, { slot: 3, plant: 'Rosemary', status: 'seeded' }]
+    state.seenEmpty = [1, 3].map(slot => ({ slot, confidence: 0.92, ts: '2026-11-25T00:00:00Z' }))
+    render(<PlanPage />)
+    expect(screen.getByRole('status', { name: 'Camera review' }).textContent).toContain('Camera sees pod 1 as empty.')
+    expect(screen.getByRole('link', { name: 'Review in Analysis' }).getAttribute('href')).toBe('/analysis?tab=teach')
+    expect(calls.swapPods).not.toHaveBeenCalled()
+    fireEvent.change(screen.getByLabelText('From planted pod'), { target: { value: '1' } })
+    fireEvent.change(screen.getByLabelText('To pod'), { target: { value: '2' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Review move' }))
+    const review = screen.getByRole('dialog', { name: 'Record pod move?' })
+    expect(review.textContent).toContain('Move the yCubes on the tower first')
+    expect(calls.swapPods).not.toHaveBeenCalled()
+    fireEvent.click(within(review).getByRole('button', { name: 'Record move' }))
+    expect(calls.swapPods).toHaveBeenCalledExactlyOnceWith({ a: 1, b: 2 })
+  })
+
+  it('does not commit a reviewed swap that was cancelled', () => {
+    state.pods = [{ slot: 1, plant: 'Basil', status: 'growing' }, { slot: 2, plant: 'Rosemary', status: 'growing' }]
+    render(<PlanPage />)
+    fireEvent.change(screen.getByLabelText('From planted pod'), { target: { value: '1' } })
+    fireEvent.change(screen.getByLabelText('To pod'), { target: { value: '2' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Review swap' }))
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Record pod swap?' })).getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('dialog', { name: 'Record pod swap?' })).toBeNull()
+    expect(calls.swapPods).not.toHaveBeenCalled()
+  })
+
   it('shows the tower’s zones, the catalog, and how to start', () => {
     render(<PlanPage />)
     expect(screen.getByText('High 12')).toBeTruthy()

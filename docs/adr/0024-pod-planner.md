@@ -85,6 +85,14 @@ places (knowledge/evaluation/mypodplanner-crosscheck-2026-11-02.md).
   is deterministic, the screen then shows the layout and schedule that were
   saved, and saving updates the same plan.
 
+## Review existing pods
+
+The Planted pods card shows recent high-confidence empty-pod readings for
+review in Analysis. It does not clear records or change a plan. Optional light
+moves honour the owner's allowed zones and leave planned slots reserved.
+After moving the yCubes, select both slots and confirm the record change. Pod
+records move together and old camera results stay with the camera positions.
+
 ## Consequences
 
 - Catalog harvest windows are months; ADR 0022's per-crop profiles stay the

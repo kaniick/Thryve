@@ -13,6 +13,7 @@ import { trpc } from '@/src/utils/trpc'
 import { CustomPlantDialog, type EditablePlant } from '@/src/components/Plan/CustomPlantDialog'
 import { SavedPlans } from '@/src/components/Plan/SavedPlans'
 import { Unplaced } from '@/src/components/Plan/Unplaced'
+import { PodReview } from '@/src/components/Plan/PodReview'
 
 import type { PlanOverrides } from '@/src/plants/planner'
 
@@ -330,6 +331,10 @@ export function PlanPage() {
           <p className="mt-2 text-[11px] text-fg-3">* harvest window estimated from the category; Gardyn doesn’t list one.</p>
         </Card>
       </div>
+
+      {zones.data && (
+        <PodReview key={model} pods={pods.data ?? []} slots={zones.data.slots} plants={everything.data?.plants ?? []} reserved={new Set(bySlot.keys())} overrides={overrides} />
+      )}
 
       {request.length > 0 && (
         <>
