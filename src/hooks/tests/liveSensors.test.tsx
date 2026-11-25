@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { QueryClientProvider } from '@tanstack/react-query'
 import { TRPCClientError, type TRPCLink } from '@trpc/client'
+import { getQueryKey } from '@trpc/react-query'
 import { observable, type Observer } from '@trpc/server/observable'
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import type { ReactNode } from 'react'
@@ -13,20 +14,25 @@ import { BURST_MS, useLiveEvents } from '../useLiveEvents'
 const reading = (value: number, ts: string) => ({ ts, value, unit: '°C', quality: 'good' })
 
 /** The real cache, hook and query options over a link the test answers by hand. */
-function harness() {
+function harness(showPods = false) {
   const fetches: Array<(data: unknown) => void> = []
+  const paths: string[] = []
   const stream: { to: Observer<unknown, TRPCClientError<AppRouter>> | null } = { to: null }
   const link: TRPCLink<AppRouter> = () => ({ op }) => observable((observer) => {
     if (op.type === 'subscription') stream.to = observer as typeof stream.to
-    else fetches.push((data) => {
-      observer.next({ result: { type: 'data', data } })
-      observer.complete()
-    })
+    else {
+      paths.push(op.path)
+      fetches.push((data) => {
+        observer.next({ result: { type: 'data', data } })
+        observer.complete()
+      })
+    }
   })
   const client = trpc.createClient({ links: [link] })
   function Show() {
     useLiveEvents()
     const latest = trpc.sensors.latest.useQuery()
+    trpc.grow.pods.useQuery(undefined, { enabled: showPods })
     return <div data-testid="air">{latest.data?.air_temp?.value ?? 'none'}</div>
   }
   const Wrap = ({ children }: { children: ReactNode }) => (
@@ -36,7 +42,7 @@ function harness() {
   )
   render(<Wrap><Show /></Wrap>)
   const event = (e: CoreEvent) => act(() => stream.to?.next({ result: { type: 'data', data: e } } as never))
-  return { fetches, event, stream: (result: unknown) => stream.to?.next({ result } as never) }
+  return { fetches, paths, event, stream: (result: unknown) => stream.to?.next({ result } as never) }
 }
 
 const tick = (id: string, r: unknown): CoreEvent => ({ kind: 'hal', event: { type: 'sensor', id, reading: r } }) as CoreEvent
@@ -77,6 +83,18 @@ describe('live sensors through the real query cache', () => {
     act(() => stream({ type: 'started' }))
     await settle()
     expect(fetches).toHaveLength(1)
+  })
+
+  it('refreshes visible pods and readings without requesting an inactive camera page', async () => {
+    const cameraKey = getQueryKey(trpc.camera.list, { camera: 'upper', limit: 1 }, 'query')
+    queryClient.setQueryData(cameraKey, [])
+    const { fetches, paths, stream } = harness(true)
+    await waitFor(() => expect(fetches).toHaveLength(2))
+    await act(async () => paths.forEach((path, i) => fetches[i]?.(path === 'grow.pods' ? [] : {})))
+    act(() => stream({ type: 'started' }))
+    act(() => stream({ type: 'started' }))
+    await waitFor(() => expect(paths.slice(2).sort()).toEqual(['grow.pods', 'sensors.latest']))
+    expect(queryClient.getQueryState(cameraKey)?.isInvalidated).toBe(true)
   })
 
   it('keeps a reading that landed while a slower fetch was in flight', async () => {
