@@ -30,6 +30,9 @@ export const MAX_HELD_TELEMETRY = 5_000
 /** Cap separately so the high-frequency ranger cannot exhaust RAM during a card fault. */
 export const MAX_HELD_QUALITY = 10_000
 const BATCH_SIZE = 1_000
+const DEFAULT_BUSY_MS = 5_000
+/** A buffered write can wait for the next flush instead of blocking the event loop. */
+const TELEMETRY_BUSY_MS = 100
 
 /**
  * Migrations live in src/db/migrations. From source (vitest/tsx) that is next
@@ -66,7 +69,7 @@ export class SqliteStore implements Store {
     if (opts.url !== ':memory:') mkdirSync(dirname(resolve(opts.url)), { recursive: true })
     this.sqlite = new Database(opts.url)
     this.sqlite.pragma('journal_mode = WAL')
-    this.sqlite.pragma('busy_timeout = 5000')
+    this.sqlite.pragma(`busy_timeout = ${DEFAULT_BUSY_MS}`)
     this.db = drizzle(this.sqlite, { schema: t })
     migrate(this.db, { migrationsFolder: opts.migrationsFolder ?? defaultMigrationsFolder() })
     this.seed(opts.podCount ?? 30)
@@ -295,6 +298,7 @@ export class SqliteStore implements Store {
     flush: (): void => {
       if (this.heldTelemetry.length === 0 && this.heldQuality.length === 0) return
       try {
+        this.sqlite.pragma(`busy_timeout = ${TELEMETRY_BUSY_MS}`)
         // A quality insert that fails after telemetry must not duplicate
         // the earlier inserts when both buffers are retried.
         this.sqlite.transaction(() => {
@@ -304,13 +308,17 @@ export class SqliteStore implements Store {
           for (let start = 0; start < this.heldQuality.length; start += BATCH_SIZE) {
             this.db.insert(t.sensorQuality).values(this.heldQuality.slice(start, start + BATCH_SIZE)).run()
           }
-        })()
+        }).immediate()
         this.heldTelemetry = []
         this.heldQuality = []
         this.capFlushFailed = false
       }
       catch (e) {
         console.warn(`telemetry flush failed, holding ${this.heldTelemetry.length} rows and ${this.heldQuality.length} quality samples: ${(e as Error).message}`)
+      }
+      finally {
+        // This synchronous transaction never yields with another operation's timeout changed.
+        this.sqlite.pragma(`busy_timeout = ${DEFAULT_BUSY_MS}`)
       }
     },
     thin: (sensors: readonly SensorId[], fromTs: string, toTs: string, bucketMin: number): number => {

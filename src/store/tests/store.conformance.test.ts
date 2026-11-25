@@ -997,6 +997,26 @@ describe('SqliteStore on disk', () => {
       store.close()
     }))
 
+    it('defers a buffered flush promptly under a competing SQLite write lock', onDisk(({ store, card }) => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      store.telemetry.add([point(1)])
+      card.exec('BEGIN IMMEDIATE')
+      try {
+        const start = performance.now()
+        store.telemetry.flush()
+        expect(performance.now() - start).toBeLessThan(2000)
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining('database is locked'))
+        expect(stored(card)).toBe(0)
+        expect(store.telemetry.range('air_temp', from, to)).toEqual([point(1)])
+      }
+      finally {
+        card.exec('ROLLBACK')
+      }
+      store.telemetry.flush()
+      expect(stored(card)).toBe(1)
+      store.close()
+    }))
+
     it('keeps rows through a failed write and lands them on the next one', onDisk(({ store, card }) => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
       failWrites(card)
