@@ -131,13 +131,19 @@ export class Scheduler {
 
   start(intervalMs = 60_000): void {
     this.stop()
-    this.timer = setInterval(() => void this.tick(), intervalMs)
-    void this.tick()
+    this.timer = setInterval(() => this.timerTick(), intervalMs)
+    this.timerTick()
   }
 
   stop(): void {
     if (this.timer) clearInterval(this.timer)
     this.timer = null
+  }
+
+  private timerTick(): void {
+    // A failed read/write must leave this tick failed, not exit the whole
+    // service. In particular, never run a pump start we could not record.
+    void this.tick().catch((e: Error) => console.warn(`scheduler tick failed: ${e.message}`))
   }
 
   /** Evaluate every enabled schedule for "now". Safe to call repeatedly. */

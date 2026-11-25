@@ -48,6 +48,26 @@ sources: [{"resource": "https://github.com/iot-root/garden-of-eden", "title": "i
   ```
 
   The performance endpoint reports the last completed ~30-second window: event-loop utilization (0–1, not CPU load), p95 lag and maximum lag in milliseconds. `core: null` means no window has finished. The journal records windows where the main loop fell at least 1 second behind. A HAL health response is not proof that the pump or light ran on schedule. If SSH and HTTP both disappear, test the unit's numeric IP from the LAN and check the Wi-Fi association and kernel journal independently.
+- **SSH and the web UI both disappear.** The login banner's Core probe has a 600 ms deadline. “Core not answering” in the banner means the SSH session reached the Pi, even if Core was slow. A failed SSH connection by numeric IP is a different symptom. From a second device on the same LAN, check Core, hald and the SSH banner independently using the installed source or a checkout of this repository:
+
+  ```sh
+  python3 scripts/thryve-observe.py 10.10.20.202 --interval 5 --duration 3600 | tee thryve-outage.jsonl
+  ```
+
+  Substitute the unit's numeric IPv4. The probe writes timestamped results and response times to your other device, requests no camera frames, sends no commands and needs no login. `ssh: null` means SSH was not checked on that sample. It checks SSH about every 30 seconds when healthy and whenever Core or hald fails. Compare the baseline first, especially if a firewall intentionally blocks any of the three ports.
+
+  - Core stalls with hald and SSH responding: investigate Core and its event-loop delay.
+  - SSH is failing while Core and hald answer: investigate port 22, the SSH service and the failing client's path.
+  - All three stop: check whether the Pi remained associated with Wi-Fi in the access point's event log. After recovery, check `sudo journalctl --list-boots` and `cat /proc/sys/kernel/random/boot_id`. A different boot ID confirms a reboot, not its cause. A HAL uptime reset alone may only be a HAL restart. All three failing cannot distinguish a network drop from a host freeze by itself.
+
+  If a shell is still open during the incident, leave it open and check Core and hald on loopback before restarting. After reconnection, capture the recent logs. Match the UTC timestamps to the probe and the AP logs. Select `-b -1` instead of `-b` only if there was a reboot and the previous journal is available.
+
+  ```sh
+  sudo journalctl -b --utc --since '-30 min' -u NetworkManager -u wpa_supplicant -u ssh.service -u thryve-core -u hald --no-pager
+  sudo journalctl -b -k --utc --since '-30 min' --no-pager
+  tail -n 12 /var/lib/thryve/boot-log
+  ```
+
 - **Benchmark Core without touching a garden.** Run `node --import tsx tests/perf/core-read-paths.mts` from a checkout with dependencies installed. It creates a temporary synthetic database and measures care checks, settings reads, tank quality, and history sampling. Use the same machine and Node version for comparison. Before rollout to an ARMv6 unit, compare local HTTP and SSH availability across a normal light/watering cycle, and verify that the scheduled runs still happen.
 - **Core takes a while after a restart.** It's one bundle (`scripts/build-server.mjs`), because a cold start used to go on resolving `node_modules`. A stack trace points into `server/dist/*.js`, with source maps beside it. The MCP and OpenAPI stacks load on first use, so the first `/api/mcp` or REST call after a restart is slower than the next. V8's compile cache lives in `/var/cache/thryve/compile-cache`, written once a minute after the first start of a version; deleting it is always safe.
 - **A restore that didn't finish.** The helper logs each step to `/var/lib/thryve-restore/status.json`. When the web UI starts the restore, it runs as a transient unit: `journalctl -u 'thryve-restore-*'`. `sudo thryve-restore --status` prints the last run. "restore isn't installed" means `scripts/install` hasn't put the helper and its sudoers rule in place; `sudo -n -l /usr/local/sbin/thryve-restore` as the core user should print the path. `sudo thryve-restore --undo` puts back what the last restore replaced. A failed restore puts the old files back by itself.
