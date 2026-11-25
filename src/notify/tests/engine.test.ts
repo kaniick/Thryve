@@ -44,11 +44,13 @@ function harness(opts?: { rules?: NotificationRule[], channels?: NotificationCha
     posts.push({ url, body: String(init?.body ?? '') })
     return new Response(JSON.stringify({ status: 1, request: 'req' }), { status: 200 })
   })
+  const readSignals = vi.fn<(slots: number[]) => Record<string, number | undefined>>(() => signals)
+  const readSnapshot = vi.fn(() => snap)
   const engine = new NotifyEngine({
     now: () => Date.parse('2026-11-16T20:00:00Z'),
     clock: () => ({ nowMinutes: 12 * 60, dayOfWeek: 'monday', dateKey: '2026-11-16' }),
-    signals: () => signals,
-    snapshot: () => snap,
+    signals: readSignals,
+    snapshot: readSnapshot,
     loadRules: () => opts?.rules ?? [rule()],
     loadChannels: () => opts?.channels ?? [channel],
     recordRun: (ruleId, outcome, detail) => { runs.push({ ruleId, outcome, detail }) },
@@ -58,13 +60,39 @@ function harness(opts?: { rules?: NotificationRule[], channels?: NotificationCha
     fetch: fetchImpl,
   })
   return {
-    engine, runs, posts, fetchImpl,
+    engine, runs, posts, fetchImpl, readSignals, readSnapshot,
     setSignals(s: Record<string, number | undefined>) { signals = s },
     setSnap(s: EventSnapshot) { snap = s },
   }
 }
 
 describe('notification engine', () => {
+  it('skips analysis and snapshots without rules, and starts with a quiet baseline once configured', async () => {
+    const rules: NotificationRule[] = []
+    const h = harness({ rules })
+    await h.engine.tick()
+    expect(h.readSignals).not.toHaveBeenCalled()
+    expect(h.readSnapshot).not.toHaveBeenCalled()
+    rules.push(rule({ trigger: { kind: 'event', event: 'light_on' } }))
+    h.setSnap(emptySnap({ lightOn: true }))
+    await h.engine.tick()
+    expect(h.readSignals).toHaveBeenCalledWith([])
+    expect(h.posts).toHaveLength(0)
+  })
+
+  it('reads just the unique pod slots in thresholds and nested window conditions', async () => {
+    const r = rule({
+      trigger: { kind: 'threshold', signal: 'pod.5.green', op: '>', value: 0.25 },
+      conditions: { kind: 'not', condition: { kind: 'compare', op: '>', left: { kind: 'window', signal: 'pod.8.trend', fn: 'avg', lastMin: 30 }, right: { kind: 'signal', signal: 'pod.5.trend' } } },
+    })
+    const h = harness({ rules: [r] })
+    await h.engine.tick()
+    expect(h.readSignals).toHaveBeenCalledExactlyOnceWith([5, 8])
+    h.readSignals.mockClear()
+    await h.engine.testRule(r)
+    expect(h.readSignals).toHaveBeenCalledExactlyOnceWith([5, 8])
+  })
+
   it('sends once when a threshold is crossed, then dedups until it clears', async () => {
     const h = harness()
     await h.engine.tick() // first sample, rising edge

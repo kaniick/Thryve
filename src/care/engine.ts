@@ -33,6 +33,7 @@ export class CareEngine {
   private timer: ReturnType<typeof setInterval> | null = null
   private unsub: (() => void) | null = null
   private halBatch: ReturnType<typeof setTimeout> | null = null
+  private podEdit: ReturnType<typeof setTimeout> | null = null
   /** A tick is running, and whether something asked for another while it did. */
   private ticking = false
   private again = false
@@ -101,8 +102,16 @@ export class CareEngine {
         this.scheduleHalTick()
         return
       }
+      if (e.kind === 'mutation' && e.path === 'pods') {
+        // Hand the response back to the pod edit first. A burst needs just one check.
+        this.podEdit ??= setTimeout(() => {
+          this.podEdit = null
+          this.safeTick()
+        }, 0)
+        return
+      }
       const relevant = (e.kind === 'schedule' && e.action === 'changed')
-        || (e.kind === 'mutation' && (e.path === 'pods' || e.path === 'grow' || e.path === 'devices' || e.path === 'tank' || e.path === 'captures'))
+        || (e.kind === 'mutation' && (e.path === 'grow' || e.path === 'devices' || e.path === 'tank' || e.path === 'captures'))
         || (e.kind === 'hal' && (e.event.type === 'availability' || e.event.type === 'devices'))
       if (relevant) this.safeTick()
     })
@@ -125,6 +134,8 @@ export class CareEngine {
     }
     if (this.halBatch) clearTimeout(this.halBatch)
     this.halBatch = null
+    if (this.podEdit) clearTimeout(this.podEdit)
+    this.podEdit = null
     this.ticking = true
     try {
       // Let HTTP and MQTT run before processing any further cascading work.
@@ -150,6 +161,8 @@ export class CareEngine {
     this.unsub = null
     if (this.halBatch) clearTimeout(this.halBatch)
     this.halBatch = null
+    if (this.podEdit) clearTimeout(this.podEdit)
+    this.podEdit = null
     if (this.timer) clearInterval(this.timer)
     this.timer = null
   }

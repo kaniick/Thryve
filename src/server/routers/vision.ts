@@ -222,9 +222,11 @@ export const visionRouter = router({
     .output(z.array(z.object({ slot: z.number(), points: z.array(z.object({ ts: z.string(), green: z.number() })) })))
     .query(({ ctx, input }) => {
       const analyzer = ctx.store.settings.get().primaryAnalyzer
+      const version = ctx.store.analyses.latestVersion(analyzer)
+      if (version === null) return []
       return Array.from({ length: 30 }, (_, i) => ({
         slot: i + 1,
-        points: ctx.store.analyses.series({ analyzer, slot: i + 1, metric: 'green_fraction', limit: input?.limit ?? 200 }).map(p => ({ ts: p.ts, green: p.value })),
+        points: ctx.store.analyses.series({ analyzer, version, slot: i + 1, metric: 'green_fraction', limit: input?.limit ?? 200 }).map(p => ({ ts: p.ts, green: p.value })),
       })).filter(s => s.points.length > 0)
     }),
   analyzers: publicProcedure

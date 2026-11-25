@@ -36,7 +36,7 @@ export function createNotifier(o: {
       const lt = localTime(now(), o.store.settings.get().timezone)
       return { nowMinutes: lt.minute, dayOfWeek: DAYS[lt.weekday] ?? 'monday', dateKey: lt.date }
     },
-    signals: () => liveSignals(o.hal.snapshot(), o.store, now(), o.store.pods.list().map(p => p.slot)),
+    signals: slots => liveSignals(o.hal.snapshot(), o.store, now(), slots),
     snapshot: () => eventSnapshot(o.hal, o.store, o.update ?? null),
     loadRules: () => o.store.notifications.rules.list(),
     loadChannels: () => o.store.notifications.channels.list(),

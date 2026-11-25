@@ -373,10 +373,14 @@ export class MemoryStore implements Store {
         else this.analysisRows.push({ ...r })
       }
     },
+    latestVersion: (analyzer: string): number | null => {
+      let latest: number | null = null
+      for (const r of this.analysisRows) if (r.analyzer === analyzer && (latest === null || r.version > latest)) latest = r.version
+      return latest
+    },
     series: (q: { analyzer: string, version?: number, slot: number, metric: string, limit?: number }): AnalysisPoint[] => {
-      const versions = this.analysisRows.filter(r => r.analyzer === q.analyzer).map(r => r.version)
-      const version = q.version ?? (versions.length ? Math.max(...versions) : undefined)
-      if (version === undefined) return []
+      const version = q.version ?? this.analyses.latestVersion(q.analyzer)
+      if (version === null) return []
       return this.analysisRows
         .filter(r => r.analyzer === q.analyzer && r.version === version && r.slot === q.slot && r.metric === q.metric)
         .sort((a, b) => a.ts.localeCompare(b.ts))

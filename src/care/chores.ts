@@ -226,11 +226,14 @@ function thin(store: Store, now: Date, planted: Pod[]): Chore {
   if (!young.length) return { ...c, state: 'ok', basis: 'timeline', dueAt: null, readings: [], reason: done ? 'Thinned since the youngest pods were planted.' : `No pods planted in the last ${THIN_WINDOW_DAYS} d to thin.` }
   // The camera: the primary analyser's latest leaf cover for each young pod, since it was planted.
   const analyzer = store.settings.get().primaryAnalyzer
-  const covers = young.flatMap((p) => {
-    const last = store.analyses.series({ analyzer, slot: p.slot, metric: 'green_fraction', limit: 1 }).at(-1)
-    const fresh = last && Date.parse(last.ts) > Date.parse(p.plantedAt ?? '') && t - Date.parse(last.ts) <= PHOTO_MAX_AGE_MS
-    return fresh ? [last.value] : []
-  })
+  const version = store.analyses.latestVersion(analyzer)
+  const covers = version === null
+    ? []
+    : young.flatMap((p) => {
+        const last = store.analyses.series({ analyzer, version, slot: p.slot, metric: 'green_fraction', limit: 1 }).at(-1)
+        const fresh = last && Date.parse(last.ts) > Date.parse(p.plantedAt ?? '') && t - Date.parse(last.ts) <= PHOTO_MAX_AGE_MS
+        return fresh ? [last.value] : []
+      })
   if (covers.length && covers.length * 2 >= young.length) {
     const up = covers.filter(v => v >= SPROUT_COVER).length
     const of = `${up} of ${covers.length} young pods`

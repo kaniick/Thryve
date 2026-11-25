@@ -40,9 +40,9 @@ function allExprs(rule: Pick<AutomationRule, 'conditions' | 'actions'>): Expr[] 
 }
 
 /** Every signal key a rule reads, including its trigger. */
-export function signalsOf(rule: Pick<AutomationRule, 'trigger' | 'conditions' | 'actions'>): string[] {
+export function signalsOf(rule: Pick<AutomationRule, 'conditions' | 'actions'> & { trigger: AutomationRule['trigger'] | { kind: 'threshold', signal: string } | { kind: 'event' } }): string[] {
   const out = new Set<string>()
-  if (rule.trigger.kind === 'signalChange') out.add(rule.trigger.signal)
+  if (rule.trigger.kind === 'signalChange' || rule.trigger.kind === 'threshold') out.add(rule.trigger.signal)
   for (const e of allExprs(rule)) walk(e, (n) => {
     if (n.kind === 'signal' || n.kind === 'window') out.add(n.signal)
   })

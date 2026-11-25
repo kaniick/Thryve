@@ -161,6 +161,8 @@ describe('CareEngine', () => {
     expect(active(store)).toEqual([])
     store.pods.update(3, { plant: 'Basil', status: 'seeded' }, T)
     events.emit({ kind: 'mutation', path: 'pods' })
+    expect(active(store)).toEqual([])
+    vi.advanceTimersByTime(0)
     expect(active(store)).toEqual(['setup_light_schedule', 'setup_pump_schedule'])
     store.schedules.upsert(light)
     events.emit({ kind: 'schedule', action: 'changed', id: 'day' })
@@ -195,7 +197,27 @@ describe('CareEngine', () => {
     expect(active(store)).toEqual([])
   })
 
-  it('cancels a pending HAL batch on stop', () => {
+  it('coalesces pod edits and lets a synchronous change satisfy their pending check', () => {
+    vi.useFakeTimers()
+    const { care, events } = rig()
+    const tick = vi.spyOn(care, 'tick')
+    care.start()
+    stop = () => {
+      care.stop()
+      vi.useRealTimers()
+    }
+    for (let i = 0; i < 5; i++) events.emit({ kind: 'mutation', path: 'pods' })
+    expect(tick).toHaveBeenCalledTimes(1)
+    vi.advanceTimersByTime(0)
+    expect(tick).toHaveBeenCalledTimes(2)
+    events.emit({ kind: 'mutation', path: 'pods' })
+    events.emit({ kind: 'mutation', path: 'grow' })
+    expect(tick).toHaveBeenCalledTimes(3)
+    vi.advanceTimersByTime(0)
+    expect(tick).toHaveBeenCalledTimes(3)
+  })
+
+  it('cancels pending HAL and pod checks on stop', () => {
     vi.useFakeTimers()
     const { care, events } = rig()
     const tick = vi.spyOn(care, 'tick')
@@ -206,6 +228,7 @@ describe('CareEngine', () => {
       tick.mockRestore()
     }
     events.emit({ kind: 'hal', event: { type: 'sensor', id: 'water_level_pct', reading: level('good') } })
+    events.emit({ kind: 'mutation', path: 'pods' })
     care.stop()
     vi.advanceTimersByTime(CARE_HAL_BATCH_MS)
     expect(tick).toHaveBeenCalledTimes(1)

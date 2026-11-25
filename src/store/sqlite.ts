@@ -474,10 +474,14 @@ export class SqliteStore implements Store {
         }
       })()
     },
+    latestVersion: (analyzer: string): number | null => {
+      const a = t.analysisResults
+      return this.db.select({ version: a.version }).from(a).where(eq(a.analyzer, analyzer)).orderBy(desc(a.version)).limit(1).get()?.version ?? null
+    },
     series: (q: { analyzer: string, version?: number, slot: number, metric: string, limit?: number }): AnalysisPoint[] => {
       const a = t.analysisResults
-      const version = q.version ?? this.db.select({ v: sql<number | null>`max(${a.version})` }).from(a).where(eq(a.analyzer, q.analyzer)).get()?.v
-      if (version === null || version === undefined) return []
+      const version = q.version ?? this.analyses.latestVersion(q.analyzer)
+      if (version === null) return []
       return this.db.select({ ts: a.ts, value: a.value, captureId: a.captureId }).from(a)
         .where(and(eq(a.analyzer, q.analyzer), eq(a.version, version), eq(a.slot, q.slot), eq(a.metric, q.metric)))
         .orderBy(desc(a.ts)).limit(q.limit ?? 200).all().reverse()
