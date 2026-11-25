@@ -425,6 +425,19 @@ describe('PlanPage', () => {
     expect(screen.getByText(/Outlined pods sit one zone lower than ideal/)).toBeTruthy()
   })
 
+  it('gives the tower sourced thinning guidance for planned and planted pods, not unknown plants', () => {
+    state.pods = [{ slot: 1, plant: 'Arugula', status: 'growing' }, { slot: 2, plant: 'Something I grew', status: 'growing' }]
+    render(<PlanPage />)
+    search('basil')
+    add('Basil')
+    const thinning = tower.props?.thinning as (slot: number) => string | undefined
+    const planned = towerPods().find(p => p.planned && p.plant === 'Basil')
+    expect(planned).toBeDefined()
+    expect(thinning(planned?.slot ?? 0)).toBe('Keep 3 sprouts')
+    expect(thinning(1)).toBe('Don’t thin')
+    expect(thinning(2)).toBeUndefined()
+  })
+
   it('hands the tower each planned plant by name, to draw grown in its slot, beside the planted ones', () => {
     state.pods = [{ slot: 1, plant: 'Mint', status: 'growing' }]
     render(<PlanPage />)
