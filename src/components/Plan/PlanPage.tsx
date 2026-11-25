@@ -161,11 +161,15 @@ export function planPods(slots: Slot[], bySlot: Map<number, Assignment>, planted
   })
 }
 
-export function PlanPage() {
+export function PlanPage({ catalogPlant }: { catalogPlant?: string } = {}) {
   const utils = trpc.useUtils()
   const [model, setModel] = useState<Model>('home')
-  const [q, setQ] = useState('')
-  const [cat, setCat] = useState<Category | 'all'>('all')
+  const [savedFilter, setFilter] = useState<{ plant: string | undefined, q: string, cat: Category | 'all' }>({ plant: catalogPlant, q: catalogPlant ?? '', cat: 'all' })
+  // A new deep link changes the catalog filter without remounting a draft plan.
+  const filter = savedFilter.plant === catalogPlant ? savedFilter : { plant: catalogPlant, q: catalogPlant ?? '', cat: 'all' as const }
+  const { q, cat } = filter
+  const setQ = (q: string) => setFilter({ ...filter, q })
+  const setCat = (cat: Category | 'all') => setFilter({ ...filter, cat })
   const [picks, setPicks] = useState<Record<string, number>>({})
   const [name, setName] = useState('My plan')
   const [mode, setMode] = useState<'staggered' | 'batch'>('staggered')
@@ -188,7 +192,10 @@ export function PlanPage() {
   const zones = trpc.planner.zones.useQuery({ model })
   // Every plant, custom ones included, so saved plans can name theirs.
   const everything = trpc.planner.catalog.useQuery({})
-  const catalog = trpc.planner.catalog.useQuery({ q: q || undefined, category: cat === 'all' ? undefined : cat })
+  const term = q.trim().toLowerCase()
+  const filteredPlants = (everything.data?.plants ?? []).filter(p =>
+    (cat === 'all' || p.category === cat) && (!term || p.name.toLowerCase().includes(term) || p.id.includes(term)),
+  )
   const request = useMemo(() => Object.entries(picks).filter(([, n]) => n > 0).map(([plantId, count]) => ({ plantId, count })), [picks])
   // Swaps on the grid pin pods; until a plan is saved or another opened they live here.
   const [edited, setEdited] = useState<Overrides | undefined>(undefined)
@@ -303,14 +310,14 @@ export function PlanPage() {
           </p>
         </Card>
 
-        <Card>
+        <Card id="plant-catalog" className="scroll-mt-4">
           <CardHeader title="Plants" subtitle="Gardyn catalog and yours · zone, first harvest" icon={Sprout} right={<Button size="sm" icon={Plus} onClick={() => setEditing('new')}>Add plant</Button>} />
           <TextField className="mt-3" mono={false} value={q} onChange={setQ} placeholder="Search basil, kale, pepper…" aria-label="Search plants" />
           <div className="mt-2 flex flex-wrap gap-1">
             {CATS.map(c => <button key={c.value} type="button" onClick={() => setCat(c.value)} className={cn('rounded-full border px-2 py-0.5 text-[11px]', cat === c.value ? 'border-fg-2 text-fg' : 'border-line text-fg-3')}>{c.label}</button>)}
           </div>
           <div className="mt-2 max-h-[420px] overflow-y-auto">
-            {(catalog.data?.plants ?? []).map(p => (
+            {filteredPlants.map(p => (
               <div key={p.id} className="flex items-center gap-2 border-b border-line py-1.5 last:border-0">
                 <span className="h-2.5 w-2.5 shrink-0 rounded-full border" style={{ background: ZONE_COLOR[p.zone], borderColor: ZONE_COLOR[p.zone] }} title={`${ZONE_LABEL[p.zone]} light`} />
                 <div className="min-w-0 flex-1">
@@ -327,6 +334,7 @@ export function PlanPage() {
               </div>
             ))}
           </div>
+          {everything.data && filteredPlants.length === 0 && <p className="mt-2 text-[13px] text-fg-3">No plants match those filters.</p>}
           <p className="mt-2 text-[11px] text-fg-3">* harvest window estimated from the category; Gardyn doesn’t list one.</p>
         </Card>
       </div>

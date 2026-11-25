@@ -7,6 +7,7 @@ import type { LucideIcon } from 'lucide-react'
 import { Archive, BellRing, BookOpen, CloudUpload, Code, Database, HardDrive, House, Info, KeyRound, Monitor, Power, Radio, RefreshCw, Ruler, Settings, Sprout, Timer, Camera, Wand2, Waves, Wifi } from 'lucide-react'
 import { navItems } from '@/src/components/AppShell/navItems'
 import { createBm25Index, tokenize } from '@/src/lib/bm25'
+import { PLANTS } from '@/src/plants/catalog'
 import { DOCS_BASE, type DocsIndex } from './docsIndex'
 
 export interface SearchEntry {
@@ -116,6 +117,18 @@ export function buildSearchEntries(live: LiveData = {}): SearchEntry[] {
 
 /** Below Kiosk and REST API: an app page or setting wins an equal match against its docs page. */
 const DOCS_BOOST = 0.6
+
+/** The bundled catalog is searchable even when the docs site or unit is offline. */
+export const plantSearchEntries: SearchEntry[] = PLANTS.map(p => ({
+  id: `plant:${p.id}`,
+  title: p.name,
+  crumbs: ['Plan', 'Plant catalog'],
+  description: `${p.zone[0].toUpperCase()}${p.zone.slice(1)} light · ${p.harvestMonths.join('–')} mo to first harvest${p.harvestEstimated ? ' (estimated)' : ''}`,
+  keywords: `ycube ${p.category}`,
+  href: `/plan?plant=${encodeURIComponent(p.id)}#plant-catalog`,
+  icon: Sprout,
+  boost: 0.55,
+}))
 
 /**
  * One entry per docs page. Headings feed the keywords rather than becoming

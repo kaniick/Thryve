@@ -55,7 +55,7 @@ vi.mock('@/src/utils/trpc', async () => {
         zones: { useQuery: ({ model }: { model: Model }) => ({ data: state.loading ? undefined : { ...MODELS[model], slots: slots(model), counts: zoneCounts(model) } }) },
         catalog: { useQuery: (i: { q?: string, category?: string }) => {
           calls.catalog(i)
-          return { data: { plants: [...searchPlants(i as Parameters<typeof searchPlants>[0]).slice(0, 12), ...state.custom] } }
+          return { data: { plants: [...searchPlants(i as Parameters<typeof searchPlants>[0]), ...state.custom] } }
         } },
         layout: { useQuery: (i: { model: Model, plants: { plantId: string, count: number }[], overrides?: PlanOverrides }) => {
           calls.layout(i)
@@ -118,14 +118,26 @@ describe('PlanPage', () => {
     expect(screen.getByText('Low 2')).toBeTruthy()
   })
 
-  it('filters the catalog by search and category', () => {
+  it('filters the catalog locally by search and category', () => {
     render(<PlanPage />)
     search('basil')
-    expect(calls.catalog).toHaveBeenLastCalledWith({ q: 'basil', category: undefined })
-    fireEvent.click(screen.getByRole('button', { name: 'Herbs' }))
-    expect(calls.catalog).toHaveBeenLastCalledWith({ q: 'basil', category: 'herb' })
+    expect(screen.getByRole('button', { name: 'Add Basil' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Greens' }))
+    expect(screen.queryByRole('button', { name: 'Add Basil' })).toBeNull()
+    expect(screen.getByText('No plants match those filters.')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'All' }))
-    expect(calls.catalog).toHaveBeenLastCalledWith({ q: 'basil', category: undefined })
+    expect(screen.getByRole('button', { name: 'Add Basil' })).toBeTruthy()
+    expect(calls.catalog.mock.calls.every(([input]) => Object.keys(input).length === 0)).toBe(true)
+  })
+
+  it('opens the plant from a catalog link without discarding the draft when it changes', () => {
+    const view = render(<PlanPage catalogPlant="Rosemary" />)
+    expect(screen.getByRole('button', { name: 'Add Rosemary' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Add Basil' })).toBeNull()
+    add('Rosemary')
+    view.rerender(<PlanPage catalogPlant="Basil" />)
+    expect(screen.getByRole('button', { name: 'Add Basil' })).toBeTruthy()
+    expect(calls.layout.mock.lastCall?.[0].plants).toEqual([{ plantId: 'rosemary', count: 1 }])
   })
 
   it('lays out picks by zone, staggers sowing, and saves the plan', () => {
@@ -157,7 +169,7 @@ describe('PlanPage', () => {
     render(<PlanPage />)
     flat()
     expect(screen.getByText(/0 planned · 29 empty/)).toBeTruthy()
-    expect(screen.getByText('Mint')).toBeTruthy()
+    expect(within(screen.getByTestId('plan-grid')).getByText('Mint')).toBeTruthy()
     search('jalapeño')
     for (let i = 0; i < 14; i++) add('Jalapeño')
     expect(screen.getByText(/Outlined pods sit one zone lower than ideal/)).toBeTruthy()
