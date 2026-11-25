@@ -72,8 +72,8 @@ export function createNotifier(o: {
 
 export function eventSnapshot(hal: HalClient, store: Store, update: UpdateClient | null): EventSnapshot {
   const snap = hal.snapshot()
-  const alerts = new Map<string, { detail: string, active: boolean }>()
-  for (const a of store.alerts.list({ activeOnly: true })) alerts.set(a.kind, { detail: a.detail, active: true })
+  const alerts: EventSnapshot['alerts'] = new Map()
+  for (const a of store.alerts.list({ activeOnly: true })) alerts.set(a.kind, { id: a.id, detail: a.detail, active: true })
   const light = snap.actuators.light
   const pods = store.pods.list().map(p => ({ slot: p.slot, plant: p.plant, status: p.status }))
   const unhealthy = labelsUnhealthy(store).map((slot) => {

@@ -1,4 +1,5 @@
 
+import { FOLLOW_ALERT } from '../care/follow'
 import { pumpFault } from '../lib/pumpFault'
 import type { NotifyEvent } from './types'
 
@@ -44,7 +45,7 @@ export interface FiredEvent {
 }
 
 export interface EventSnapshot {
-  alerts: Map<string, { detail: string, active: boolean }>
+  alerts: Map<string, { id?: number, detail: string, active: boolean }>
   lightOn: boolean
   pods: Array<{ slot: number, plant: string | null, status: string }>
   unhealthy: Array<{ slot: number, plant: string | null, status: string }>
@@ -60,8 +61,12 @@ export function edges(prev: EventSnapshot | null, next: EventSnapshot): FiredEve
 
   for (const [kind, row] of next.alerts) {
     const was = prev.alerts.get(kind)
-    if (row.active && !was?.active) {
-      out.push({ event: 'alert_raised', key: `alert_raised:${kind}`, alert: { kind, detail: row.detail } })
+    // The previous watering move is replaced in one synchronous operation.
+    // A new row is a fresh notice even when no snapshot saw the old one close.
+    const wateringMove = kind === FOLLOW_ALERT && row.id !== undefined
+    if (row.active && (!was?.active || (wateringMove && was.id !== row.id))) {
+      const incident = wateringMove ? `${kind}:${row.id}` : kind
+      out.push({ event: 'alert_raised', key: `alert_raised:${incident}`, alert: { kind, detail: row.detail } })
       if (kind === 'pump_fault') {
         out.push({ event: 'pump_fault', key: `pump_fault:${kind}`, alert: { kind, detail: row.detail } })
         const ev = classifyPumpAlert(row.detail)

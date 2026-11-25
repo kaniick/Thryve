@@ -147,11 +147,18 @@ describe('watering follows the grow cycle', () => {
     events.subscribe((e) => {
       if (e.kind === 'schedule') seen.push(e.id)
     })
-    const care = new CareEngine({ store, hal: new SimHal({ tickMs: 0, now: () => day(9) }), events, now: () => day(9) })
+    let now = day(9)
+    const care = new CareEngine({ store, hal: new SimHal({ tickMs: 0, now: () => now }), events, now: () => now })
     expect(care.tick().followed).toMatchObject({ to: 'seedlings' })
     expect(store.alerts.list({ activeOnly: true }).find(a => a.kind === FOLLOW_ALERT)?.detail).toMatch(/Watering moved to/)
     expect(seen).toContain('follow:seedlings')
     expect(care.tick().followed).toBeNull()
+    now = day(16)
+    expect(care.tick().followed).toMatchObject({ to: 'young' })
+    expect(store.alerts.list({ kind: FOLLOW_ALERT })).toMatchObject([
+      { active: true, raisedAt: day(16).toISOString(), detail: expect.stringMatching(/Young plants/) },
+      { active: false, raisedAt: day(9).toISOString(), dismissedAt: day(16).toISOString(), detail: expect.stringMatching(/Seedlings/) },
+    ])
   })
 
   it('runs one tick at a time when its own schedule change asks for another', () => {

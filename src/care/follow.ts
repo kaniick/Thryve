@@ -13,6 +13,13 @@ import type { LightSpec, PumpSpec, Schedule, Store } from '../store/types'
 
 export const FOLLOW_ALERT = 'watering_followed'
 
+/** Each real move keeps its own alert timestamp. The superseded notice is not a fault resolution. */
+export function noteFollow(store: Pick<Store, 'alerts'>, detail: string, ts: string): void {
+  const [open] = store.alerts.list({ activeOnly: true, kind: FOLLOW_ALERT, limit: 1 })
+  if (open) store.alerts.dismiss(open.id, ts)
+  store.alerts.raise(FOLLOW_ALERT, detail, ts)
+}
+
 export interface FollowChange {
   from: PumpPresetId
   /** The preset the cycles moved to; null when a queued switch put one of Your schedules on instead. */
