@@ -3,6 +3,7 @@ import { useMemo, useState, type ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 import { ZONE_COLOR } from '@/src/components/Grow/lightZones'
 import { PlantThumb, podForm } from '@/src/components/Grow/PlantThumb'
+import { thinText } from '@/src/components/Grow/PlantCare'
 import { PLANNED_FORM, type PodStatus } from '@/src/components/Grow/towerLayout'
 import type { PodState } from '@/src/components/Grow/towerScene'
 import { TowerView } from '@/src/components/Grow/TowerView'
@@ -14,6 +15,7 @@ import { CustomPlantDialog, type EditablePlant } from '@/src/components/Plan/Cus
 import { SavedPlans } from '@/src/components/Plan/SavedPlans'
 import { Unplaced } from '@/src/components/Plan/Unplaced'
 
+import { plantFacts } from '@/src/plants/catalog'
 import type { PlanOverrides } from '@/src/plants/planner'
 
 type Model = 'home' | 'studio'
@@ -127,7 +129,7 @@ function PlanGrid({ cols, slots, bySlot, planted, onSwap }: { cols: number, slot
                 e.currentTarget.click()
               }
             }}
-            className={cn('flex min-h-[58px] flex-col justify-center gap-0.5 rounded-[var(--radius-ctl)] border px-2 py-1', a?.shift ? SHIFT_OUTLINE[a.shift] : '', a && 'cursor-grab', picked === s.slot && 'ring-2 ring-fg')}
+            className={cn('flex min-h-[58px] flex-col justify-center gap-0.5 rounded-[var(--radius-ctl)] border px-2 py-1', a?.shift ? SHIFT_OUTLINE[a.shift] : '', a && 'cursor-grab select-none', picked === s.slot && 'ring-2 ring-fg')}
             style={zoneStyle(z)}
             title={a?.reason ?? ex?.plant ?? `${ZONE_LABEL[z]} light`}
           >
@@ -214,6 +216,15 @@ export function PlanPage() {
   const bySlot = new Map((layout.data?.assignments ?? []).map(a => [a.slot, a]))
   // A replant lays out the whole tower, so nothing planted now holds a pod.
   const planted = new Map(overrides?.replant ? [] : (pods.data ?? []).filter(p => p.status !== 'empty').map(p => [p.slot, { slot: p.slot, status: p.status, plant: p.plant }]))
+  const normalizePlant = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, '')
+  const thinning = (slot: number) => {
+    const plannedId = bySlot.get(slot)?.plantId
+    const name = planted.get(slot)?.plant
+    const match = plannedId
+      ? everything.data?.plants.find(p => p.id === plannedId)
+      : name && everything.data?.plants.find(p => normalizePlant(p.name) === normalizePlant(name) || p.id === name)
+    return match ? thinText(plantFacts(match)) : undefined
+  }
   const swap = (from: number, to: number) => setEdited({ ...overrides, pins: swapPins(layout.data?.assignments ?? [], from, to) })
   const bump = (id: string, d: number) => {
     const count = Math.max(0, (picks[id] ?? 0) + d)
@@ -274,6 +285,7 @@ export function PlanPage() {
                 // Lit, so the zones read, whatever the light is doing now.
                 lightLevel={100}
                 zones
+                thinning={thinning}
                 selected={selected}
                 onSelect={setSelected}
                 onClose={() => setSelected(null)}

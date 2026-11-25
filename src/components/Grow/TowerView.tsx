@@ -107,7 +107,7 @@ const pct = (v: number) => `${Math.round(v * 100)}%`
  * the state carries the colour. It sits outward from the tower, on whichever
  * side has room, clear of the `reserve` pixels a panel covers.
  */
-export function PodCallout({ pod, at: collar, width, height, reserve = 0, pinned = true, onClose, action, now, light }: { pod: PodState, at: { x: number, y: number }, width: number, height: number, reserve?: number, pinned?: boolean, onClose?: () => void, action?: ReactNode, now?: Date, light?: PodLight | null }) {
+export function PodCallout({ pod, at: collar, width, height, reserve = 0, pinned = true, onClose, action, now, light, thinning }: { pod: PodState, at: { x: number, y: number }, width: number, height: number, reserve?: number, pinned?: boolean, onClose?: () => void, action?: ReactNode, now?: Date, light?: PodLight | null, thinning?: string }) {
   const shown = podShown(pod)
   const color = SHOWN_TOKEN[shown]
   const flagged = isFlagged(pod)
@@ -175,6 +175,7 @@ export function PodCallout({ pod, at: collar, width, height, reserve = 0, pinned
             {ZONE_LABEL[light.zone]}
           </div>
         )}
+        {thinning && <p className="text-xs text-fg-2">{thinning}</p>}
         {details && (
           <div className="flex flex-col gap-3 border-t border-line pt-3">
             {timeline && age !== null && <HarvestTimeline window={timeline} age={age} />}
@@ -202,7 +203,7 @@ export function PodCallout({ pod, at: collar, width, height, reserve = 0, pinned
  * by how much light they get, for placing plants; `zones` fixes that on or
  * off and drops the toggle. Calls `onUnavailable` without WebGL.
  */
-export function TowerView({ pods, waterPct, lightLevel, pumpOn = false, selected = null, onSelect, onClose, onPart, partLabels, controls, status, podAction, aside, legend = true, zones: fixedZones, onUnavailable }: {
+export function TowerView({ pods, waterPct, lightLevel, pumpOn = false, selected = null, onSelect, onClose, onPart, partLabels, controls, status, podAction, aside, legend = true, zones: fixedZones, thinning, onUnavailable }: {
   pods: PodState[]
   waterPct: number | null
   lightLevel: number
@@ -221,6 +222,8 @@ export function TowerView({ pods, waterPct, lightLevel, pumpOn = false, selected
   legend?: boolean
   /** Colour by light zone (true) or status (false) throughout, with no toggle. */
   zones?: boolean
+  /** Shown only on the current pod's callout, without fetching on hover. */
+  thinning?: (slot: number) => string | undefined
   onUnavailable: () => void
 }) {
   const host = useRef<HTMLDivElement>(null)
@@ -331,7 +334,7 @@ export function TowerView({ pods, waterPct, lightLevel, pumpOn = false, selected
         const at = anchors.at.get(p.slot)
         return at && <PodFlag key={p.slot} pod={p} at={at} picked={p.slot === selected} onSelect={onSelect} />
       })}
-      {shownPod && ready && shownAt && anchors && <PodCallout pod={shownPod} at={shownAt} width={anchors.width} height={anchors.height} reserve={aside != null && anchors.width >= ASIDE_MIN ? ASIDE_RESERVE : 0} pinned={shownPod.slot === selected} onClose={onClose} action={shownPod.slot === selected ? podAction : undefined} light={zones ? podLight(pods, shownPod.slot) : null} />}
+      {shownPod && ready && shownAt && anchors && <PodCallout pod={shownPod} at={shownAt} width={anchors.width} height={anchors.height} reserve={aside != null && anchors.width >= ASIDE_MIN ? ASIDE_RESERVE : 0} pinned={shownPod.slot === selected} onClose={onClose} action={shownPod.slot === selected ? podAction : undefined} light={zones ? podLight(pods, shownPod.slot) : null} thinning={thinning?.(shownPod.slot)} />}
       {aside != null && <div className="absolute bottom-10 right-3 top-16 z-10 hidden flex-col @min-[900px]:flex" style={{ width: ASIDE_W }}>{aside}</div>}
       <div className="pointer-events-none absolute right-3 top-3 z-10 flex flex-col items-end gap-2">
         {status && <div className="pointer-events-auto flex flex-wrap items-start justify-end gap-2">{status}</div>}
