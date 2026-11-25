@@ -326,44 +326,52 @@ try {
     return 'level 60 echoed'
   })
 
-  await check('pump: Settings default duty (30 %), and the run bounded', async () => {
-    const r = await post('/pump/run-once', { durationS: 2 })
+  await check('pump: Settings default duty (30 %), soft start, and the run bounded', async () => {
+    // The trace samples in wall time, but --sim advances the bounded run in
+    // virtual time. Give this healthy run time at full duty to be sampled.
+    const r = await post('/pump/run-once', { durationS: 6 })
     assert(r.status === 200 && r.body.on, `${r.status} ${JSON.stringify(r.body)}`)
     assert(r.body.level === 30, `duty ${r.body.level}, not the Settings default 30`)
     await until('pump to stop on its own', async () => (await get('/pump')).on === false, 10_000)
-    return `ran at ${r.body.level} %, stopped after its bound`
+    const trace = readFileSync(pumpTrace, 'utf8')
+    // A healthy start opens at 15 % of its 30 % target, then reaches all of it.
+    assert(/^# run /m.test(trace) && trace.includes('t_s,duty,pump_v,pump_a,pump_w\n0.00,4.5,') && /^[\d.]+,30,/m.test(trace), `pump trace ${trace.slice(0, 300)}`)
+    return `ramped to ${r.body.level} %, stopped after its bound`
   })
 
   await check('pump: a dry intake trips the current guard, the fault names the current, and it clears', async () => {
     const intake = dry => fetch(`http://127.0.0.1:${halHttpPort}/sim/intake`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ dry }) })
-    assert((await intake(true)).status === 200, 'sim intake switch')
     const states = []
     const onState = (t, p) => t === `thryve/${unit}/actuator/pump/state` && states.push({ at: Date.now(), ...JSON.parse(String(p)) })
     watcher.on('message', onState)
-    const r = await post('/pump/run-once', { durationS: 60 })
-    assert(r.status === 200 && r.body.on, `${r.status} ${JSON.stringify(r.body)}`)
-    // The guard reads the current every 100 ms while the pump runs: past the 1 s grace
-    // plus the 1.5 s soft-start ramp, 0.3 s of low reads stop it. hald's clock (sim time)
-    // stamps both states.
-    const started = await until('hald to start the pump', () => states.find(s => s.on), 5_000)
-    const tripped = await until('hald to trip the pump', () => states.find(s => /pulling air/.test(s.fault ?? '')), 5_000)
-    watcher.off('message', onState)
-    const realMs = tripped.at - started.at
-    const simS = (Date.parse(tripped.since) - Date.parse(started.since)) / 1000
-    assert(simS <= 3.5, `tripped ${simS} s of hald time after the start (grace 1 s + soft-start 1.5 s + 0.3 s)`)
-    assert(realMs <= 4_000, `tripped ${realMs} ms after the start`)
-    const alert = await until('pump_fault in core', async () => (await get('/alerts')).find(a => a.kind === 'pump_fault' && a.active), 20_000)
-    assert(/dry-run: pump drew 0\.05 A, below 0\.15 A for 0\.3 s: it's pulling air/.test(alert.detail), `detail ${alert.detail}`)
-    const pump = await get('/pump')
-    assert(pump.on === false && /pulling air/.test(pump.fault), `pump ${JSON.stringify(pump)}`)
-    assert(!(await get('/alerts')).some(a => a.kind === 'water_low' && a.active), 'water_low raised with a full tank')
-    const trace = readFileSync(pumpTrace, 'utf8')
-    // A start soft-starts: the trace opens at 15 % of the run's 30 % (Settings default) and climbs to all of it.
-    assert(/^# run /m.test(trace) && trace.includes('t_s,duty,pump_v,pump_a,pump_w\n0.00,4.5,') && /^[\d.]+,30,/m.test(trace), `pump trace ${trace.slice(0, 200)}`)
-    assert((await intake(false)).status === 200, 'sim intake back')
-    // Like a level dry-run, it clears itself once the water has read good for a window.
-    await until('the dry-run to clear', async () => (await get('/pump')).fault === null && !(await get('/alerts')).some(a => a.kind === 'pump_fault' && a.active), 30_000)
-    return `"${alert.detail}" ${simS} s (hald time) / ${realMs} ms after going dry → cleared; ${trace.split('\n').length} trace lines`
+    let detail
+    try {
+      assert((await intake(true)).status === 200, 'sim intake switch')
+      const r = await post('/pump/run-once', { durationS: 60 })
+      assert(r.status === 200 && r.body.on, `${r.status} ${JSON.stringify(r.body)}`)
+      // The guard reads the current every 100 ms while the pump runs: past the 1 s grace
+      // plus the 1.5 s soft-start ramp, 0.3 s of low reads stop it. hald's clock (sim time)
+      // stamps both states.
+      const started = await until('hald to start the pump', () => states.find(s => s.on), 5_000)
+      const tripped = await until('hald to trip the pump', () => states.find(s => /pulling air/.test(s.fault ?? '')), 5_000)
+      const realMs = tripped.at - started.at
+      const simS = (Date.parse(tripped.since) - Date.parse(started.since)) / 1000
+      assert(simS <= 3.5, `tripped ${simS} s of hald time after the start (grace 1 s + soft-start 1.5 s + 0.3 s)`)
+      assert(realMs <= 4_000, `tripped ${realMs} ms after the start`)
+      const alert = await until('pump_fault in core', async () => (await get('/alerts')).find(a => a.kind === 'pump_fault' && a.active), 20_000)
+      assert(/dry-run: pump drew 0\.05 A, below 0\.15 A for 0\.3 s: it's pulling air/.test(alert.detail), `detail ${alert.detail}`)
+      const pump = await get('/pump')
+      assert(pump.on === false && /pulling air/.test(pump.fault), `pump ${JSON.stringify(pump)}`)
+      assert(!(await get('/alerts')).some(a => a.kind === 'water_low' && a.active), 'water_low raised with a full tank')
+      detail = `"${alert.detail}" ${simS} s (hald time) / ${realMs} ms after going dry`
+    }
+    finally {
+      // The following brown-out case must start with a wet intake even if a check failed.
+      watcher.off('message', onState)
+      assert((await intake(false)).status === 200, 'sim intake back')
+      await until('the dry-run to clear', async () => (await get('/pump')).fault === null && !(await get('/alerts')).some(a => a.kind === 'pump_fault' && a.active), 30_000)
+    }
+    return `${detail} → cleared`
   })
 
   await check('pump: a sagging supply trips the brown-out guard, and it waits for an acknowledge', async () => {
