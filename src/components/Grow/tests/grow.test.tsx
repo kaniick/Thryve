@@ -6,12 +6,15 @@ import { GrowPage } from '../GrowPage'
 
 const { data, calls, tower } = vi.hoisted(() => ({
   data: new Map<string, unknown>(),
-  calls: { start: vi.fn(), end: vi.fn(), setStage: vi.fn(), updatePod: vi.fn(), markHarvested: vi.fn(), swapPods: vi.fn(), invalidateGrow: vi.fn(), invalidateProtocol: vi.fn() },
+  calls: { start: vi.fn(), end: vi.fn(), setStage: vi.fn(), updatePod: vi.fn(), markHarvested: vi.fn(), swapPods: vi.fn(), invalidateGrow: vi.fn(), invalidateProtocol: vi.fn(), query: vi.fn() },
   tower: { props: null as null | Record<string, unknown>, unavailable: false },
 }))
 
 vi.mock('@/src/utils/trpc', () => {
-  const query = (name: string) => ({ useQuery: () => ({ data: data.get(name) }) })
+  const query = (name: string) => ({ useQuery: (_input?: unknown, opts?: { enabled?: boolean }) => {
+    calls.query(name, opts?.enabled !== false)
+    return { data: opts?.enabled === false ? undefined : data.get(name) }
+  } })
   const mutation = (name: keyof typeof calls) => ({ useMutation: (hook?: { onSuccess?: () => void }) => ({ isPending: false, mutate: (i?: unknown, o?: { onSuccess?: () => void }) => {
     calls[name](i)
     hook?.onSuccess?.()
@@ -110,13 +113,37 @@ describe('Grow', () => {
   })
 
   it('opens the pod named in ?pod=N, and closes it', () => {
-    window.history.replaceState(null, '', '/grow?pod=2')
-    render(<GrowPage />)
+    render(<GrowPage pod={2} />)
     expect(screen.getByText('POD 2 · TOWER A')).toBeTruthy()
     expect(screen.getByText('Needs attention')).toBeTruthy()
     expect(screen.getByText('yellow')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Close' }))
     expect(screen.queryByText('POD 2 · TOWER A')).toBeNull()
+  })
+
+  it('opens the protocol without fetching pod data or mounting the editor', () => {
+    const { unmount } = render(<GrowPage />)
+    expect(screen.queryByTestId('protocol')).toBeNull()
+    calls.query.mockClear()
+    fireEvent.click(screen.getByRole('tab', { name: 'Protocol' }))
+    expect(screen.getByTestId('protocol')).toBeTruthy()
+    expect(screen.queryByRole('complementary')).toBeNull()
+    expect(calls.query.mock.calls.filter(([name]) => ['pods', 'harvest', 'trends', 'sensors', 'light'].includes(name))).toEqual([
+      ['pods', false], ['harvest', false], ['trends', false], ['sensors', false], ['light', false],
+    ])
+    unmount()
+    render(<GrowPage />)
+    expect(screen.getByTestId('protocol')).toBeTruthy()
+  })
+
+  it('uses a pod link even with Protocol selected and follows another pod without a remount', () => {
+    const { rerender } = render(<GrowPage tab="protocol" />)
+    expect(screen.getByTestId('protocol')).toBeTruthy()
+    rerender(<GrowPage tab="protocol" pod={1} />)
+    expect(screen.getByRole('complementary', { name: 'Pod 1' })).toBeTruthy()
+    expect(screen.queryByTestId('protocol')).toBeNull()
+    rerender(<GrowPage tab="protocol" pod={2} />)
+    expect(screen.getByRole('complementary', { name: 'Pod 2' })).toBeTruthy()
   })
 
   it('details the picked pod: its crop, leaf-cover trend, seeded date and harvest window', () => {
@@ -282,7 +309,7 @@ describe('Grow', () => {
     unmount()
     render(<GrowPage />)
     expect(screen.getByTestId('tower')).toBeTruthy()
-    fireEvent.click(screen.getByRole('tab', { name: 'Pods' }))
+    fireEvent.click(screen.getByRole('tab', { name: 'List' }))
     expect(screen.queryByTestId('tower')).toBeNull()
   })
 
