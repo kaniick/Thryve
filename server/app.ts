@@ -18,12 +18,14 @@ import { MAX_MODEL_BYTES, ModelRefused } from '../src/vision/registry'
 import { podCrop } from '../src/vision/shareCodes'
 import { apiKeyGuard, timingSafeEqual } from './auth'
 import type { CorePerformanceWindow } from './performance'
+import { mountMaintenance, type MaintenanceOptions } from './maintenance'
 
 export interface CreateAppOptions {
   ctx: Context
   /** Directory of the built SPA; omit to skip static serving (tests). */
   staticRoot?: string
   performanceWindow?: () => CorePerformanceWindow | null
+  maintenance?: MaintenanceOptions
 }
 
 /**
@@ -43,7 +45,7 @@ export function staticCacheControl(path: string, contentType: string | null): st
  * mount it on an ephemeral port without touching process signals.
  */
 
-export function createApp({ ctx, staticRoot, performanceWindow }: CreateAppOptions) {
+export function createApp({ ctx, staticRoot, performanceWindow, maintenance }: CreateAppOptions) {
   const app = new Hono()
   const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app })
 
@@ -87,6 +89,8 @@ export function createApp({ ctx, staticRoot, performanceWindow }: CreateAppOptio
       throw e
     }
   })
+
+  mountMaintenance(app, ctx, performanceWindow, maintenance)
 
   app.use('/api/*', cors({ origin: origin => origin ?? '*' }))
 
