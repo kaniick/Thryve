@@ -1003,6 +1003,11 @@ impl Engine {
             self.env.water_distance_cm = r.as_ref().map(|r| r.value);
             self.env.water_suspect = r.is_some_and(|r| r.quality == Quality::Suspect);
             self.env.water_fresh = true;
+        } else {
+            // A removed ranger must not leave its previous sample marked new.
+            self.env.water_distance_cm = None;
+            self.env.water_suspect = false;
+            self.env.water_fresh = false;
         }
         self.next_level_read = Some(now.instant + LEVEL_READ_EVERY);
     }

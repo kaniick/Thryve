@@ -310,9 +310,8 @@ pub struct PumpGuard {
     uv_since: Option<Instant>,
     /// How many reads of the Pi's flag in a row have reported under-voltage.
     uv_reads: u32,
-    /// Last trusted (non-suspect) water distance, used so a flaky ranger on a
-    /// still-wet tank does not fail safe as if the sensor were gone.
-    last_trusted_cm: Option<f64>,
+    /// Last trusted water distance and when it was sampled, not when it was reused.
+    last_trusted_level: Option<(f64, Instant)>,
 }
 
 impl PumpGuard {
@@ -334,7 +333,7 @@ impl PumpGuard {
             sag_low: f64::INFINITY,
             uv_since: None,
             uv_reads: 0,
-            last_trusted_cm: None,
+            last_trusted_level: None,
         }
     }
 
@@ -364,25 +363,29 @@ impl PumpGuard {
         self.limits.dry_guard = mode;
     }
 
-    /// Note a trusted distance from the environment.
-    fn note_trusted(&mut self, env: Env) {
-        if let Some(d) = env.water_distance_cm.filter(|_| !env.water_suspect) {
-            self.last_trusted_cm = Some(d);
+    /// Only a new, non-suspect sample can refresh the wet-start fallback.
+    fn note_trusted(&mut self, env: Env, now: Instant) {
+        if let Some(d) = Self::trusted_distance(env) {
+            self.last_trusted_level = Some((d, now));
         }
     }
 
+    fn trusted_distance(env: Env) -> Option<f64> {
+        env.water_distance_cm
+            .filter(|_| env.water_fresh && !env.water_suspect)
+    }
+
     /// The last trusted reading is still clearly above the cutoff (a shorter
-    /// distance than `water_low_cm` by a margin).
-    fn last_trusted_is_safe(&self) -> bool {
-        match (self.limits.water_low_cm, self.last_trusted_cm) {
-            (Some(low), Some(d)) => d + TANK_SAFE_MARGIN_CM < low,
-            _ => false,
-        }
+    /// distance than `water_low_cm` by a margin). Return its timestamp.
+    fn last_safe_level_at(&self) -> Option<Instant> {
+        let low = self.limits.water_low_cm?;
+        let (d, sampled) = self.last_trusted_level?;
+        (d + TANK_SAFE_MARGIN_CM < low).then_some(sampled)
     }
 
     /// How long a running pump may go without a trusted reading before a dry-run.
     fn ranger_gone_after(&self) -> Duration {
-        if self.last_trusted_is_safe() {
+        if self.last_safe_level_at().is_some() {
             Duration::from_millis(self.limits.dry_level_absent_ms.max(1))
         } else {
             DRY_CONFIRM
@@ -460,8 +463,8 @@ impl PumpGuard {
         if let Some(f) = &self.fault {
             return Err(Refusal::Latched(f.clone()));
         }
-        self.note_trusted(env);
-        if self.tank_blocks_start(env) {
+        self.note_trusted(env, now);
+        if self.tank_blocks_start(env, now) {
             return Err(Refusal::WaterLow);
         }
         if self.is_hot(env) {
@@ -538,7 +541,7 @@ impl PumpGuard {
         let Some(low) = self.limits.water_low_cm else {
             return false;
         };
-        self.note_trusted(env);
+        self.note_trusted(env, now);
         match env.water_distance_cm.filter(|_| !env.water_suspect) {
             Some(d) if d < low => {
                 self.dry_since = None;
@@ -559,15 +562,18 @@ impl PumpGuard {
     }
 
     /// A start is refused on a trusted reading at or past the cutoff, in every
-    /// guard mode. Missing or suspect readings refuse only when the last trusted
-    /// distance is not still safely above the cutoff.
-    fn tank_blocks_start(&self, env: Env) -> bool {
+    /// guard mode. For a missing, suspect or reused reading, require a recent
+    /// trusted wet sample. Refused starts and repeated requests never extend it.
+    fn tank_blocks_start(&self, env: Env, now: Instant) -> bool {
         let Some(low) = self.limits.water_low_cm else {
             return false;
         };
-        match env.water_distance_cm.filter(|_| !env.water_suspect) {
+        match Self::trusted_distance(env) {
             Some(d) => d >= low,
-            None => !self.last_trusted_is_safe(),
+            None => !self.last_safe_level_at().is_some_and(|sampled| {
+                now.saturating_duration_since(sampled)
+                    < Duration::from_millis(self.limits.dry_level_absent_ms)
+            }),
         }
     }
 
@@ -1032,8 +1038,14 @@ mod tests {
             }
             let mut g2 = guard();
             let seed = at(Some(8.07));
-            g2.request(&on(None, Some(5)), seed, t0).unwrap();
-            g2.request(&off(), seed, at_ts(1.0)).unwrap();
+            let last_good = rounds
+                .iter()
+                .rev()
+                .find(|&&(ts, d, suspect)| ts < secs && d.is_some() && !suspect)
+                .unwrap()
+                .0;
+            g2.request(&on(None, Some(5)), seed, at_ts(last_good)).unwrap();
+            g2.request(&off(), seed, at_ts(last_good + 1.0)).unwrap();
             let env = Env {
                 water_suspect: suspect || d.is_none(),
                 water_fresh: true,
@@ -1042,6 +1054,46 @@ mod tests {
             assert!(
                 g2.request(&on(None, Some(5)), env, at_ts(secs)).is_ok(),
                 "start refused at +{secs} s, d={d:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn missing_suspect_and_reused_reads_do_not_extend_the_wet_start_window() {
+        for mode in [DryGuard::Level, DryGuard::Current, DryGuard::Both] {
+            let mut g = guard();
+            g.set_dry_guard(mode);
+            g.set_dry_level_absent_ms(8_000);
+            let t0 = Instant::now();
+            let ms = |n| t0 + Duration::from_millis(n);
+            let start = on(None, Some(1));
+            let suspect = Env {
+                water_suspect: true,
+                ..wet()
+            };
+            let reused = Env {
+                water_fresh: false,
+                ..wet()
+            };
+            g.request(&start, wet(), t0).unwrap();
+            for (reading, until) in [(at(None), 3_000), (suspect, 5_000), (reused, 7_999)] {
+                assert_eq!(g.request(&off(), reading, ms(until)), Ok(Decision::Stop));
+                assert!(g.request(&start, reading, ms(until)).is_ok(), "{mode:?}");
+            }
+            g.request(&off(), reused, ms(8_000)).unwrap();
+            for reading in [at(None), suspect, reused] {
+                assert_eq!(
+                    g.request(&start, reading, ms(8_000)),
+                    Err(Refusal::WaterLow),
+                    "{mode:?}"
+                );
+                assert_eq!(g.output(ms(8_000)), 0.0);
+            }
+            assert_eq!(g.fault(), None, "a refused start is not a trip");
+            assert!(g.request(&start, wet(), ms(8_001)).is_ok());
+            assert_eq!(
+                g.request(&start, at(Some(16.0)), ms(8_002)),
+                Err(Refusal::WaterLow)
             );
         }
     }
