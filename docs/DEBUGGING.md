@@ -60,6 +60,8 @@ sources: [{"resource": "https://github.com/iot-root/garden-of-eden", "title": "i
   - SSH is failing while Core and hald answer: investigate port 22, the SSH service and the failing client's path.
   - All three stop: check whether the Pi remained associated with Wi-Fi in the access point's event log. After recovery, check `sudo journalctl --list-boots` and `cat /proc/sys/kernel/random/boot_id`. A different boot ID confirms a reboot, not its cause. A HAL uptime reset alone may only be a HAL restart. All three failing cannot distinguish a network drop from a host freeze by itself.
 
+- **Tank warnings around photos.** Compare the capture and ranger timestamps in `journalctl -u hald -b -o short-monotonic` with the tank alert and pump timeline. A capture-overlapped missing sample immediately after a trusted wet reading does not count toward the alert. It does not prove recovery, does not hide repeated missing samples, and never bypasses `PumpGuard`. During a normal watering, lighting and capture cycle, check that both cameras, HALD, Core and SSH stay responsive. When testing a per-camera restart on the physical hub, use it while the pump is idle, then check that the other camera and the rest of the gateway still answer. Do not deliberately run the pump dry to test alerts.
+
   If a shell is still open during the incident, leave it open and check Core and hald on loopback before restarting. After reconnection, capture the recent logs. Match the UTC timestamps to the probe and the AP logs. Select `-b -1` instead of `-b` only if there was a reboot and the previous journal is available.
 
   ```sh
