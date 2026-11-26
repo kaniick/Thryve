@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { GrowPage } from '../GrowPage'
@@ -27,6 +27,7 @@ vi.mock('@/src/utils/trpc', () => {
       vision: { podTrends: query('trends'), regions: query('regions') },
       sensors: { latest: query('sensors') },
       light: { get: query('light') },
+      planner: { care: query('plantCare') },
     },
   }
 })
@@ -133,6 +134,16 @@ describe('Grow', () => {
     expect(screen.getByText('day 24–39')).toBeTruthy()
     expect(screen.getByText('Oct 12')).toBeTruthy()
     expect(screen.getByRole('link', { name: 'Photos' }).getAttribute('href')).toBe('/cameras')
+    expect(within(panel).queryByTestId('plant-care')).toBeNull()
+  })
+
+  it('gives the picked pod\'s plant care from Gardyn\'s page: sprouts to keep, timings and notes', () => {
+    data.set('plantCare', { plant: { id: 'basil' }, thinTo: 3, thinEstimated: false, sproutDays: [5, 21], sproutEstimated: false, maturityDays: [68, 68], heightFt: '<1', tempF: [70, 85], fullDose: 'leavesOrRoots', latinName: null, url: null, notes: { harvest: 'Cut above the nodes.' } })
+    render(<GrowPage />)
+    fireEvent.click(screen.getByRole('button', { name: '1 Basil' }))
+    const care = within(screen.getByRole('complementary', { name: 'Pod 1' })).getByTestId('plant-care')
+    expect(care.textContent).toContain('Keep 3 sprouts')
+    expect(care.textContent).toContain('Cut above the nodes.')
   })
 
   it('pictures each pod\'s plant in its row, and the picked one as a model to scrub from seedling to harvest', () => {
