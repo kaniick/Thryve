@@ -16,6 +16,7 @@ import type { HalClient, HalSnapshot } from '../hardware/types'
 import type { EventBus } from '../lib/eventBus'
 import type { LightSpec, PumpSpec, Schedule, Store } from '../store/types'
 import type { SunHours } from './lightPlan'
+import { readLightReceipt, type LightReceipt } from './receipts'
 import { followSun } from './sun'
 import { dayEnabled, localTime, minuteToHHMM } from './time'
 
@@ -123,6 +124,7 @@ export class Scheduler {
   private readonly log: (msg: string) => void
   /** Refused scheduled pump runs being tried again, by schedule id. */
   private readonly retries = new Map<string, Retry>()
+  private readonly observedLights: LightReceipt[] = []
 
   constructor(private readonly deps: SchedulerDeps) {
     this.now = deps.now ?? (() => new Date())
@@ -138,6 +140,21 @@ export class Scheduler {
   stop(): void {
     if (this.timer) clearInterval(this.timer)
     this.timer = null
+  }
+
+  /** Read-only diagnostics. Lights are recorded on changes, bounded to this Core session. */
+  receiptState(): { lights: LightReceipt[], retrying: string[] } {
+    return { lights: [...this.observedLights].reverse(), retrying: [...this.retries.values()].map(r => r.key) }
+  }
+
+  private observeLight(at: Date, target: number | null): void {
+    const { hal, light } = this.deps
+    const receipt = readLightReceipt(at.toISOString(), target, light?.status().source ?? null, hal.snapshot())
+    const previous = this.observedLights.at(-1)
+    if (previous && receipt.target === previous.target && receipt.reported === previous.reported
+      && receipt.source === previous.source && receipt.outcome === previous.outcome && receipt.fault === previous.fault) return
+    this.observedLights.push(receipt)
+    if (this.observedLights.length > 12) this.observedLights.shift()
   }
 
   private timerTick(): void {
@@ -175,6 +192,13 @@ export class Scheduler {
     }
 
     // Pump: fire once per schedule/day/minute.
+    try {
+      this.observeLight(now, lightTarget)
+    }
+    catch (e) {
+      // Diagnostics must not get in the way of evaluating due watering.
+      this.log(`light observation failed: ${(e as Error).message}`)
+    }
     const pumpFired: string[] = []
     for (const s of schedules.filter((s): s is Schedule & { spec: PumpSpec } => s.kind === 'pump')) {
       if (s.spec.minute !== lt.minute) continue

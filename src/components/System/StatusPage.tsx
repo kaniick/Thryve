@@ -4,6 +4,7 @@ import { cn } from '@/lib/utils'
 import { alertActions, describeAlert } from '@/src/components/Alerts/AlertsPage'
 import { apiBase, trpc } from '@/src/utils/trpc'
 import { checkSummary, worstState } from './checkState'
+import { ScheduleReceipts } from './ScheduleReceipts'
 import { StatusCards } from './StatusCards'
 import { coreBuild, fmtAgo, fmtUptime, healthHeadline, wifiBars } from './statusData'
 import { TodayTimeline } from './TodayTimeline'
@@ -25,6 +26,7 @@ export function StatusPage() {
       <HealthStrip />
       <AlertCard />
       <TodayTimeline />
+      <ScheduleReceipts />
       <StatusCards />
     </div>
   )

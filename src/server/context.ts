@@ -1,5 +1,6 @@
 import type { HalClient } from '../hardware/types'
 import type { LightArbiter } from '../control/light'
+import type { Scheduler } from '../scheduler/scheduler'
 import type { EventBus } from '../lib/eventBus'
 import type { Wifi } from '../network/wifi'
 import type { Store } from '../store/types'
@@ -37,6 +38,7 @@ export interface Context {
   podCodes: PodCodeService
   wifi: Wifi
   light: LightArbiter
+  scheduleActivity?: () => ReturnType<Scheduler['receiptState']>
   autopilot: AutopilotEngine
   notifier: NotifyEngine
   /** The iPhone app channel: registered phones, the feed, Live Activity pushes. */
