@@ -12,6 +12,7 @@ import { appRouter } from '../../server/routers/app'
 import { createCallerFactory } from '../../server/trpc'
 import { MemoryStore } from '../../store/memory'
 import { CareEngine, CHORE_ALERTS, choreDoneKind } from '../engine'
+import { chores } from '../chores'
 
 const NOW = new Date('2026-11-09T12:00:00Z')
 const T = NOW.toISOString()
@@ -68,6 +69,29 @@ describe('chore alerts (ADR-0029)', () => {
     care.tick()
     // The suspect level warns about the sensor, not the tank; the calendar chores (refresh, roots) stay off Alerts.
     expect(active(store)).toEqual(['setup_water_sensor'])
+  })
+
+  it('leaves the tank forecast and calendar reads off background ticks while keeping them on the Care page', () => {
+    const { store, care, set, hal } = rig({ water_level_pct: level(57) })
+    store.telemetry.add(Array.from({ length: 12 }, (_, i) => ({
+      sensor: 'water_level_pct' as const,
+      ts: new Date(NOW.getTime() - (11 - i) * 3_600_000 * 6).toISOString(),
+      value: 79 - 2 * i,
+    })))
+    const range = vi.spyOn(store.telemetry, 'range')
+    const action = vi.spyOn(store.tankActions, 'list')
+    care.tick()
+    expect(active(store)).toEqual([])
+    set({ water_level_pct: level(47) })
+    care.tick()
+    expect(active(store)).toEqual(['chore_top_off'])
+    expect(range).not.toHaveBeenCalled()
+    expect(action.mock.calls.map(([q]) => q?.kind)).not.toContain('clean')
+    expect(action.mock.calls.map(([q]) => q?.kind)).not.toContain('trim_roots')
+    set({ water_level_pct: level(57) })
+    const topOff = chores(store, hal.snapshot(), NOW).find(c => c.id === 'top_off')
+    expect(topOff).toMatchObject({ state: 'soon', reason: expect.stringContaining('falling 8% a day') })
+    expect(range).toHaveBeenCalledTimes(1)
   })
 
   it('keeps a dismissed chore alert dismissed while the reading keeps it due, and raises it again once it recovered', () => {

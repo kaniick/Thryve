@@ -60,7 +60,7 @@ export class CareEngine {
     for (const n of notices) events.emit({ kind: 'mutation', path: `alerts.${n.kind}` })
     const active = store.alerts.list({ activeOnly: true })
     const { report: setup, tankKnown } = assessSetup(store, snap, now, active.find(a => a.kind === TANK_SENSOR_ALERT) ?? null)
-    const list = chores(store, snap, now)
+    const list = chores(store, snap, now, 'alerts')
     for (const kind of SETUP_ALERTS) {
       if (kind === TANK_SENSOR_ALERT && !tankKnown) continue
       this.sync(active.find(a => a.kind === kind), kind, setup.issues.find(i => i.alert === kind)?.detail ?? null, false)
@@ -68,7 +68,7 @@ export class CareEngine {
     for (const [id, kind] of Object.entries(CHORE_ALERTS)) {
       const c = list.find(x => x.id === id)
       // A chore's detail carries the reading, so it changes every sample: held in memory, and dismissal goes by kind.
-      this.sync(active.find(a => a.kind === kind), kind, c?.state === 'due' && c.basis === 'reading' ? c.reason : null, true)
+      this.sync(active.find(a => a.kind === kind), kind, c?.reason ?? null, true)
     }
     return { setup, chores: list, followed }
   }

@@ -150,7 +150,7 @@ function settle(c: Chore, done: { at: number, kind: TankActionKind } | null, now
   return { ...c, state: 'ok', dueAt: null, reason: `${c.reason.split(':')[0]}, but a ${DONE_LABEL[done.kind]} was logged ${Math.max(1, Math.round(ago / 60_000))} min ago: waiting for the reading to settle.` }
 }
 
-function topOff(store: Store, snap: HalSnapshot, now: Date, planted: Pod[]): Chore {
+function topOff(store: Store, snap: HalSnapshot, now: Date, planted: Pod[], forecast = true): Chore {
   const kinds: TankActionKind[] = ['top_off', 'refresh']
   const done = lastDone(store, kinds)
   const c = { id: 'top_off' as const, title: TITLE.top_off, lastDoneAt: done ? iso(done.at) : null, doneKind: 'top_off' as const }
@@ -159,7 +159,7 @@ function topOff(store: Store, snap: HalSnapshot, now: Date, planted: Pod[]): Cho
     return onCalendar({ ...c, citations: [CITE.tankCadence] }, { every: TOP_OFF_DAYS, from: anchor(store, kinds, planted), now, why: `Calendar guess, ${why}`, rule: `Gardyn tops off every ${TOP_OFF_DAYS} d.`, none: 'nothing logged or planted to count from.' })
   }
   const level = reading.value
-  const drop = tankDropPerDay(store, now)
+  const drop = forecast ? tankDropPerDay(store, now) : null
   const falling = drop ? `, falling ${drop}% a day` : ''
   const base = { ...c, basis: 'reading' as const, readings: [asReading('water_level_pct', reading)], citations: [CITE.tankHalfFull] }
   if (level < TANK_MIN_PCT) return settle({ ...base, state: 'due', dueAt: now.toISOString(), reason: `Tank at ${Math.round(level)}%${falling}: below half, so top it off. Keep it at least half full.` }, done, now)
@@ -245,9 +245,20 @@ function thin(store: Store, now: Date, planted: Pod[]): Chore {
 }
 
 /** Every chore for the unit as it is now, in a fixed order. */
-export function chores(store: Store, snap: HalSnapshot, now: Date): Chore[] {
+export function chores(store: Store, snap: HalSnapshot, now: Date, mode: 'all' | 'alerts' = 'all'): Chore[] {
   const planted = store.pods.list().filter(p => p.status !== 'empty')
+  if (mode === 'alerts') return choresForAlerts(store, snap, now, planted)
   const all = [thin(store, now, planted), trimRoots(store, now, planted), topOff(store, snap, now, planted), refresh(store, now, planted), feed(store, snap, now, planted), clean(store, now, planted)]
   // An empty tower needs no feeding or topping off; cleaning between grows still counts.
   return planted.length ? all : all.map(c => (c.id === 'clean' ? c : { ...c, state: 'ok', dueAt: null, reason: 'Nothing planted.' }))
+}
+
+/** A background alert only needs current, actionable readings, not forecasts or calendar chores. */
+function choresForAlerts(store: Store, snap: HalSnapshot, now: Date, planted: Pod[]): Chore[] {
+  if (!planted.length) return []
+  const due = [thin(store, now, planted)]
+  const level = trusted(snap, 'water_level_pct', now).reading
+  if (level && level.value < TANK_MIN_PCT) due.push(topOff(store, snap, now, planted, false))
+  if (trusted(snap, 'ec', now).reading) due.push(feed(store, snap, now, planted))
+  return due.filter(c => c.state === 'due' && c.basis === 'reading')
 }
