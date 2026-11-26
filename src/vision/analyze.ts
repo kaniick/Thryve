@@ -57,8 +57,9 @@ export interface PodTrend {
 /** Growth verdict per pod from one analyser's green fraction (the primary one unless named). */
 export function podTrends(store: Store, slots = 30, analyzer = store.settings.get().primaryAnalyzer): PodTrend[] {
   const out: PodTrend[] = []
+  const version = slots > 0 ? store.analyses.latestVersion(analyzer) : null
   for (let slot = 1; slot <= slots; slot++) {
-    const series = store.analyses.series({ analyzer, slot, metric: 'green_fraction', limit: 48 }).map(p => ({ ts: p.ts, slot, green: p.value }))
+    const series = version === null ? [] : store.analyses.series({ analyzer, version, slot, metric: 'green_fraction', limit: 48 }).map(p => ({ ts: p.ts, slot, green: p.value }))
     const t = growthTrend(series)
     out.push({ slot, green: series.at(-1)?.green ?? null, verdict: t.verdict, slope: Math.round(t.slope * 1000) / 1000, samples: series.length, recent: series.slice(-12).map(p => Math.round(p.green * 1000) / 1000) })
   }

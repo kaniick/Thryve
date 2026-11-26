@@ -19,6 +19,7 @@ const windowSql = 'sensor = @sensor AND ts BETWEEN @from AND @to'
 export class SqliteTelemetryReader {
   private readonly countRows
   private readonly all
+  private readonly newestTime
   private readonly sampled
   private readonly sampledWithHeld
   private readonly lastId
@@ -28,6 +29,7 @@ export class SqliteTelemetryReader {
   constructor(db: Database.Database) {
     this.countRows = db.prepare<unknown[], { n: number }>(`SELECT count(*) AS n FROM telemetry WHERE ${windowSql}`)
     this.all = db.prepare<unknown[], TelemetryPoint>(`SELECT ts, sensor, value FROM telemetry WHERE ${windowSql} ORDER BY ts, id`)
+    this.newestTime = db.prepare<unknown[], { ts: string }>(`SELECT ts FROM telemetry WHERE ${windowSql} ORDER BY ts DESC LIMIT 1`)
     // Rank only the covering-index columns and fetch values for selected IDs.
     // The selected positions are the same as downsample(), including when timestamps repeat.
     this.sampled = db.prepare<unknown[], TelemetryPoint>(`
@@ -83,13 +85,35 @@ export class SqliteTelemetryReader {
     const key = { sensor, from, to }
     const held = this.inWindow(sensor, from, to, buffer)
     if (max > 0 && max < Number.MAX_SAFE_INTEGER) {
-      const total = (this.countRows.get(key)?.n ?? 0) + held.length
+      const onDisk = this.countRows.get(key)?.n ?? 0
+      const total = onDisk + held.length
       if (total > max) {
         const stride = total / max
-        const positions = JSON.stringify(Array.from({ length: Math.ceil(max) }, (_, i) => Math.floor(i * stride)))
-        return held.length
-          ? this.sampledWithHeld.all({ ...key, positions, held: JSON.stringify(held) })
-          : this.sampled.all({ ...key, positions })
+        const positions = Array.from({ length: Math.ceil(max) }, (_, i) => Math.floor(i * stride))
+        if (!held.length) return this.sampled.all({ ...key, positions: JSON.stringify(positions) })
+        const last = onDisk > 0 ? this.newestTime.get(key)?.ts : undefined
+        // Usually all pending samples follow the card's newest one. Rank the
+        // card's rows in index order and append the chosen pending samples
+        // without making SQLite sort the entire history and buffer together.
+        // Equal timestamps still keep the stored rows before pending rows.
+        if (!onDisk || (last !== undefined && held.every(p => p.ts >= last))) {
+          held.sort((a, b) => a.ts.localeCompare(b.ts))
+          const diskPositions: number[] = []
+          const tail: TelemetryPoint[] = []
+          for (const pos of positions) {
+            if (pos < onDisk) diskPositions.push(pos)
+            else {
+              const row = held[pos - onDisk]
+              if (row) tail.push(row)
+            }
+          }
+          return diskPositions.length
+            ? [...this.sampled.all({ ...key, positions: JSON.stringify(diskPositions) }), ...tail]
+            : tail
+        }
+        // Keep exact sampling when a reconnect or clock correction inserts
+        // readings between the stored timestamps.
+        return this.sampledWithHeld.all({ ...key, positions: JSON.stringify(positions), held: JSON.stringify(held) })
       }
     }
     const stored = this.all.all(key)

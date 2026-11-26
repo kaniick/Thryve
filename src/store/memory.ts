@@ -3,6 +3,7 @@ import type { AlertQuery, AlertRow, Automation, AutomationRun, AnalysisPoint, An
 import type { NotificationChannel, NotificationRule, NotificationRun } from '../notify/types'
 import type { ActivityToken, FeedItem, IosDevice } from '../notify/ios/types'
 import type { AutomationRule } from '../autopilot/types'
+import type { AgreementReading, LatestAnalysisQuery, OmittedAnalysisSlots } from './types'
 import { DEFAULT_SETTINGS, POD_LABELS, profileKey } from './types'
 
 /** In-memory Store for tests and the browser demo. Same semantics as SqliteStore. */
@@ -235,6 +236,16 @@ export class MemoryStore implements Store {
     },
     list: (camera?: 'upper' | 'lower', limit = 100): Capture[] =>
       this.captureRows.filter(c => !camera || c.camera === camera).slice().sort((a, b) => b.ts.localeCompare(a.ts)).slice(0, limit),
+    totals: (from: string, to: string) => {
+      let count = 0
+      let bytes = 0
+      for (const c of this.captureRows) {
+        if (c.ts < from || c.ts > to) continue
+        count++
+        bytes += c.bytes
+      }
+      return { count, bytes }
+    },
     get: (id: string): Capture | null => this.captureRows.find(c => c.id === id) ?? null,
     prune: (camera: 'upper' | 'lower', keep: number): Capture[] => {
       const rows = this.captures.list(camera, Number.MAX_SAFE_INTEGER)
@@ -366,17 +377,28 @@ export class MemoryStore implements Store {
   }
 
   analyses = {
-    add: (rows: AnalysisRow[]): void => {
+    add: (rows: AnalysisRow[], omitted?: OmittedAnalysisSlots): void => {
+      if (omitted?.slots.length && omitted.runs.length) {
+        for (let i = this.analysisRows.length - 1; i >= 0; i--) {
+          const r = this.analysisRows[i]
+          if (r?.source === 'device' && r.captureId === omitted.captureId && omitted.slots.includes(r.slot)
+            && omitted.runs.some(a => a.analyzer === r.analyzer && a.version === r.version)) this.analysisRows.splice(i, 1)
+        }
+      }
       for (const r of rows) {
         const i = this.analysisRows.findIndex(x => x.captureId === r.captureId && x.analyzer === r.analyzer && x.version === r.version && x.slot === r.slot && x.metric === r.metric)
         if (i >= 0) this.analysisRows[i] = { ...r }
         else this.analysisRows.push({ ...r })
       }
     },
+    latestVersion: (analyzer: string): number | null => {
+      let latest: number | null = null
+      for (const r of this.analysisRows) if (r.analyzer === analyzer && (latest === null || r.version > latest)) latest = r.version
+      return latest
+    },
     series: (q: { analyzer: string, version?: number, slot: number, metric: string, limit?: number }): AnalysisPoint[] => {
-      const versions = this.analysisRows.filter(r => r.analyzer === q.analyzer).map(r => r.version)
-      const version = q.version ?? (versions.length ? Math.max(...versions) : undefined)
-      if (version === undefined) return []
+      const version = q.version ?? this.analyses.latestVersion(q.analyzer)
+      if (version === null) return []
       return this.analysisRows
         .filter(r => r.analyzer === q.analyzer && r.version === version && r.slot === q.slot && r.metric === q.metric)
         .sort((a, b) => a.ts.localeCompare(b.ts))
@@ -386,12 +408,33 @@ export class MemoryStore implements Store {
     forCapture: (captureId: string): AnalysisRow[] =>
       this.analysisRows.filter(r => r.captureId === captureId)
         .sort((a, b) => a.analyzer.localeCompare(b.analyzer) || a.version - b.version || a.slot - b.slot || a.metric.localeCompare(b.metric)),
+    agreementReadings: (): AgreementReading[] => this.analysisRows
+      .filter(r => (r.metric === 'green_fraction' || r.metric === 'pod_state') && this.labelRows.has(`${r.captureId}#${r.slot}`))
+      .map(({ captureId, slot, analyzer, version, metric, value, detail }) => ({ captureId, slot, analyzer, version, metric, value, detail })),
+    latestBySlot: ({ analyzer, metric, slots, fromTs }: LatestAnalysisQuery): AnalysisRow[] => {
+      if (!slots.length) return []
+      const wanted = new Set(slots)
+      const result = new Map<number, AnalysisRow>()
+      let version = Number.NEGATIVE_INFINITY
+      for (const r of this.analysisRows) {
+        if (r.analyzer !== analyzer || r.version < version) continue
+        if (r.version > version) {
+          version = r.version
+          result.clear()
+        }
+        if (r.metric !== metric || !wanted.has(r.slot) || r.ts < fromTs) continue
+        const previous = result.get(r.slot)
+        if (!previous || previous.ts <= r.ts) result.set(r.slot, r)
+      }
+      return [...result.values()].sort((a, b) => a.slot - b.slot)
+    },
     removeDevice: (captureId: string): void => {
       const keep = this.analysisRows.filter(r => r.captureId !== captureId || r.source !== 'device')
       this.analysisRows.splice(0, this.analysisRows.length, ...keep)
     },
     range: (fromTs: string, toTs: string): AnalysisRow[] =>
       this.analysisRows.filter(r => r.ts >= fromTs && r.ts <= toTs).sort((a, b) => a.ts.localeCompare(b.ts)),
+    count: (from: string, to: string): number => countWindow(this.analysisRows, from, to),
     stats: (): AnalyzerStats[] => {
       const m = new Map<string, AnalyzerStats & { ids: Set<string> }>()
       for (const r of this.analysisRows) {
@@ -422,6 +465,14 @@ export class MemoryStore implements Store {
     range: (fromTs: string, toTs: string): PodLabel[] =>
       [...this.labelRows.values()].filter(l => l.ts >= fromTs && l.ts <= toTs)
         .sort((a, b) => a.ts.localeCompare(b.ts) || a.captureId.localeCompare(b.captureId) || a.slot - b.slot).map(l => ({ ...l })),
+    forSlot: (slot: number, q: { from?: string, to?: string, limit: number }): PodLabel[] => {
+      // Code-unit order, as SQLite compares text.
+      const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
+      return [...this.labelRows.values()]
+        .filter(l => l.slot === slot && (q.from === undefined || l.ts >= q.from) && (q.to === undefined || l.ts <= q.to))
+        .sort((a, b) => cmp(b.ts, a.ts) || cmp(b.captureId, a.captureId)).slice(0, q.limit).reverse().map(l => ({ ...l }))
+    },
+    count: (from: string, to: string): number => countWindow(this.labelRows.values(), from, to),
     list: (q: { label?: PodLabelValue, camera?: 'upper' | 'lower', limit: number, before?: PodLabelCursor }): PodLabel[] => {
       // Code-unit order, as SQLite compares text, so both stores page alike.
       const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
@@ -698,6 +749,12 @@ export class MemoryStore implements Store {
   close(): void {
     // nothing to release
   }
+}
+
+function countWindow(rows: Iterable<{ ts: string }>, from: string, to: string): number {
+  let count = 0
+  for (const row of rows) if (row.ts >= from && row.ts <= to) count++
+  return count
 }
 
 /** Keep at most `max` points by uniform stride (good enough for charts). */

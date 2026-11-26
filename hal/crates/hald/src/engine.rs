@@ -327,6 +327,7 @@ pub struct Engine {
     last_hours_persist: Option<Instant>,
     alerts: BTreeMap<AlertKind, Alert>,
     water: WaterAlert,
+    camera_activity: crate::camera_activity::CameraActivity,
     snapshot: SharedSnapshot,
     devices: Devices,
     asked_dry_guard: DryGuard,
@@ -357,6 +358,8 @@ struct WaterAlert {
     last_trusted_cm: Option<f64>,
     /// Consecutive missing rounds since that last trusted reading.
     misses: usize,
+    /// Missing telemetry rounds within the same bounded alert window.
+    missing_recent: VecDeque<bool>,
 }
 
 impl WaterAlert {
@@ -370,9 +373,32 @@ impl WaterAlert {
             .is_some_and(|d| d + TANK_SAFE_MARGIN_CM < low)
     }
 
+    /// Excuse one capture-overlapped miss immediately after a trusted wet
+    /// round. It is not a good reading for recovery, and a second miss counts
+    /// even if cameras are still busy. Boot failure and low water still report.
+    fn observe_with_camera(&mut self, distance: Option<f64>, low: f64, capture_overlap: bool) {
+        if distance.is_none()
+            && capture_overlap
+            && !self.active
+            && self.rounds.back() == Some(&false)
+            && self.last_trusted_is_safe(low)
+        {
+            if self.rounds.len() == WATER_WINDOW {
+                self.rounds.pop_front();
+            }
+            self.rounds.push_back(true);
+        } else {
+            self.observe(distance, low);
+        }
+    }
+
     fn observe(&mut self, distance: Option<f64>, low: f64) {
         let is_low = distance.is_some_and(|d| d >= low);
         let good = distance.is_some_and(|d| d < low);
+        if self.missing_recent.len() == WATER_WINDOW {
+            self.missing_recent.pop_front();
+        }
+        self.missing_recent.push_back(distance.is_none());
         if good {
             self.last_trusted_cm = distance;
             self.misses = 0;
@@ -399,11 +425,21 @@ impl WaterAlert {
             self.active = false;
             self.detail.clear();
         }
-        if self.active && (is_low || distance.is_none()) {
-            self.detail = match distance {
-                Some(d) => format!("water distance {d:.1} cm ≥ {low:.1} cm"),
-                None => "water level sensor unavailable".to_owned(),
-            };
+        // Do not relabel a confirmed low-water condition as a sensor fault
+        // merely because the next camera-busy telemetry round missed the ranger.
+        // Once a genuine sustained outage is established, report the sensor
+        // fault explicitly. The pump's separate safety interlock is unchanged.
+        if self.active && is_low {
+            if let Some(d) = distance {
+                self.detail = format!("water distance {d:.1} cm ≥ {low:.1} cm");
+            }
+        } else if self.active && distance.is_none() {
+            let missing_in_window = self.missing_recent.iter().filter(|missing| **missing).count();
+            if gone && (self.misses >= WATER_RAISE_AT || self.detail.is_empty())
+                || missing_in_window >= WATER_RAISE_AT
+            {
+                self.detail = "water level sensor unavailable".to_owned();
+            }
         }
     }
 }
@@ -446,6 +482,10 @@ impl Devices {
 }
 
 impl Engine {
+    pub(crate) fn with_camera_activity(mut self, activity: crate::camera_activity::CameraActivity) -> Self {
+        self.camera_activity = activity;
+        self
+    }
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         system: SystemInfo,
@@ -578,6 +618,7 @@ impl Engine {
             last_hours_persist: None,
             alerts: BTreeMap::new(),
             water: WaterAlert::default(),
+            camera_activity: Default::default(),
             snapshot,
             devices: Devices::default(),
             asked_dry_guard,
@@ -924,13 +965,20 @@ impl Engine {
         let mut distance = None;
         let mut trusted_distance = None;
         let mut has_ranger = false;
+        let mut capture_overlap = false;
         let mut pcb = None;
         let mut pump_a = None;
         let mut pump_v = None;
         let mut readings = Vec::new();
         for s in self.registry.sensors_mut() {
-            has_ranger |= s.id() == SensorId::WaterDistance;
-            match s.read() {
+            let ranger = s.id() == SensorId::WaterDistance;
+            has_ranger |= ranger;
+            let before = ranger.then(|| self.camera_activity.mark());
+            let result = s.read();
+            if let Some(mark) = before {
+                capture_overlap = self.camera_activity.overlapped(mark);
+            }
+            match result {
                 Ok(r) => {
                     match s.id() {
                         SensorId::WaterDistance => {
@@ -962,7 +1010,8 @@ impl Engine {
         self.env.pump_current_a = pump_a;
         self.env.supply_v = pump_v;
         if let Some(low) = self.cfg.pump.water_low_cm {
-            self.water.observe(trusted_distance, low);
+            self.water
+                .observe_with_camera(trusted_distance, low, capture_overlap);
         }
         self.env.over_temp_signal = self.read_over_temp_signal();
         for (id, r) in readings {
@@ -1003,6 +1052,11 @@ impl Engine {
             self.env.water_distance_cm = r.as_ref().map(|r| r.value);
             self.env.water_suspect = r.is_some_and(|r| r.quality == Quality::Suspect);
             self.env.water_fresh = true;
+        } else {
+            // A removed ranger must not leave its previous sample marked new.
+            self.env.water_distance_cm = None;
+            self.env.water_suspect = false;
+            self.env.water_fresh = false;
         }
         self.next_level_read = Some(now.instant + LEVEL_READ_EVERY);
     }
@@ -1778,6 +1832,60 @@ impl Engine {
 mod tests {
     use super::*;
     use hal_core::{Caps, Limits, CONTRACT_VERSION};
+
+    // Phase 1: guard against transient ranger dropouts during camera capture.
+    // These tests intentionally exercise the existing alert state machine
+    // without changing the live pump interlock or calibration.
+    #[test]
+    fn water_alert_ignores_isolated_missing_round_on_wet_tank() {
+        let mut alert = WaterAlert::default();
+        alert.observe(Some(8.0), 16.0);
+        for _ in 0..8 {
+            alert.observe(None, 16.0);
+            assert!(!alert.active, "one missing round must not alarm on a wet tank");
+            alert.observe(Some(8.0), 16.0);
+        }
+    }
+
+    #[test]
+    fn water_alert_requires_sustained_loss_when_last_level_is_safe() {
+        let mut alert = WaterAlert::default();
+        alert.observe(Some(8.0), 16.0);
+        for _ in 0..(WATER_RAISE_AT - 1) {
+            alert.observe(None, 16.0);
+            assert!(!alert.active);
+        }
+        alert.observe(None, 16.0);
+        assert!(alert.active);
+        assert_eq!(alert.detail, "water level sensor unavailable");
+    }
+
+    #[test]
+    fn water_alert_keeps_confirmed_low_water_detail_during_one_missing_round() {
+        let mut alert = WaterAlert::default();
+        alert.observe(Some(17.0), 16.0);
+        assert!(alert.active);
+        alert.observe(None, 16.0);
+        assert!(alert.active);
+        assert!(
+            alert.detail.contains("water distance"),
+            "one missed ranger sample must not disguise confirmed low water"
+        );
+    }
+
+    #[test]
+    fn water_alert_distinguishes_low_water_from_sensor_loss() {
+        let mut alert = WaterAlert::default();
+        alert.observe(Some(8.0), 16.0);
+        alert.observe(Some(16.5), 16.0);
+        assert!(alert.active, "a trusted low level must alert immediately");
+        assert!(alert.detail.contains("water distance"));
+        for _ in 0..WATER_WINDOW {
+            alert.observe(Some(8.0), 16.0);
+        }
+        assert!(!alert.active, "a complete window of good levels clears the alert");
+        assert!(alert.detail.is_empty());
+    }
 
     fn system(actuators: Vec<ActuatorId>) -> SystemInfo {
         SystemInfo {
@@ -2969,6 +3077,33 @@ mod tests {
         assert!(e.water.active);
         assert_eq!(e.water.detail, "water level sensor unavailable");
         assert_eq!(e.env.water_distance_cm, Some(9.0));
+    }
+
+    #[test]
+    fn a_capture_only_excuses_the_first_missing_wet_round() {
+        let mut a = WaterAlert::default();
+        water_rounds(&mut a, &[Some(7.0); WATER_WINDOW]);
+        a.observe_with_camera(None, 16.0, true);
+        assert!(!a.active);
+        assert_eq!(a.misses, 0);
+        assert!(!a.all_good(), "a skipped round is not recovery evidence");
+        for _ in 0..WATER_RAISE_AT {
+            a.observe_with_camera(None, 16.0, true);
+        }
+        assert!(a.active, "a busy camera cannot hide sustained sensor loss");
+        assert_eq!(a.detail, "water level sensor unavailable");
+    }
+
+    #[test]
+    fn captures_do_not_hide_confirmed_low_water_or_a_boot_failure() {
+        let mut a = WaterAlert::default();
+        a.observe_with_camera(None, 16.0, true);
+        assert!(a.active);
+        water_rounds(&mut a, &[Some(7.0); WATER_WINDOW]);
+        a.observe_with_camera(Some(17.0), 16.0, true);
+        assert!(a.active);
+        a.observe_with_camera(None, 16.0, true);
+        assert!(a.detail.contains("17.0 cm"));
     }
 
     #[test]

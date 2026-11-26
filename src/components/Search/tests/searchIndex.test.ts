@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { navItems } from '@/src/components/AppShell/navItems'
+import { PLANTS } from '@/src/plants/catalog'
 import { DOCS_BASE, isDocsIndex, type DocsIndex } from '../docsIndex'
 import docsSnapshot from '../docsIndex.json'
-import { buildDocsEntries, buildSearchEntries, createSearch } from '../searchIndex'
+import { buildDocsEntries, buildSearchEntries, createSearch, plantSearchEntries } from '../searchIndex'
 
 const live = {
   pods: [
@@ -50,6 +51,15 @@ describe('search index', () => {
   it('returns nothing for an empty query or no match', () => {
     expect(top('   ')).toEqual([])
     expect(top('zzzz')).toEqual([])
+  })
+
+  it('finds the bundled plant catalog without burying a planted pod or an app page', () => {
+    const search = createSearch([...appEntries, ...plantSearchEntries, ...docsEntries])
+    expect(plantSearchEntries).toHaveLength(PLANTS.length)
+    expect(search('rosemary')[0]).toMatchObject({ id: 'plant:rosemary', href: '/plan?plant=rosemary#plant-catalog' })
+    expect(search('basil')[0]?.id).toBe('pod:6')
+    expect(search('basil').some(e => e.id === 'plant:basil')).toBe(true)
+    for (const query of ['light', 'lig']) expect(search(query)[0]?.href).toBe('/light')
   })
 })
 

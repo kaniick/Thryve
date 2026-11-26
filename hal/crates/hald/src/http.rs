@@ -71,6 +71,7 @@ pub struct AppState {
     pub snapshot: SharedSnapshot,
     pub cameras: Arc<BTreeMap<String, SharedCamera>>,
     pub camera_health: CameraHealth,
+    pub(crate) camera_activity: crate::camera_activity::CameraActivity,
     /// Where `usb::record_boot` keeps its record.
     pub state_dir: PathBuf,
     pub started: Instant,
@@ -184,9 +185,13 @@ async fn camera(State(s): State<AppState>, Path(file): Path<String>) -> Response
     };
     let name = name.to_owned();
     let (health, engine) = (s.camera_health.clone(), s.inbound.clone());
+    let activity = s.camera_activity.clone();
     let captured = tokio::task::spawn_blocking(move || {
         let mut c = cam.lock().unwrap_or_else(|e| e.into_inner());
-        let result = c.capture();
+        let result = {
+            let _capture = activity.begin();
+            c.capture()
+        };
         // Here, not after the await: a client that hangs up drops the handler, not this task.
         health.report(&name, result.as_ref().err().map(ToString::to_string), &engine);
         (result, c.damaged_frames())
@@ -224,9 +229,13 @@ async fn camera_full(State(s): State<AppState>, Path(file): Path<String>) -> Res
     let Some(cam) = s.cameras.get(name).cloned() else {
         return (StatusCode::NOT_FOUND, format!("no camera {name:?}")).into_response();
     };
-    let captured =
-        tokio::task::spawn_blocking(move || cam.lock().unwrap_or_else(|e| e.into_inner()).capture_full())
-            .await;
+    let activity = s.camera_activity.clone();
+    let captured = tokio::task::spawn_blocking(move || {
+        let mut c = cam.lock().unwrap_or_else(|e| e.into_inner());
+        let _capture = activity.begin();
+        c.capture_full()
+    })
+    .await;
     match captured {
         Ok(Ok(bytes)) => (
             [
@@ -325,6 +334,7 @@ mod tests {
             snapshot,
             cameras: Arc::new(cameras),
             camera_health: CameraHealth::default(),
+            camera_activity: Default::default(),
             state_dir: std::env::temp_dir().join("hald-http-no-such-state"),
             started: Instant::now(),
             mqtt_connected: connected.clone(),

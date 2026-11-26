@@ -1,12 +1,14 @@
 /**
  * Grow cycle — stage tracking and time-based reminders (thinning, root check,
- * harvest, nutrients). Reminders become persisted alerts so the UI, Home
- * Assistant and MCP all see and acknowledge the same thing.
+ * harvest). Reminders become persisted alerts so the UI, Home Assistant and MCP
+ * all see and acknowledge the same thing. Feeding is the Feed chore's job
+ * (ADR-0029): it counts from the last logged feed, so it resets when one is.
  */
+import { LEGACY_FEED_ALERT } from '../care/feedAlerts'
 import type { EventBus } from '../lib/eventBus'
 import type { DeviceSettings, GrowCycle, GrowStage, Store } from '../store/types'
 
-export type ReminderKind = 'reminder_thinning' | 'reminder_root_check' | 'reminder_harvest' | 'reminder_nutrients' | 'reminder_sow'
+export type ReminderKind = 'reminder_thinning' | 'reminder_root_check' | 'reminder_harvest' | 'reminder_sow'
 
 export interface Reminder {
   kind: ReminderKind
@@ -29,20 +31,12 @@ export function dueReminders(cycle: GrowCycle, settings: DeviceSettings, now: Da
   const day = cycleDay(cycle, now)
   const out: Reminder[] = []
   const oneShot: [ReminderKind, number, string][] = [
-    ['reminder_thinning', settings.thinningReminderDays, 'Thin seedlings to the strongest sprout per pod'],
+    ['reminder_thinning', settings.thinningReminderDays, 'Thin seedlings: 1 sprout per pod for greens and fruiting plants, 3 for herbs and small flowers'],
     ['reminder_root_check', settings.rootCheckReminderDays, 'Check roots for length and colour; trim if they reach the pump'],
     ['reminder_harvest', settings.harvestReminderDays, 'First harvest window — pick outer leaves to keep plants producing'],
   ]
   for (const [kind, days, detail] of oneShot) {
     if (days > 0 && day >= days && !cycle.issued.includes(kind)) out.push({ kind, dueDay: days, detail })
-  }
-  if (settings.nutrientReminderDays > 0 && day > 0) {
-    // Recurring: issue once per period; the issued key carries the period index.
-    const period = Math.floor(day / settings.nutrientReminderDays)
-    const key = `reminder_nutrients:${period}`
-    if (period > 0 && !cycle.issued.includes(key)) {
-      out.push({ kind: 'reminder_nutrients', dueDay: period * settings.nutrientReminderDays, detail: `Add nutrients (every ${settings.nutrientReminderDays} days)` })
-    }
   }
   return out
 }
@@ -50,9 +44,7 @@ export function dueReminders(cycle: GrowCycle, settings: DeviceSettings, now: Da
 /** The day of the cycle a reminder key fell due, by the settings that issue it; null for keys it doesn't know. */
 function issuedDueDay(key: string, settings: DeviceSettings): number | null {
   const oneShot: Record<string, number> = { reminder_thinning: settings.thinningReminderDays, reminder_root_check: settings.rootCheckReminderDays, reminder_harvest: settings.harvestReminderDays }
-  if (key in oneShot) return oneShot[key] ?? null
-  const period = /^reminder_nutrients:(\d+)$/.exec(key)?.[1]
-  return period === undefined ? null : Number(period) * settings.nutrientReminderDays
+  return oneShot[key] ?? null
 }
 
 /**
@@ -63,6 +55,7 @@ function issuedDueDay(key: string, settings: DeviceSettings): number | null {
  */
 export function restarted(cycle: GrowCycle, settings: DeviceSettings, day: number): { issued: string[], stage: GrowStage } {
   const issued = cycle.issued.filter((k) => {
+    if (k.startsWith(`${LEGACY_FEED_ALERT}:`)) return false
     const due = issuedDueDay(k, settings)
     return due === null || due <= day
   })
@@ -100,13 +93,13 @@ export class GrowEngine {
     this.sowTick()
     const { store, events } = this.deps
     const now = (this.deps.now ?? (() => new Date()))()
+    if (store.alerts.clear(LEGACY_FEED_ALERT, now.toISOString())) events.emit({ kind: 'mutation', path: `alerts.${LEGACY_FEED_ALERT}` })
     const cycle = store.grow.current()
     if (!cycle) return []
     const due = dueReminders(cycle, store.settings.get(), now)
     for (const r of due) {
       store.alerts.raise(r.kind, r.detail, now.toISOString())
-      const issuedKey = r.kind === 'reminder_nutrients' ? `reminder_nutrients:${Math.floor(r.dueDay / Math.max(1, store.settings.get().nutrientReminderDays))}` : r.kind
-      store.grow.markIssued(issuedKey)
+      store.grow.markIssued(r.kind)
       events.emit({ kind: 'mutation', path: `alerts.${r.kind}` })
     }
     return due

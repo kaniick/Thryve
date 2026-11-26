@@ -1,10 +1,11 @@
 import { Link } from '@tanstack/react-router'
-import { Aperture, CameraOff, Info, Maximize2, Pause, Play, ScanEye } from 'lucide-react'
+import { Aperture, CameraOff, Check, Info, Maximize2, Pause, Play, RotateCcw, ScanEye, TriangleAlert } from 'lucide-react'
 import type { inferRouterOutputs } from '@trpc/server'
 import { useMemo, useState } from 'react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/src/components/ds/core'
 import { Modal } from '@/src/components/ds/feedback'
+import { useToast } from '@/src/components/ds/toast'
 import { fmtStamp, timeAgo } from '@/src/lib/timeAgo'
 import type { AppRouter } from '@/src/server/routers/app'
 import { apiBase, trpc } from '@/src/utils/trpc'
@@ -24,7 +25,6 @@ const MAX_BARS = 48
 
 const srcOf = (f: Frame) => (f.path.startsWith('data:') ? f.path : `${apiBase()}${f.url}`)
 const shortDate = (iso: string) => new Date(iso).toLocaleDateString([], { day: 'numeric', month: 'short' })
-const clock = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 
 export interface CameraFailure { ts: string, message: string }
 
@@ -46,7 +46,7 @@ export function cameraFailure(camera: Cam, latest: Frame | undefined, alerts: Al
 /** What the failure means for the user: the byte count when the camera sent a stub, else the server's message. */
 export function failureHint(message: string): string {
   const bytes = /returned (\d+) bytes/.exec(message)?.[1]
-  return `${bytes ? `Last capture returned ${bytes} bytes.` : `Last capture failed: ${message}.`} Check the ribbon cable, then capture again.`
+  return `${bytes ? `Last capture returned ${bytes} bytes.` : `Last capture failed: ${message}.`} Check its cable at the USB hub, then capture again or restart the camera.`
 }
 
 /** Split `n` frames into at most `max` runs of consecutive indices: [start, end] inclusive. */
@@ -64,9 +64,15 @@ function useCamera(camera: Cam) {
       void utils.alerts.invalidate()
     },
   })
+  const restart = trpc.camera.restart.useMutation({
+    onSettled: () => {
+      void utils.camera.invalidate()
+      void utils.alerts.invalidate()
+    },
+  })
   const frames = useMemo(() => [...(list.data ?? [])].reverse(), [list.data]) // oldest → newest for the scrubber
   const local = capture.isError ? { ts: new Date(capture.submittedAt).toISOString(), message: capture.error.message } : null
-  return { camera, frames, capture, local }
+  return { camera, frames, capture, restart, local }
 }
 
 /** Both timelapse cameras: the latest frame or why there isn't one, a scrubbable strip of past frames, and capture on demand. */
@@ -104,14 +110,17 @@ export function CamerasPage() {
             failure={cameraFailure(c.camera, c.frames.at(-1), alerts.data ?? [], c.local)}
             now={now}
             pending={c.capture.isPending}
+            restarting={c.restart.isPending}
+            lastRestart={c.restart.data ?? null}
             onCapture={() => c.capture.mutate({ camera: c.camera })}
+            onRestart={() => c.restart.mutateAsync({ camera: c.camera })}
           />
         ))}
       </div>
 
       <div className="flex flex-wrap items-center gap-3 text-[13px] text-fg-2">
         <Info size={16} className="shrink-0" />
-        <span className="min-w-[200px] flex-1">Frames feed leaf-cover analysis for each pod.</span>
+        <span className="min-w-[200px] flex-1">Frames feed leaf-cover analysis for each pod. Restart camera power-cycles that camera&apos;s USB port; it does not reboot the Pi.</span>
         <Link to="/analysis" className="text-link hover:text-fg">Open Analysis →</Link>
         <Link to="/settings" hash="cameras" className="text-link hover:text-fg">Capture settings →</Link>
       </div>
@@ -119,18 +128,23 @@ export function CamerasPage() {
   )
 }
 
-function CameraCard({ camera, frames, failure, now, pending, onCapture }: {
+function CameraCard({ camera, frames, failure, now, pending, restarting, lastRestart, onCapture, onRestart }: {
   camera: Cam
   frames: Frame[]
   failure: CameraFailure | null
   now: number
   pending: boolean
+  restarting: boolean
+  lastRestart: { ok: boolean, detail: string, ts: string } | null
   onCapture: () => void
+  onRestart: () => Promise<unknown>
 }) {
   const stills = useMemo(() => frames.map(f => ({ id: f.id, src: srcOf(f) })), [frames])
   const player = useTimelapse(stills)
   const idx = player.index
   const [zoom, setZoom] = useState(false)
+  const [confirm, setConfirm] = useState(false)
+  const { show } = useToast()
   const i = idx ?? Math.max(0, frames.length - 1)
   const frame = frames[i]
   const latest = frames.at(-1)
@@ -138,6 +152,9 @@ function CameraCard({ camera, frames, failure, now, pending, onCapture }: {
   const showFailure = !!failure && idx === null
   const bars = buckets(frames.length)
   const cam = CAMS[camera]
+  const lastSeen = latest
+    ? `Last seen ${timeAgo(latest.ts, now)} (${fmtStamp(latest.ts)})`
+    : 'No frames yet'
 
   return (
     <div className={cn('flex min-w-0 flex-col overflow-hidden rounded-[14px] border bg-surface', failure ? 'border-pod-attention/45' : 'border-line')} data-testid={`camera-${camera}`}>
@@ -146,7 +163,8 @@ function CameraCard({ camera, frames, failure, now, pending, onCapture }: {
           ? (
               <div className="flex flex-col items-center gap-2.5 p-6 text-center text-[13px] text-fg-2">
                 <CameraOff size={16} className="text-pod-attention" />
-                <div className="font-medium text-fg">{latest ? `No frame since ${clock(latest.ts)}` : 'No frames yet'}</div>
+                <div className="font-medium text-fg">{`${cam.name} camera is offline`}</div>
+                <p className="font-mono text-[11px] text-pod-attention">{lastSeen}</p>
                 <p className="max-w-[280px] leading-normal">{failureHint(failure.message)}</p>
               </div>
             )
@@ -170,10 +188,19 @@ function CameraCard({ camera, frames, failure, now, pending, onCapture }: {
           <div className="flex min-w-0 flex-1 flex-col gap-0.5">
             <span className="text-sm font-medium">{`${cam.name} camera`}</span>
             {showFailure
-              ? <span className="font-mono text-[11px] text-pod-attention">{`capture failed · ${timeAgo(failure.ts, now)}`}</span>
+              ? <span className="font-mono text-[11px] text-pod-attention">{`offline · ${lastSeen}`}</span>
               : <span className="font-mono text-[11px] text-fg-3">{frame ? `${fmtStamp(frame.ts)} · ${timeAgo(frame.ts, now)}` : 'no frames yet'}</span>}
           </div>
-          <Button className="px-3 py-1.5" disabled={pending} onClick={onCapture}>{pending ? 'Capturing…' : failure ? 'Retry' : 'Capture now'}</Button>
+          <Button className="px-3 py-1.5" disabled={pending || restarting} onClick={onCapture}>{pending ? 'Capturing…' : failure ? 'Retry' : 'Capture now'}</Button>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button className="px-3 py-1.5" icon={RotateCcw} disabled={pending || restarting} onClick={() => setConfirm(true)} data-testid={`restart-${camera}`}>
+            {restarting ? 'Restarting…' : 'Restart camera'}
+          </Button>
+          {restarting && <span className="font-mono text-[11px] text-fg-3">Power-cycling the USB port…</span>}
+          {lastRestart && !restarting && (
+            <span className={cn('font-mono text-[11px]', lastRestart.ok ? 'text-fg-3' : 'text-pod-attention')}>{lastRestart.detail}</span>
+          )}
         </div>
 
         {(frames.length > 0 || failure) && (
@@ -215,6 +242,56 @@ function CameraCard({ camera, frames, failure, now, pending, onCapture }: {
           </div>
         )}
       </div>
+
+      {confirm && (
+        <Modal
+          open
+          onClose={() => setConfirm(false)}
+          title={`Restart the ${cam.name.toLowerCase()} camera?`}
+          icon={RotateCcw}
+          footer={(
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" onClick={() => setConfirm(false)}>Cancel</Button>
+              <Button
+                disabled={restarting}
+                onClick={() => {
+                  setConfirm(false)
+                  void onRestart().then((r) => {
+                    const result = r as { ok?: boolean, detail?: string } | undefined
+                    show({
+                      id: `camera-restart-${camera}`,
+                      kind: result?.ok === false ? 'info' : 'success',
+                      tone: result?.ok === false ? 'danger' : 'ok',
+                      icon: result?.ok === false ? TriangleAlert : Check,
+                      title: result?.ok === false ? `Couldn't restart the ${cam.name.toLowerCase()} camera` : `Restarted the ${cam.name.toLowerCase()} camera`,
+                      detail: result?.detail ?? '',
+                    })
+                  }).catch((e: unknown) => {
+                    show({
+                      id: `camera-restart-${camera}`,
+                      kind: 'info',
+                      tone: 'danger',
+                      icon: TriangleAlert,
+                      title: `Couldn't restart the ${cam.name.toLowerCase()} camera`,
+                      detail: e instanceof Error ? e.message : 'The restart failed.',
+                    })
+                  })
+                }}
+              >
+                Restart camera
+              </Button>
+            </div>
+          )}
+        >
+          <p className="text-sm text-fg-2">
+            This power-cycles the
+            {' '}
+            {cam.name.toLowerCase()}
+            {' '}
+            camera&apos;s USB connection. It does not reboot the Pi. Both cameras are USB modules on a small hub, not a second Raspberry Pi. If the hub itself is missing, reseat the cable between the Pi and the hub, then restart the unit.
+          </p>
+        </Modal>
+      )}
 
       {zoom && frame && (
         <Modal open onClose={() => setZoom(false)} title={`${cam.name} camera · ${fmtStamp(frame.ts)}`} width={960}>

@@ -72,10 +72,13 @@ export function slope(values: number[]): number | undefined {
 }
 
 export function podSignals(store: Store, slots: number[] = Array.from({ length: POD_SLOTS }, (_, i) => i + 1)): Record<string, number> {
+  if (slots.length === 0) return {}
   const analyzer = store.settings.get().primaryAnalyzer
+  const version = store.analyses.latestVersion(analyzer)
+  if (version === null) return {}
   const out: Record<string, number> = {}
   for (const slot of slots) {
-    const series = store.analyses.series({ analyzer, slot, metric: 'green_fraction', limit: TREND_POINTS }).map(p => p.value)
+    const series = store.analyses.series({ analyzer, version, slot, metric: 'green_fraction', limit: TREND_POINTS }).map(p => p.value)
     const last = series.at(-1)
     if (last !== undefined) out[`pod.${slot}.green`] = last
     const t = slope(series)

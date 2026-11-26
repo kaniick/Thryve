@@ -3,7 +3,9 @@
  * Evaluate notification rules: WHEN a trigger matches, IF conditions hold,
  * THEN send on the chosen channels, with cooldown, dedup and quiet hours.
  */
+import { signalsOf } from '../autopilot/ast'
 import { evaluateCondition } from '../autopilot/evaluator'
+import { podSlotsIn } from '../autopilot/signals'
 import type { CompareOp, DayOfWeek } from '../autopilot/types'
 import type { EvalContext } from '../autopilot/expressions'
 import { SustainTracker } from '../autopilot/expressions'
@@ -22,7 +24,7 @@ const TIME_OF_DAY_GRACE_MIN = 2
 export interface NotifyEngineDeps {
   now: () => number
   clock: () => { nowMinutes: number, dayOfWeek: DayOfWeek, dateKey: string }
-  signals: () => Record<string, number | undefined>
+  signals: (podSlots: number[]) => Record<string, number | undefined>
   snapshot: () => EventSnapshot
   loadRules: () => NotificationRule[]
   loadChannels: () => NotificationChannel[]
@@ -96,7 +98,7 @@ export class NotifyEngine {
   async testRule(rule: NotificationRule): Promise<{ title: string, message: string, results: Array<{ channelId: number, name: string, ok: boolean, error?: string }> }> {
     const now = this.d.now()
     const clock = this.d.clock()
-    const signals = this.d.signals()
+    const signals = this.d.signals(podSlotsIn(signalsOf({ ...rule, actions: [] })))
     const snap = this.d.snapshot()
     const ctx = this.templateCtx(rule, signals, snap, clock, undefined)
     const title = renderTemplate(rule.titleTemplate, ctx)
@@ -125,9 +127,16 @@ export class NotifyEngine {
   private async evaluate(): Promise<boolean> {
     const rules = this.d.loadRules()
     this.syncRuntime(rules)
+    if (rules.length === 0) {
+      // There is nothing to evaluate. In particular, don't query analysis
+      // history on every HAL packet of a freshly installed unit.
+      this.prev = null
+      return false
+    }
     const now = this.d.now()
     const clock = this.d.clock()
-    const signals = this.d.signals()
+    const slots = podSlotsIn(rules.flatMap(rule => signalsOf({ ...rule, actions: [] })))
+    const signals = this.d.signals(slots)
     this.recordWindows(signals, now)
     const snap = this.d.snapshot()
     const fired = edges(this.prev, snap)

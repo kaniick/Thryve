@@ -436,7 +436,6 @@ const REMINDERS = [
   { key: 'harvestReminderDays', kind: 'reminder_harvest', label: 'Harvest', max: 120, fallback: 35 },
 ] as const
 
-const DAY_MS = 86_400_000
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`
 
 /** Where a one-shot reminder stands in the current cycle. */
@@ -446,11 +445,6 @@ function reminderHint(days: number, savedDays: number, issued: boolean, day: num
   if (day === null) return undefined
   if (day >= days) return 'Due now'
   return `In ${plural(days - day, 'day')}`
-}
-
-/** Next day a recurring nutrient reminder fires, from the cycle start. */
-function nextNutrients(startedAt: string, day: number, every: number): Date {
-  return new Date(new Date(startedAt).getTime() + (Math.floor(day / every) + 1) * every * DAY_MS)
 }
 
 function Reminders({ d, s, grow, onChange }: {
@@ -467,11 +461,7 @@ function Reminders({ d, s, grow, onChange }: {
   const span = Math.max(5, Math.ceil(Math.max(day ?? 0, ...rows.map(r => r.days)) * 8 / 7 / 5) * 5)
   const at = (n: number) => `${Math.min(100, (n / span) * 100)}%`
   const every = val('nutrientReminderDays', 7)
-  const nutrientSub = every === 0
-    ? 'Off'
-    : cycle && day !== null
-      ? `Recurring · next ${nextNutrients(cycle.startedAt, day, every).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}`
-      : 'Recurring'
+  const nutrientSub = every === 0 ? 'Calendar off · trusted EC can still suggest feeding' : 'After your last logged feed or refresh. See Care for the next date.'
   return (
     <Section id="reminders" title="Grow reminders" sub="Days after a cycle starts. 0 turns a reminder off.">
       {day !== null && (

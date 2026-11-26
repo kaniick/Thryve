@@ -10,7 +10,9 @@
  */
 import type { Reading, SensorId } from '../hardware/contract'
 import type { HalSnapshot } from '../hardware/types'
-import { findPlant } from '../plants/catalog'
+import { systemFor, toDisplay } from '../lib/units'
+import { type Catalog, findPlant, plantFacts } from '../plants/catalog'
+import { catalogFor } from '../plants/custom'
 import type { Pod, Store, TankActionKind } from '../store/types'
 import { CITE, type Citation, type CropGroup, EC_TARGETS, FRUITING_FOR_FAST_REFRESH, REFRESH_DAYS, REFRESH_FRUITING_DAYS, SPROUT_DOSE_DAYS, TANK_MIN_PCT, TOP_OFF_DAYS } from './knowledge'
 
@@ -72,9 +74,10 @@ export function trusted(snap: HalSnapshot, id: SensorId, now: Date): { reading: 
   if (!snap.online) return { reading: null, why: `${label} unknown while the hardware daemon is offline` }
   if (!snap.system?.caps.sensors.includes(id) && !r) return { reading: null, why: id === 'water_level_pct' ? 'no tank level sensor' : `no ${label} probe` }
   if (!r) return { reading: null, why: `${label} not reporting` }
+  if (!Number.isFinite(r.value) || (id === 'water_level_pct' && (r.value < 0 || r.value > 100))) return { reading: null, why: `${label} reading invalid` }
   if (r.quality === 'suspect') return { reading: null, why: `${label} reading suspect` }
   const age = now.getTime() - Date.parse(r.ts)
-  if (r.quality === 'stale' || age > READING_MAX_AGE_MS) return { reading: null, why: `${label} reading stale` }
+  if (r.quality === 'stale' || !Number.isFinite(age) || age > READING_MAX_AGE_MS) return { reading: null, why: `${label} reading stale` }
   return { reading: r, why: null }
 }
 
@@ -150,7 +153,7 @@ function settle(c: Chore, done: { at: number, kind: TankActionKind } | null, now
   return { ...c, state: 'ok', dueAt: null, reason: `${c.reason.split(':')[0]}, but a ${DONE_LABEL[done.kind]} was logged ${Math.max(1, Math.round(ago / 60_000))} min ago: waiting for the reading to settle.` }
 }
 
-function topOff(store: Store, snap: HalSnapshot, now: Date, planted: Pod[]): Chore {
+function topOff(store: Store, snap: HalSnapshot, now: Date, planted: Pod[], forecast = true): Chore {
   const kinds: TankActionKind[] = ['top_off', 'refresh']
   const done = lastDone(store, kinds)
   const c = { id: 'top_off' as const, title: TITLE.top_off, lastDoneAt: done ? iso(done.at) : null, doneKind: 'top_off' as const }
@@ -159,10 +162,18 @@ function topOff(store: Store, snap: HalSnapshot, now: Date, planted: Pod[]): Cho
     return onCalendar({ ...c, citations: [CITE.tankCadence] }, { every: TOP_OFF_DAYS, from: anchor(store, kinds, planted), now, why: `Calendar guess, ${why}`, rule: `Gardyn tops off every ${TOP_OFF_DAYS} d.`, none: 'nothing logged or planted to count from.' })
   }
   const level = reading.value
-  const drop = tankDropPerDay(store, now)
+  const drop = forecast ? tankDropPerDay(store, now) : null
   const falling = drop ? `, falling ${drop}% a day` : ''
   const base = { ...c, basis: 'reading' as const, readings: [asReading('water_level_pct', reading)], citations: [CITE.tankHalfFull] }
-  if (level < TANK_MIN_PCT) return settle({ ...base, state: 'due', dueAt: now.toISOString(), reason: `Tank at ${Math.round(level)}%${falling}: below half, so top it off. Keep it at least half full.` }, done, now)
+  if (level < TANK_MIN_PCT) {
+    const settings = store.settings.get()
+    const capacity = settings.tankCapacityL
+    const amount = Number.isFinite(capacity) && capacity > 0
+      ? toDisplay(round1(capacity * (100 - level) / 100), 'L', systemFor(settings.temperatureUnit))
+      : null
+    const action = amount ? `add about ${amount.value} ${amount.unit} of water, stopping at the full line.` : 'top it off to the full line.'
+    return settle({ ...base, state: 'due', dueAt: now.toISOString(), reason: `Tank at ${Math.round(level)}%${falling}: below half, so ${action} Keep it at least half full.` }, done, now)
+  }
   const toHalf = drop ? (level - TANK_MIN_PCT) / drop : null
   if (toHalf !== null && toHalf <= SOON_DAYS) return { ...base, state: 'soon', dueAt: iso(now.getTime() + toHalf * DAY_MS), reason: `Tank at ${Math.round(level)}%${falling}: below half in about ${round1(toHalf)} d.` }
   return { ...base, state: 'ok', dueAt: toHalf === null ? null : iso(now.getTime() + toHalf * DAY_MS), reason: `Tank at ${Math.round(level)}%${falling}${toHalf === null ? '' : `: half full in about ${Math.round(toHalf)} d`}.` }
@@ -175,7 +186,9 @@ function feed(store: Store, snap: HalSnapshot, now: Date, planted: Pod[]): Chore
   const { group } = cropGroup(store, planted)
   const { reading, why } = trusted(snap, 'ec', now)
   if (!reading) {
-    const every = done ? store.settings.get().nutrientReminderDays || TOP_OFF_DAYS : SPROUT_DOSE_DAYS
+    const interval = store.settings.get().nutrientReminderDays
+    if (interval === 0) return { ...c, state: 'ok', basis: 'timeline', dueAt: null, readings: [], reason: `Calendar feed reminders are off (${why}).`, citations: [CITE.plantFood, CITE.dosesByProduct] }
+    const every = done ? interval : SPROUT_DOSE_DAYS
     const rule = done
       ? `Gardyn adds plant food with the weekly top-off: 1/2 tsp per gallon of Gardyn Plant Food in early growth, 1 tsp once mature. Other products dose differently.`
       : `The first feed, Gardyn's sprout dose of 1/4 tsp Gardyn Plant Food per gallon, goes in once most yCubes have sprouted, usually within ${SPROUT_DOSE_DAYS} d.`
@@ -215,39 +228,82 @@ function trimRoots(store: Store, now: Date, planted: Pod[]): Chore {
   return onCalendar(c, { every, from: anchor(store, ['trim_roots'], planted), now, why: 'Calendar guess, as no sensor sees the roots', rule: `Check them every ${every} d (Settings → Grow reminders) and trim any reaching the pump.`, none: 'nothing logged or planted to count from.' })
 }
 
+const slotList = (slots: number[]) => `pod${slots.length === 1 ? '' : 's'} ${slots.length > 1 ? `${slots.slice(0, -1).join(', ')} and ${slots.at(-1)}` : slots[0]}`
+
+/**
+ * How many sprouts to keep in each pod, from Gardyn's thinning article by
+ * plant: "thin pods 2 and 5 to 1 sprout and pod 7 to 3". A pod whose plant the
+ * catalog doesn't know is left to its plant's count.
+ */
+export function thinCounts(pods: Pod[], catalog: Catalog): string {
+  const by = new Map<number | null, number[]>()
+  for (const p of [...pods].sort((a, b) => a.slot - b.slot)) {
+    const plant = p.plant ? catalog.find(p.plant) : undefined
+    const keep = plant ? plantFacts(plant).thinTo : null
+    if (keep === 'all') continue
+    by.set(keep, [...(by.get(keep) ?? []), p.slot])
+  }
+  const known = [...by].filter((e): e is [number, number[]] => e[0] !== null).sort((a, b) => a[0] - b[0])
+  const parts = known.map(([keep, slots], i) => `${slotList(slots)} to ${keep}${i === 0 ? ` sprout${keep === 1 ? '' : 's'}` : ''}`)
+  const unknown = by.get(null)
+  if (unknown) parts.push(`${slotList(unknown)} to its plant's count`)
+  return parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts.at(-1)}` : parts[0] ?? ''
+}
+
 function thin(store: Store, now: Date, planted: Pod[]): Chore {
   const done = lastDone(store, ['thin'])
-  const c = { id: 'thin' as const, title: TITLE.thin, lastDoneAt: done ? iso(done.at) : null, doneKind: 'thin' as const, citations: [CITE.plantFood] }
+  const c = { id: 'thin' as const, title: TITLE.thin, lastDoneAt: done ? iso(done.at) : null, doneKind: 'thin' as const, citations: [CITE.plantFood, CITE.thinning] }
   const t = now.getTime()
+  const catalog = catalogFor(store)
+  // Pods Gardyn says not to thin (arugula, chives…) never make it due.
   const young = planted.filter((p) => {
     const at = p.plantedAt ? Date.parse(p.plantedAt) : Number.NaN
-    return (p.status === 'seeded' || p.status === 'growing') && !Number.isNaN(at) && t - at <= THIN_WINDOW_DAYS * DAY_MS && (!done || done.at < at)
+    const plant = p.plant ? catalog.find(p.plant) : undefined
+    return (p.status === 'seeded' || p.status === 'growing') && !Number.isNaN(at) && t - at <= THIN_WINDOW_DAYS * DAY_MS && (!done || done.at < at) && (!plant || plantFacts(plant).thinTo !== 'all')
   })
   if (!young.length) return { ...c, state: 'ok', basis: 'timeline', dueAt: null, readings: [], reason: done ? 'Thinned since the youngest pods were planted.' : `No pods planted in the last ${THIN_WINDOW_DAYS} d to thin.` }
+  const counts = thinCounts(young, catalog)
   // The camera: the primary analyser's latest leaf cover for each young pod, since it was planted.
   const analyzer = store.settings.get().primaryAnalyzer
-  const covers = young.flatMap((p) => {
-    const last = store.analyses.series({ analyzer, slot: p.slot, metric: 'green_fraction', limit: 1 }).at(-1)
-    const fresh = last && Date.parse(last.ts) > Date.parse(p.plantedAt ?? '') && t - Date.parse(last.ts) <= PHOTO_MAX_AGE_MS
-    return fresh ? [last.value] : []
-  })
+  const version = store.analyses.latestVersion(analyzer)
+  const covers = version === null
+    ? []
+    : young.flatMap((p) => {
+        const last = store.analyses.series({ analyzer, version, slot: p.slot, metric: 'green_fraction', limit: 1 }).at(-1)
+        const fresh = last && Date.parse(last.ts) > Date.parse(p.plantedAt ?? '') && t - Date.parse(last.ts) <= PHOTO_MAX_AGE_MS
+        return fresh ? [last.value] : []
+      })
   if (covers.length && covers.length * 2 >= young.length) {
     const up = covers.filter(v => v >= SPROUT_COVER).length
     const of = `${up} of ${covers.length} young pods`
     const base = { ...c, basis: 'reading' as const, dueAt: null, readings: [] }
-    if (up * 4 >= covers.length * 3) return { ...base, state: 'due', dueAt: now.toISOString(), reason: `${of} show leaves on camera, so most have sprouted: thin each pod to its strongest sprout.` }
+    if (up * 4 >= covers.length * 3) return { ...base, state: 'due', dueAt: now.toISOString(), reason: `${of} show leaves on camera, so most have sprouted: thin ${counts}.` }
     if (up > 0) return { ...base, state: 'soon', reason: `${of} show leaves on camera; thin once most have sprouted.` }
     return { ...base, state: 'ok', reason: `No leaves on camera yet in ${covers.length} young pods.` }
   }
   const every = store.settings.get().thinningReminderDays || SPROUT_DOSE_DAYS
   const oldest = Math.min(...young.map(p => Date.parse(p.plantedAt ?? '')))
-  return onCalendar(c, { every, from: { at: oldest, what: 'the oldest young pod was planted' }, now, why: `Calendar guess, ${covers.length ? 'too few recent photos of the young pods' : 'no recent photos of the young pods'}`, rule: `yCubes usually sprout within ${SPROUT_DOSE_DAYS} d; thin about ${every} d after planting.`, none: '' })
+  return onCalendar(c, { every, from: { at: oldest, what: 'the oldest young pod was planted' }, now, why: `Calendar guess, ${covers.length ? 'too few recent photos of the young pods' : 'no recent photos of the young pods'}`, rule: `yCubes usually sprout within ${SPROUT_DOSE_DAYS} d; thin about ${every} d after planting: ${counts}.`, none: '' })
 }
 
 /** Every chore for the unit as it is now, in a fixed order. */
-export function chores(store: Store, snap: HalSnapshot, now: Date): Chore[] {
+export function chores(store: Store, snap: HalSnapshot, now: Date, mode: 'all' | 'alerts' = 'all'): Chore[] {
   const planted = store.pods.list().filter(p => p.status !== 'empty')
+  if (mode === 'alerts') return choresForAlerts(store, snap, now, planted)
   const all = [thin(store, now, planted), trimRoots(store, now, planted), topOff(store, snap, now, planted), refresh(store, now, planted), feed(store, snap, now, planted), clean(store, now, planted)]
   // An empty tower needs no feeding or topping off; cleaning between grows still counts.
   return planted.length ? all : all.map(c => (c.id === 'clean' ? c : { ...c, state: 'ok', dueAt: null, reason: 'Nothing planted.' }))
 }
+
+/** Background alerts need actionable readings or a due Feed reminder, never forecasts. */
+function choresForAlerts(store: Store, snap: HalSnapshot, now: Date, planted: Pod[]): Chore[] {
+  if (!planted.length) return []
+  const due = [thin(store, now, planted)]
+  const level = trusted(snap, 'water_level_pct', now).reading
+  if (level && level.value < TANK_MIN_PCT) due.push(topOff(store, snap, now, planted, false))
+  due.push(feed(store, snap, now, planted))
+  return due.filter(raisesChoreAlert)
+}
+
+/** Feed is the sole calendar chore that also owns a reminder alert. */
+export const raisesChoreAlert = (c: Pick<Chore, 'id' | 'state' | 'basis'>) => c.state === 'due' && (c.basis === 'reading' || c.id === 'feed')

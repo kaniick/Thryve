@@ -19,18 +19,20 @@ vi.mock('@/src/components/Grow/TowerView', () => ({
 // The hooks answer from the real planner, so the page renders real layouts and sowing dates.
 const { state, calls, invalidate } = vi.hoisted(() => ({
   state: {
-    pods: [] as { slot: number, plant: string | null, status: string }[],
+    pods: [] as { slot: number, plant: string | null, status: string, updatedAt?: string }[],
     plans: [] as unknown[],
     applied: null as null | { seeded: number[], scheduled: { slot: number, plantName: string, sowOn: string }[] },
     custom: [] as unknown[],
+    seenEmpty: [] as { slot: number, confidence: number, ts: string }[],
     /** The layout query has not answered yet; `loading` holds back every query. */
     layoutPending: false,
     podsPending: false,
     loading: false,
   },
-  calls: { catalog: vi.fn(), layout: vi.fn(), save: vi.fn(), apply: vi.fn(), remove: vi.fn(), addPlant: vi.fn(), updatePlant: vi.fn(), removePlant: vi.fn() },
+  calls: { catalog: vi.fn(), layout: vi.fn(), save: vi.fn(), apply: vi.fn(), remove: vi.fn(), addPlant: vi.fn(), updatePlant: vi.fn(), removePlant: vi.fn(), swapPods: vi.fn() },
   invalidate: vi.fn(),
 }))
+const POD_REVISION = '2026-11-24T08:00:00.000Z'
 
 vi.mock('@/src/utils/trpc', async () => {
   const { searchPlants } = await import('@/src/plants/catalog')
@@ -39,23 +41,24 @@ vi.mock('@/src/utils/trpc', async () => {
   type Model = 'home' | 'studio'
   type PlanOverrides = Parameters<typeof planLayout>[0]['overrides']
   const mutation = (fn: (i: unknown) => void, data?: () => unknown) => ({
-    useMutation: (o?: { onSuccess?: () => void }) => ({
+    useMutation: (o?: { onSuccess?: (rows: unknown, input: unknown) => void }) => ({
       isPending: false,
+      reset: () => {},
       data: data?.(),
       mutate: (input: unknown) => {
         fn(input)
-        o?.onSuccess?.()
+        o?.onSuccess?.(data?.(), input)
       },
     }),
   })
   return {
     trpc: {
-      useUtils: () => ({ planner: { invalidate, plans: { invalidate } }, grow: { invalidate } }),
+      useUtils: () => ({ planner: { invalidate, plans: { invalidate } }, grow: { invalidate }, vision: { seenEmpty: { invalidate } } }),
       planner: {
         zones: { useQuery: ({ model }: { model: Model }) => ({ data: state.loading ? undefined : { ...MODELS[model], slots: slots(model), counts: zoneCounts(model) } }) },
         catalog: { useQuery: (i: { q?: string, category?: string }) => {
           calls.catalog(i)
-          return { data: { plants: [...searchPlants(i as Parameters<typeof searchPlants>[0]).slice(0, 12), ...state.custom] } }
+          return { data: { plants: [...searchPlants(i as Parameters<typeof searchPlants>[0]), ...state.custom] } }
         } },
         layout: { useQuery: (i: { model: Model, plants: { plantId: string, count: number }[], overrides?: PlanOverrides }) => {
           calls.layout(i)
@@ -72,7 +75,8 @@ vi.mock('@/src/utils/trpc', async () => {
         updatePlant: mutation(calls.updatePlant),
         removePlant: mutation(calls.removePlant),
       },
-      grow: { pods: { useQuery: () => ({ data: state.loading || state.podsPending ? undefined : state.pods }) } },
+      grow: { pods: { useQuery: () => ({ data: state.loading || state.podsPending ? undefined : state.pods.map(p => ({ updatedAt: POD_REVISION, ...p })) }) }, swapPods: mutation(calls.swapPods) },
+      vision: { seenEmpty: { useQuery: () => ({ data: state.seenEmpty }) } },
     },
   }
 })
@@ -82,6 +86,7 @@ beforeEach(() => {
   state.plans = []
   state.applied = null
   state.custom = []
+  state.seenEmpty = []
   state.layoutPending = false
   state.loading = false
   state.podsPending = false
@@ -101,6 +106,78 @@ const flat = () => fireEvent.click(screen.getByRole('tab', { name: '2D' }))
 const towerPods = () => tower.props?.pods as PodState[]
 
 describe('PlanPage', () => {
+  it('shows the empty-camera hint without changing the inventory, and requires confirmation to record a move', () => {
+    const start = { slot: 1, plant: 'Basil', status: 'growing' }
+    state.pods = [start, { slot: 2, plant: null, status: 'empty' }, { slot: 3, plant: 'Rosemary', status: 'seeded' }]
+    state.seenEmpty = [1, 3].map(slot => ({ slot, confidence: 0.92, ts: '2026-11-25T00:00:00Z' }))
+    render(<PlanPage />)
+    expect(screen.getByRole('status', { name: 'Camera review' }).textContent).toContain('Camera sees pod 1 as empty.')
+    expect(screen.getByRole('link', { name: 'Review in Analysis' }).getAttribute('href')).toBe('/analysis?tab=teach')
+    expect(calls.swapPods).not.toHaveBeenCalled()
+    fireEvent.change(screen.getByLabelText('From planted pod'), { target: { value: '1' } })
+    fireEvent.change(screen.getByLabelText('To pod'), { target: { value: '2' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Review move' }))
+    const review = screen.getByRole('dialog', { name: 'Record pod move?' })
+    expect(review.textContent).toContain('Move the yCubes on the tower first')
+    expect(calls.swapPods).not.toHaveBeenCalled()
+    fireEvent.click(within(review).getByRole('button', { name: 'Record move' }))
+    expect(calls.swapPods).toHaveBeenCalledExactlyOnceWith({ a: 1, b: 2, expected: { aUpdatedAt: POD_REVISION, bUpdatedAt: POD_REVISION } })
+  })
+
+  it('chooses physical moves on the grid without dragging or offering draft-reserved slots', () => {
+    state.pods = slots('home').map(({ slot }) => ({ slot, plant: slot === 1 ? 'Mint' : null, status: slot === 1 ? 'growing' : 'empty' }))
+    render(<PlanPage />)
+    flat()
+    search('basil')
+    add('Basil')
+    const grid = within(screen.getByTestId('plan-grid'))
+    const reserved = grid.getByRole('button', { name: /, Basil$/ })
+    const plannedSlot = Number(reserved.getAttribute('data-slot'))
+    const target = plannedSlot === 2 ? 3 : 2
+    fireEvent.keyDown(grid.getByRole('button', { name: 'Pod 1, Mint' }), { key: 'Enter' })
+    expect((screen.getByLabelText('From planted pod') as HTMLSelectElement).value).toBe('1')
+    fireEvent.click(screen.getByRole('button', { name: 'Choose destination on layout' }))
+    const picking = within(screen.getByTestId('plan-grid'))
+    const blocked = picking.getByRole('button', { name: /, Basil$/ })
+    expect(blocked.getAttribute('aria-disabled')).toBe('true')
+    expect(blocked.getAttribute('draggable')).toBe('false')
+    fireEvent.click(blocked)
+    expect((screen.getByLabelText('To pod') as HTMLSelectElement).value).toBe('0')
+    fireEvent.keyDown(picking.getByRole('button', { name: `Pod ${target}` }), { key: ' ' })
+    expect((screen.getByLabelText('To pod') as HTMLSelectElement).value).toBe(String(target))
+    fireEvent.click(screen.getByRole('button', { name: 'Review move' }))
+    expect(calls.swapPods).not.toHaveBeenCalled()
+    expect(screen.getByRole('dialog', { name: 'Record pod move?' }).textContent).toContain(`Pod 1 · Mint → Pod ${target} · Empty`)
+  })
+
+  it('picks from the 3D layout and disables an open review after a pod changes', () => {
+    state.pods = [{ slot: 1, plant: 'Basil', status: 'growing' }, { slot: 2, plant: null, status: 'empty' }]
+    const { rerender } = render(<PlanPage />)
+    const pick = (slot: number) => act(() => (tower.props?.onSelect as (slot: number) => void)(slot))
+    pick(1)
+    expect(screen.getByRole('link', { name: 'Review move for pod 1' }).getAttribute('href')).toBe('#planted-pods')
+    fireEvent.click(screen.getByRole('button', { name: 'Choose destination on layout' }))
+    pick(2)
+    fireEvent.click(screen.getByRole('button', { name: 'Review move' }))
+    state.pods[1] = { ...state.pods[1], updatedAt: '2026-11-24T08:15:00.000Z' }
+    rerender(<PlanPage />)
+    const review = within(screen.getByRole('dialog', { name: 'Record pod move?' }))
+    expect((review.getByRole('button', { name: 'Record move' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(review.getByText(/records changed/)).toBeTruthy()
+    expect(calls.swapPods).not.toHaveBeenCalled()
+  })
+
+  it('does not commit a reviewed swap that was cancelled', () => {
+    state.pods = [{ slot: 1, plant: 'Basil', status: 'growing' }, { slot: 2, plant: 'Rosemary', status: 'growing' }]
+    render(<PlanPage />)
+    fireEvent.change(screen.getByLabelText('From planted pod'), { target: { value: '1' } })
+    fireEvent.change(screen.getByLabelText('To pod'), { target: { value: '2' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Review swap' }))
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Record pod swap?' })).getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('dialog', { name: 'Record pod swap?' })).toBeNull()
+    expect(calls.swapPods).not.toHaveBeenCalled()
+  })
+
   it('shows the tower’s zones, the catalog, and how to start', () => {
     render(<PlanPage />)
     expect(screen.getByText('High 12')).toBeTruthy()
@@ -118,14 +195,26 @@ describe('PlanPage', () => {
     expect(screen.getByText('Low 2')).toBeTruthy()
   })
 
-  it('filters the catalog by search and category', () => {
+  it('filters the catalog locally by search and category', () => {
     render(<PlanPage />)
     search('basil')
-    expect(calls.catalog).toHaveBeenLastCalledWith({ q: 'basil', category: undefined })
-    fireEvent.click(screen.getByRole('button', { name: 'Herbs' }))
-    expect(calls.catalog).toHaveBeenLastCalledWith({ q: 'basil', category: 'herb' })
+    expect(screen.getByRole('button', { name: 'Add Basil' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Greens' }))
+    expect(screen.queryByRole('button', { name: 'Add Basil' })).toBeNull()
+    expect(screen.getByText('No plants match those filters.')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'All' }))
-    expect(calls.catalog).toHaveBeenLastCalledWith({ q: 'basil', category: undefined })
+    expect(screen.getByRole('button', { name: 'Add Basil' })).toBeTruthy()
+    expect(calls.catalog.mock.calls.every(([input]) => Object.keys(input).length === 0)).toBe(true)
+  })
+
+  it('opens the plant from a catalog link without discarding the draft when it changes', () => {
+    const view = render(<PlanPage catalogPlant="Rosemary" />)
+    expect(screen.getByRole('button', { name: 'Add Rosemary' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Add Basil' })).toBeNull()
+    add('Rosemary')
+    view.rerender(<PlanPage catalogPlant="Basil" />)
+    expect(screen.getByRole('button', { name: 'Add Basil' })).toBeTruthy()
+    expect(calls.layout.mock.lastCall?.[0].plants).toEqual([{ plantId: 'rosemary', count: 1 }])
   })
 
   it('lays out picks by zone, staggers sowing, and saves the plan', () => {
@@ -157,7 +246,7 @@ describe('PlanPage', () => {
     render(<PlanPage />)
     flat()
     expect(screen.getByText(/0 planned · 29 empty/)).toBeTruthy()
-    expect(screen.getByText('Mint')).toBeTruthy()
+    expect(within(screen.getByTestId('plan-grid')).getByText('Mint')).toBeTruthy()
     search('jalapeño')
     for (let i = 0; i < 14; i++) add('Jalapeño')
     expect(screen.getByText(/Outlined pods sit one zone lower than ideal/)).toBeTruthy()
@@ -423,6 +512,19 @@ describe('PlanPage', () => {
     flat()
     expect(screen.getByText(/Mint is in medium light/)).toBeTruthy()
     expect(screen.getByText(/Outlined pods sit one zone lower than ideal/)).toBeTruthy()
+  })
+
+  it('gives the tower sourced thinning guidance for planned and planted pods, not unknown plants', () => {
+    state.pods = [{ slot: 1, plant: 'Arugula', status: 'growing' }, { slot: 2, plant: 'Something I grew', status: 'growing' }]
+    render(<PlanPage />)
+    search('basil')
+    add('Basil')
+    const thinning = tower.props?.thinning as (slot: number) => string | undefined
+    const planned = towerPods().find(p => p.planned && p.plant === 'Basil')
+    expect(planned).toBeDefined()
+    expect(thinning(planned?.slot ?? 0)).toBe('Keep 3 sprouts')
+    expect(thinning(1)).toBe('Don’t thin')
+    expect(thinning(2)).toBeUndefined()
   })
 
   it('hands the tower each planned plant by name, to draw grown in its slot, beside the planted ones', () => {

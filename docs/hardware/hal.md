@@ -375,6 +375,22 @@ On any other port it could be either one, so it stays unnamed and the alert says
 `one camera on the bus and no pins: pin it with --camera-rules`. If your unit is
 wired differently, a lone camera can take the wrong name, so run the marker check.
 
+## Restart camera
+
+The Gardyn's cameras are USB UVC modules (`c499:0ac8`) on a `1a40:0801` hub,
+not a second Pi. **Cameras → Restart camera** in the web UI runs
+`/usr/local/sbin/thryve-camera-reset` (installed by `scripts/install`) as root
+and tries, in order: a `USBDEVFS_RESET` ioctl, `authorized` 0/1, hub-port
+power if sysfs exposes it, then a rebind of that camera's `uvcvideo`
+interface only. It never rebinds `dwc_otg`/`dwc2` and never reboots: those
+were tried for a hub stuck in SE1 at boot and either did nothing or oopsed
+the kernel. A missing hub is reported rather than recovered here; that stays
+[USB recovery](#usb-recovery)'s job.
+
+On a unit updated from 2.2.3 or earlier, run `sudo /opt/thryve/scripts/install`
+once so the helper and its sudoers rule are in place. To pick up
+`WatchdogSec=20`, also rerun `sudo /opt/thryve/scripts/install-hal`.
+
 ## State file
 
 `<state_dir>/sensors.json` holds the sensors added from the app (above).
@@ -474,18 +490,20 @@ that dies part way still restarts hald on the rerun.
 
 ## Watchdog
 
-`hald.service` is `Type=notify` with `WatchdogSec=10`. hald sends `READY=1` once
+`hald.service` is `Type=notify` with `WatchdogSec=20`. hald sends `READY=1` once
 the engine has booted (the light restored, the fader running), and `WATCHDOG=1`
 from the engine loop itself, once per tick, so pings stop when the loop hangs.
-There's no side thread to keep pinging a stuck loop. 10 s without one and systemd
+There's no side thread to keep pinging a stuck loop. 20 s without one and systemd
 kills hald (`SIGABRT`) and starts it again 3 s later, as for a crash.
 
 The loop ticks once a second, and a tick takes longer on a telemetry round, every
 10 s. The stock sensors take well under a second (the ultrasonic median is about
 0.3 s, at most 0.6 s), but an EZO probe blocks 0.9 s per read, 1.8 s when it asks
-for more time, so three of them make a round of about 7 s. `WatchdogSec=3` would
-kill a unit with EZO probes on every round; 10 s leaves room for them and still
-catches a hang. The watchdog arms at `READY=1`, so a slow start isn't counted
+for more time, so three of them make a round of about 7 s. The tank ranger's worst case at
+hal.toml's sampling maxima (15 pings, 250 ms gap and timeout) is about 11 s on
+its own, which is why the watchdog is 20 s rather than 10 s. `WatchdogSec=3`
+would kill a unit with EZO probes on every round; 20 s leaves room for them and
+a slow ranger round, and still catches a hang. The watchdog arms at `READY=1`, so a slow start isn't counted
 against it. `TimeoutStartSec=120` covers the 30 s hardware wait and a slow Pi Zero
 start.
 

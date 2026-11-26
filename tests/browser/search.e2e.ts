@@ -19,6 +19,14 @@ test('⌘K search opens from anywhere and jumps to a setting or a plant', async 
   await expect(page.getByRole('listbox').getByRole('option').first()).toContainText('Grow › Pod 12')
   await page.keyboard.press('Enter')
   await expect(page).toHaveURL(/\/grow\?pod=12$/)
+
+  await page.getByRole('button', { name: 'Search' }).click()
+  await box.fill('rosemary')
+  await page.getByRole('option').filter({ hasText: 'Plan › Plant catalog' }).filter({ hasText: 'Rosemary' }).click()
+  await expect(page).toHaveURL(/\/plan\?plant=rosemary#plant-catalog$/)
+  await expect(page.getByRole('textbox', { name: 'Search plants' })).toHaveValue('Rosemary')
+  await expect(page.getByRole('button', { name: 'Add Rosemary' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Add Basil', exact: true })).toHaveCount(0)
 })
 
 test('⌘K search finds the bundled docs offline and opens a guide in a new tab', async ({ page, context }) => {

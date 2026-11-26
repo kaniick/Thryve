@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
+import { FOLLOW_ALERT, noteFollow } from '../../care/follow'
+import { SimHal } from '../../hardware/sim'
+import { MemoryStore } from '../../store/memory'
 import { NotifyEngine } from '../engine'
+import { eventSnapshot } from '../instance'
 import type { EventSnapshot } from '../events'
 import type { NotificationChannel, NotificationRule } from '../types'
 import type { NotifyRunOutcome } from '../types'
@@ -44,11 +48,13 @@ function harness(opts?: { rules?: NotificationRule[], channels?: NotificationCha
     posts.push({ url, body: String(init?.body ?? '') })
     return new Response(JSON.stringify({ status: 1, request: 'req' }), { status: 200 })
   })
+  const readSignals = vi.fn<(slots: number[]) => Record<string, number | undefined>>(() => signals)
+  const readSnapshot = vi.fn(() => snap)
   const engine = new NotifyEngine({
     now: () => Date.parse('2026-11-16T20:00:00Z'),
     clock: () => ({ nowMinutes: 12 * 60, dayOfWeek: 'monday', dateKey: '2026-11-16' }),
-    signals: () => signals,
-    snapshot: () => snap,
+    signals: readSignals,
+    snapshot: readSnapshot,
     loadRules: () => opts?.rules ?? [rule()],
     loadChannels: () => opts?.channels ?? [channel],
     recordRun: (ruleId, outcome, detail) => { runs.push({ ruleId, outcome, detail }) },
@@ -58,13 +64,39 @@ function harness(opts?: { rules?: NotificationRule[], channels?: NotificationCha
     fetch: fetchImpl,
   })
   return {
-    engine, runs, posts, fetchImpl,
+    engine, runs, posts, fetchImpl, readSignals, readSnapshot,
     setSignals(s: Record<string, number | undefined>) { signals = s },
     setSnap(s: EventSnapshot) { snap = s },
   }
 }
 
 describe('notification engine', () => {
+  it('skips analysis and snapshots without rules, and starts with a quiet baseline once configured', async () => {
+    const rules: NotificationRule[] = []
+    const h = harness({ rules })
+    await h.engine.tick()
+    expect(h.readSignals).not.toHaveBeenCalled()
+    expect(h.readSnapshot).not.toHaveBeenCalled()
+    rules.push(rule({ trigger: { kind: 'event', event: 'light_on' } }))
+    h.setSnap(emptySnap({ lightOn: true }))
+    await h.engine.tick()
+    expect(h.readSignals).toHaveBeenCalledWith([])
+    expect(h.posts).toHaveLength(0)
+  })
+
+  it('reads just the unique pod slots in thresholds and nested window conditions', async () => {
+    const r = rule({
+      trigger: { kind: 'threshold', signal: 'pod.5.green', op: '>', value: 0.25 },
+      conditions: { kind: 'not', condition: { kind: 'compare', op: '>', left: { kind: 'window', signal: 'pod.8.trend', fn: 'avg', lastMin: 30 }, right: { kind: 'signal', signal: 'pod.5.trend' } } },
+    })
+    const h = harness({ rules: [r] })
+    await h.engine.tick()
+    expect(h.readSignals).toHaveBeenCalledExactlyOnceWith([5, 8])
+    h.readSignals.mockClear()
+    await h.engine.testRule(r)
+    expect(h.readSignals).toHaveBeenCalledExactlyOnceWith([5, 8])
+  })
+
   it('sends once when a threshold is crossed, then dedups until it clears', async () => {
     const h = harness()
     await h.engine.tick() // first sample, rising edge
@@ -103,5 +135,24 @@ describe('notification engine', () => {
     expect(out.message).toBe('Tank is at 40%.')
     expect(out.results[0]?.ok).toBe(true)
     expect(h.posts).toHaveLength(1)
+  })
+
+  it('sends each watering move without a false resolution or duplicate notice', async () => {
+    const store = new MemoryStore(30)
+    const hal = new SimHal({ tickMs: 0 })
+    const h = harness({ rules: [
+      rule({ trigger: { kind: 'event', event: 'alert_raised', alertKind: FOLLOW_ALERT }, messageTemplate: '{{alert.detail}}', cooldownMin: 0 }),
+      rule({ id: 2, trigger: { kind: 'event', event: 'alert_cleared', alertKind: FOLLOW_ALERT }, cooldownMin: 0 }),
+    ] })
+    await h.engine.tick()
+    noteFollow(store, 'Watering moved to Seedlings', '2026-11-17T20:00:00Z')
+    h.setSnap(eventSnapshot(hal, store, null))
+    await h.engine.tick()
+    noteFollow(store, 'Watering moved to Young plants', '2026-11-23T20:00:00Z')
+    h.setSnap(eventSnapshot(hal, store, null))
+    await h.engine.tick()
+    await h.engine.tick()
+    expect(h.runs.map(r => [r.ruleId, r.outcome])).toEqual([[1, 'sent'], [1, 'sent']])
+    expect(h.posts.map(p => new URLSearchParams(p.body).get('message'))).toEqual(['Watering moved to Seedlings', 'Watering moved to Young plants'])
   })
 })

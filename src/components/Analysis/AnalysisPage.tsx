@@ -1,12 +1,11 @@
-import { Check, Download, RefreshCw, Star, TriangleAlert } from 'lucide-react'
+import { Check, Download, TriangleAlert } from 'lucide-react'
 import type { inferRouterOutputs } from '@trpc/server'
 import { useState, type ReactNode } from 'react'
 import { cn } from '@/lib/utils'
-import { TimeChart } from '@/src/components/charts/TimeChart'
 import { Button, InlineError } from '@/src/components/ds/core'
 import { Modal } from '@/src/components/ds/feedback'
 import { useToast } from '@/src/components/ds/toast'
-import { SegmentedControl, SelectValue, Toggle } from '@/src/components/ds/forms'
+import { SegmentedControl, Toggle } from '@/src/components/ds/forms'
 import { SettingRow } from '@/src/components/ds/layout'
 import { isDemo } from '@/src/demo/mode'
 import { fmtStamp } from '@/src/lib/timeAgo'
@@ -14,18 +13,18 @@ import type { AppRouter } from '@/src/server/routers/app'
 import { apiBase, trpc } from '@/src/utils/trpc'
 import type { PodRect } from '@/src/vision/greenArea'
 import { POD_STATES } from '@/src/vision/podState'
-import { podRegions, type PodRegions } from '@/src/vision/regions'
-import { AllPods } from './AllPods'
+import { cameraSlots, podRegions, type PodRegions } from '@/src/vision/regions'
 import { LabelPods } from './LabelPods'
 import { LeafCover } from './LeafCover'
+import { MethodsTab } from './MethodsTab'
 import { PodBounds } from './PodBounds'
 import { PodCard, PodHits, stateGuess, type Pod, type Reading, type Trend } from './PodCard'
+import { PodsTab, usePodStories } from './PodsTab'
+import { teachSummary, useTeachQueue } from './TeachQueue'
 
 const pct = (v: number) => `${Math.round(v * 100)}%`
 const key = (a: { analyzer: string, version: number }) => `${a.analyzer}@${a.version}`
 const listingKey = (a: Listing) => key({ analyzer: a.id, version: a.version })
-/** `0` is every pod at once. */
-const SLOTS = [{ value: 0, label: 'All pods' }, ...Array.from({ length: 30 }, (_, i) => ({ value: i + 1, label: `Pod ${i + 1}` }))]
 /** Each analyser's mark in the legend, the per-pod bars and the chart, in listing order. */
 const COLORS = ['var(--meter)', 'var(--pod-ok)', 'var(--pod-ready)', 'var(--pod-attention)']
 const colorAt = (i: number) => COLORS[i % COLORS.length] as string
@@ -36,9 +35,12 @@ type Frame = inferRouterOutputs<AppRouter>['camera']['list'][number]
 type Camera = 'upper' | 'lower'
 type Shown = Camera | 'both'
 type View = 'photo' | 'bounds'
+export type AnalysisTab = 'pods' | 'teach' | 'methods'
 
 const SHOWN = [{ value: 'both', label: 'Both' }, { value: 'upper', label: 'Upper' }, { value: 'lower', label: 'Lower' }] as const
-const VIEWS = [{ value: 'photo', label: 'Photo' }, { value: 'bounds', label: 'Pod bounds' }] as const
+const VIEWS = [{ value: 'photo', label: 'Photo' }, { value: 'towers', label: 'Towers' }] as const
+const TABS = [{ value: 'pods', label: 'Pods' }, { value: 'teach', label: 'Teach' }, { value: 'methods', label: 'Methods' }] as const
+export const isAnalysisTab = (v: unknown): v is AnalysisTab => TABS.some(t => t.value === v)
 const title = (c: Camera) => (c === 'upper' ? 'Upper' : 'Lower')
 
 function Panel({ id, className, children }: { id?: string, className?: string, children: ReactNode }) {
@@ -64,40 +66,100 @@ export function stateText(r: Pick<Result, 'value' | 'detail'>): string {
 }
 
 /**
- * Capture analysis (ADR-0019): which analysers ran, which one drives pod
- * trends, and how their outputs compare on the same pods and photos, for both
- * cameras at once.
+ * Capture analysis (ADR-0019), split by job: Pods is what the photos say
+ * about each pod, Teach is the labels and boxes that need the grower, and
+ * Methods is which analyser drives pod trends and how they compare over time.
  */
-export function AnalysisPage() {
+export function AnalysisPage({ tab: asked }: { tab?: AnalysisTab } = {}) {
   const analyzers = trpc.vision.analyzers.useQuery()
   const status = trpc.vision.status.useQuery(undefined, { refetchInterval: 5000 })
   const pods = trpc.grow.pods.useQuery()
   const trends = trpc.vision.podTrends.useQuery()
+  const [tab, setTab] = useState<AnalysisTab>(asked ?? 'pods')
   const [exporting, setExporting] = useState(false)
-  const [picked, setPicked] = useState<string | null>(null)
   const [shown, setShown] = useState<Shown>('both')
-  const [view, setView] = useState<View>('photo')
-  // The pod picked on a photo: its card stays open and the chart below follows it.
+  const [view, setView] = useState<'photo' | 'towers'>('photo')
+  // The pod picked on a photo: its card stays open and the Methods chart follows it.
   const [pinned, setPinned] = useState<number | null>(null)
   const [slot, setSlot] = useState(0)
   const latest = [useLatest('upper'), useLatest('lower')]
   const calibration = useCalibration()
+  const queue = useTeachQueue({ upper: latest[0]?.frame, lower: latest[1]?.frame }, calibration.boxes)
+  const labelStats = trpc.vision.labelStats.useQuery()
+  const told = usePodStories(latest, pods.data ?? [])
+  // A link to another tab while the page is open switches to it.
+  const [lastAsked, setLastAsked] = useState(asked)
+  if (asked !== lastAsked) {
+    setLastAsked(asked)
+    if (asked) setTab(asked)
+  }
   const st = status.data
   const list = analyzers.data ?? []
   const colorOf = (k: string) => colorAt(Math.max(0, list.findIndex(a => listingKey(a) === k)))
-  // The primary analyser until one is picked.
-  const selected = list.find(a => listingKey(a) === picked) ?? list.find(a => a.primary) ?? list[0]
+  const primary = list.find(a => a.primary) ?? list[0]
   const cameras = shown === 'both' ? latest : latest.filter(l => l.camera === shown)
   const pod = (slot: number) => pods.data?.find(p => p.slot === slot)
+  // A pod picked on a photo, in the list or on the towers pins it (again unpins it) and points the Methods chart at it.
+  const pick = (s: number) => {
+    setPinned(p => (p === s ? null : s))
+    setSlot(s)
+  }
+  const still = (l: Latest, v: 'photo' | 'bounds') => (
+    <Still
+      key={l.camera}
+      latest={l}
+      view={v}
+      analyzer={primary && listingKey(primary)}
+      empty={slot => pod(slot)?.status === 'empty'}
+      pod={pod}
+      trend={s => trends.data?.find(t => t.slot === s)}
+      analyzers={list}
+      colorOf={colorOf}
+      pinned={pinned}
+      onPick={(s) => {
+        setPinned(p => (p === s ? null : s))
+        setSlot(s)
+      }}
+      onUnpin={() => setPinned(null)}
+      boxes={calibration.boxes(l.camera)}
+      calibrated={calibration.calibrated(l.camera)}
+      onChange={v === 'bounds' && calibration.draft ? (slot, r) => calibration.move(l.camera, slot, r) : undefined}
+      onRemove={v === 'bounds' && calibration.draft ? slot => calibration.remove(l.camera, slot) : undefined}
+    />
+  )
+  const stills = (v: 'photo' | 'bounds') => (
+    <div className={cn('grid grid-cols-1 gap-3', cameras.length > 1 && 'sm:grid-cols-2')}>
+      {cameras.map(l => still(l, v))}
+    </div>
+  )
+  const cameraPicker = <SegmentedControl ariaLabel="Camera" size="sm" options={SHOWN} value={shown} onChange={setShown} />
+  const comparisonRows = tab === 'methods'
+    ? latest.flatMap((l) => {
+        const boxes = calibration.boxes(l.camera)
+        return l.rows.filter(r => boxes[r.slot])
+      })
+    : []
+  const comparisonKeys = list.map(listingKey).filter(k => comparisonRows.some(r => key(r) === k))
+  const latestGap = gapSummary(comparisonRows, comparisonKeys, Object.fromEntries(list.map(a => [listingKey(a), a.label])))
 
   return (
     <div className="mx-auto flex max-w-[1000px] flex-col gap-6">
       <div className="flex flex-wrap items-end gap-4">
-        <div className="flex min-w-[200px] flex-1 flex-col gap-1">
-          <h1 className="text-2xl font-semibold">Analysis</h1>
-          <p className="text-[13px] text-fg-2">How leaf cover is measured from camera frames</p>
+        <div className="flex min-w-[200px] flex-1 flex-col gap-2.5">
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+            <h1 className="text-2xl font-semibold">Analysis</h1>
+            {tab === 'teach' && labelStats.data
+              ? (
+                  // How the labels were saved stays a hover away; the subtitle is how often the suggestions were right.
+                  <p className="text-[13px] text-fg-2" title={`${labelStats.data.sources.picked} picked · ${labelStats.data.sources.accepted} accepted · ${labelStats.data.sources.corrected} corrected`} data-testid="teach-summary">
+                    {teachSummary(labelStats.data)}
+                  </p>
+                )
+              : <p className="text-[13px] text-fg-2">{tab === 'pods' && pods.data ? told.summary : 'How leaf cover is measured from camera frames'}</p>}
+          </div>
+          <Tabs value={tab} onChange={setTab} waiting={queue.total} />
         </div>
-        <Button icon={Download} className="px-3 py-[7px]" onClick={() => setExporting(true)}>Export dataset</Button>
+        {tab === 'teach' && <Button icon={Download} className="px-3 py-[7px]" onClick={() => setExporting(true)}>Export dataset</Button>}
       </div>
       {st && (st.backfill || st.running || st.failed > 0) && (
         <p className="-mt-3 text-[13px] text-fg-2">
@@ -109,72 +171,78 @@ export function AnalysisPage() {
         </p>
       )}
 
-      <Panel id="latest-photos">
-        <div className="flex flex-wrap items-center gap-2.5">
-          <span className="mr-auto text-[15px] font-medium">Latest photos</span>
-          {list.length > 0 && selected && (
-            <SelectValue label="Analyser" value={listingKey(selected)} options={list.map(a => ({ value: listingKey(a), label: listingKey(a) }))} onChange={setPicked} />
+      {tab === 'pods' && (
+        <div role="tabpanel" id="analysis-pods" aria-labelledby="analysis-tab-pods" className="flex flex-col gap-6">
+          <Panel id="latest-photos">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <span className="mr-auto text-[15px] font-medium">Latest photos</span>
+              {view === 'photo' && cameraPicker}
+              <SegmentedControl ariaLabel="View" size="sm" options={VIEWS} value={view} onChange={setView} />
+            </div>
+            {view === 'photo' && (
+              <PodsTab
+                photos={cameras}
+                boxes={calibration.boxes}
+                pods={pods.data ?? []}
+                trends={trends.data ?? []}
+                stories={told.stories}
+                pinned={pinned}
+                onPick={pick}
+                onUnpin={() => setPinned(null)}
+                onRelabel={() => setTab('teach')}
+              />
+            )}
+          </Panel>
+          {view === 'towers' && (
+            <LeafCover
+              capturedAt={latest.map(l => l.frame?.ts).filter((t): t is string => !!t).sort().at(-1) ?? null}
+              stories={told.stories}
+              pinned={pinned}
+              onPick={pick}
+              onUnpin={() => setPinned(null)}
+              onRelabel={() => setTab('teach')}
+            />
           )}
-          <SegmentedControl ariaLabel="Camera" size="sm" options={SHOWN} value={shown} onChange={setShown} />
-          <SegmentedControl
-            ariaLabel="View"
-            size="sm"
-            options={VIEWS}
-            value={view}
-            onChange={(v) => {
-              setView(v)
-              if (v === 'bounds') calibration.edit()
+        </div>
+      )}
+
+      {tab === 'teach' && (
+        <div role="tabpanel" id="analysis-teach" aria-labelledby="analysis-tab-teach" className="flex flex-col gap-6">
+          <LabelPods
+            boxes={calibration.boxes}
+            boxesOff={queue.boxes}
+            onEditBoxes={() => {
+              if (!calibration.draft) calibration.edit()
+              document.getElementById('pod-bounds')?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
             }}
           />
-          {view === 'bounds' && !calibration.draft && <Button size="sm" onClick={calibration.edit}>Edit boxes</Button>}
-          {view === 'bounds' && calibration.draft && (
-            <div className="flex shrink-0 flex-nowrap items-center gap-3">
-              {calibration.dirty && <span data-testid="unsaved-bounds" className="text-xs text-fg-2">Unsaved changes</span>}
-              <Button size="sm" disabled={calibration.pending || !calibration.dirty} onClick={() => void calibration.save().catch(() => {})}>Save boxes</Button>
-              <button type="button" className={CALIBRATE_ACTION} onClick={() => calibration.reset(cameras.map(l => l.camera))}>Reset to measured</button>
-              <button type="button" className={CALIBRATE_ACTION} onClick={calibration.cancel}>Discard</button>
+          <Panel id="pod-bounds">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <span className="mr-auto text-[15px] font-medium">Pod bounds</span>
+              {cameraPicker}
+              {!calibration.draft
+                ? <Button size="sm" onClick={calibration.edit}>Edit boxes</Button>
+                : (
+                    <div className="flex shrink-0 flex-nowrap items-center gap-3">
+                      {calibration.dirty && <span data-testid="unsaved-bounds" className="text-xs text-fg-2">Unsaved changes</span>}
+                      <Button size="sm" disabled={!calibration.canSave} onClick={() => void calibration.save().catch(() => {})}>Save boxes</Button>
+                      <button type="button" className={CALIBRATE_ACTION} onClick={() => calibration.reset(cameras.map(l => l.camera))}>Reset to measured</button>
+                      <button type="button" className={CALIBRATE_ACTION} onClick={calibration.cancel}>Discard</button>
+                    </div>
+                  )}
             </div>
-          )}
+            {stills('bounds')}
+            <Calibrate c={calibration} cameras={cameras.map(l => l.camera)} />
+          </Panel>
         </div>
-        <div className={cn('grid grid-cols-1 gap-3', cameras.length > 1 && 'sm:grid-cols-2')}>
-          {cameras.map(l => (
-            <Still
-              key={l.camera}
-              latest={l}
-              view={view}
-              analyzer={selected && listingKey(selected)}
-              empty={slot => pod(slot)?.status === 'empty'}
-              pod={pod}
-              trend={s => trends.data?.find(t => t.slot === s)}
-              analyzers={list}
-              colorOf={colorOf}
-              pinned={pinned}
-              onPick={(s) => {
-                setPinned(p => (p === s ? null : s))
-                setSlot(s)
-              }}
-              onUnpin={() => setPinned(null)}
-              boxes={calibration.boxes(l.camera)}
-              calibrated={calibration.calibrated(l.camera)}
-              onChange={calibration.draft ? (slot, r) => calibration.move(l.camera, slot, r) : undefined}
-            />
-          ))}
-        </div>
-        {view === 'bounds' && <Calibrate c={calibration} />}
-        {selected && <AnalyzerDetail a={selected} color={colorOf(listingKey(selected))} busy={!!st?.backfill} />}
-      </Panel>
+      )}
 
-      <LeafCover capturedAt={latest.map(l => l.frame?.ts).filter((t): t is string => !!t).sort().at(-1) ?? null} />
-      <LabelPods
-        boxes={calibration.boxes}
-        onEditBoxes={() => {
-          setView('bounds')
-          calibration.edit()
-          document.getElementById('latest-photos')?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
-        }}
-      />
-      <PerPod analyzers={list} latest={cameras} colorOf={colorOf} plant={slot => pod(slot)?.plant ?? '—'} empty={slot => pod(slot)?.status === 'empty'} />
-      <ComparePod colorOf={colorOf} slot={slot} onSlot={setSlot} pods={pods.data ?? []} trends={trends.data ?? []} />
+      {tab === 'methods' && (
+        <div role="tabpanel" id="analysis-methods" aria-labelledby="analysis-tab-methods" className="flex flex-col gap-6">
+          {latestGap && <p className="text-xs text-fg-3">{latestGap}</p>}
+          <MethodsTab analyzers={list} colorOf={colorOf} busy={!!st?.backfill} slot={slot} onSlot={setSlot} pods={pods.data ?? []} trends={trends.data ?? []} boxes={calibration.boxes} />
+        </div>
+      )}
 
       {exporting && (
         <Modal open onClose={() => setExporting(false)} title="Export a dataset" icon={Download}>
@@ -185,12 +253,40 @@ export function AnalysisPage() {
   )
 }
 
+/** Pods, Teach and Methods, as underlined tabs over the page; Teach counts what waits on the grower. */
+function Tabs({ value, onChange, waiting }: { value: AnalysisTab, onChange: (t: AnalysisTab) => void, waiting: number }) {
+  return (
+    <div role="tablist" aria-label="Analysis sections" className="flex gap-[22px] text-sm">
+      {TABS.map(t => (
+        <button
+          key={t.value}
+          type="button"
+          role="tab"
+          id={`analysis-tab-${t.value}`}
+          aria-selected={value === t.value}
+          aria-controls={`analysis-${t.value}`}
+          className={cn('-mb-px cursor-pointer border-0 border-b-2 bg-transparent px-0 pb-1.5 pt-0', value === t.value ? 'border-fg text-fg' : 'border-transparent text-fg-3 hover:text-fg')}
+          onClick={() => onChange(t.value)}
+        >
+          {t.label}
+          {t.value === 'teach' && waiting > 0 && (
+            <>
+              <span aria-hidden data-testid="teach-count" className={cn('ml-1 rounded-lg px-1.5 py-px font-mono text-[10px] font-medium', value === t.value ? 'bg-fg text-inverse' : 'bg-active text-fg')}>{waiting}</span>
+              <span className="sr-only">{`, ${waiting} waiting`}</span>
+            </>
+          )}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 /**
  * One camera's still, with the pod bounds and the chosen analyser's reading
  * per pod drawn over it on request, and a card of everything known about a
  * pod when it is hovered or picked.
  */
-function Still({ latest, view, analyzer, empty, pod, trend, analyzers, colorOf, pinned, onPick, onUnpin, boxes, calibrated, onChange }: {
+function Still({ latest, view, analyzer, empty, pod, trend, analyzers, colorOf, pinned, onPick, onUnpin, boxes, calibrated, onChange, onRemove }: {
   latest: Latest
   view: View
   analyzer?: string
@@ -205,6 +301,7 @@ function Still({ latest, view, analyzer, empty, pod, trend, analyzers, colorOf, 
   boxes: PodRegions
   calibrated: boolean
   onChange?: (slot: number, r: PodRect) => void
+  onRemove?: (slot: number) => void
 }) {
   const { camera, frame, rows, states } = latest
   // The box takes the still's own shape once it loads, so the bounds sit where the analysers put them.
@@ -243,7 +340,7 @@ function Still({ latest, view, analyzer, empty, pod, trend, analyzers, colorOf, 
               />
             )
           : <div className="flex size-full items-center justify-center p-4 text-center text-[13px] text-fg-3">No photos from this camera yet.</div>}
-        {frame && view === 'bounds' && <PodBounds boxes={boxes} label={reading} onChange={onChange} />}
+        {frame && view === 'bounds' && <PodBounds boxes={boxes} label={reading} onChange={onChange} onRemove={onRemove} />}
         {frame && !onChange && <PodHits boxes={boxes} shown={shown} onHover={setHovered} onPick={onPick} />}
         {frame && shown !== null && box && (
           <PodCard slot={shown} box={box} pod={pod(shown)} trend={trend(shown)} readings={readings(shown)} pinned={shown === pinned} onClose={onUnpin} />
@@ -258,51 +355,6 @@ function Still({ latest, view, analyzer, empty, pod, trend, analyzers, colorOf, 
     </figure>
   )
 }
-
-/** The chosen analyser: what it does, how much it has scored, and making it primary or re-running it. */
-function AnalyzerDetail({ a, color, busy }: { a: Listing, color: string, busy: boolean }) {
-  const utils = trpc.useUtils()
-  const primary = trpc.vision.setPrimary.useMutation({ onSuccess: () => utils.vision.invalidate() })
-  const rerun = trpc.vision.rerun.useMutation({ onSuccess: () => utils.vision.invalidate() })
-  const current = a.source === 'device' && a.runsOn.includes('device') && !a.disabled
-  const canBePrimary = a.metrics.length === 0 || a.metrics.some(m => m.name === 'green_fraction')
-  const action = 'flex cursor-pointer items-center gap-1.5 border-0 bg-transparent p-0 text-xs text-fg-2 hover:text-fg disabled:cursor-default disabled:opacity-45'
-  return (
-    <div className="flex min-w-0 flex-col gap-2.5 border-t border-line pt-4">
-      <div className="flex items-start gap-2">
-        <span className="mt-[9px] h-[3px] w-2.5 shrink-0 rounded-[2px]" style={{ background: color }} />
-        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <span className="text-[15px] font-medium">{a.label}</span>
-          <span className="font-mono text-[11px] text-fg-3">{`${a.id}@${a.version} · ${a.source === 'device' ? 'on device' : 'remote'}`}</span>
-        </div>
-        {a.primary && <span className="rounded-[10px] bg-pod-ok/15 px-2 py-0.5 font-mono text-[10px] font-medium text-pod-ok">PRIMARY</span>}
-      </div>
-      <p className="text-[13px] leading-[1.55] text-fg-2 text-pretty">{a.description}</p>
-      {a.disabled && <p className="rounded-[10px] bg-pod-attention/10 px-3 py-2 text-[13px] text-fg-2">{`Off. ${a.disabled}`}</p>}
-      <div className="flex flex-wrap items-center gap-2.5">
-        <span className="flex-1 font-mono text-[11px] text-fg-3" title={a.lastTs ? `last ${new Date(a.lastTs).toLocaleString()}` : undefined}>
-          {a.captures > 0 ? `${a.captures} captures · ${a.rows} results` : 'No results yet'}
-        </span>
-        {!a.primary && canBePrimary && (
-          <button type="button" className={action} disabled={primary.isPending} onClick={() => primary.mutate({ analyzer: a.id })}>
-            <Star size={16} />
-            Make primary
-          </button>
-        )}
-        {current && (
-          <button type="button" className={action} disabled={busy || rerun.isPending} onClick={() => rerun.mutate({ analyzer: a.id, limit: 2000 })}>
-            <RefreshCw size={16} />
-            Re-run
-          </button>
-        )}
-      </div>
-      {(primary.error ?? rerun.error) && <InlineError>{(primary.error ?? rerun.error)?.message}</InlineError>}
-    </div>
-  )
-}
-
-/** Short column head from an analyser id: `exg-otsu` → `OTSU`. */
-const head = (k: string) => (k.split('@')[0]?.split('-').at(-1) ?? k).toUpperCase()
 
 /** How the second analyser reads against the first, in percentage points, when they agree on direction. */
 export function gapSummary(rows: Result[], columns: string[], labels: Record<string, string>): string | null {
@@ -321,109 +373,13 @@ export function gapSummary(rows: Result[], columns: string[], labels: Record<str
   return `${lb} and ${la} differ by up to ${Math.max(-lo, hi)} points.`
 }
 
-/** Every pod on the cameras shown, one row each, with every analyser's reading of its camera's latest still. */
-function PerPod({ analyzers, latest, colorOf, plant, empty }: { analyzers: Listing[], latest: Latest[], colorOf: (k: string) => string, plant: (slot: number) => string, empty: (slot: number) => boolean }) {
-  const rows = latest.flatMap(l => l.rows)
-  const stateRows = latest.flatMap(l => l.states)
-  const order = analyzers.map(listingKey)
-  // Listing order, so the columns and summary read in the same order as the analyser picker.
-  const rank = (k: string) => (order.includes(k) ? order.indexOf(k) : order.length)
-  const columns = [...new Set(rows.map(key))].sort((a, b) => rank(a) - rank(b))
-  // A learned analyser's pod state, one column each, after the green fractions.
-  const stateColumns = [...new Set(stateRows.map(key))].sort((a, b) => rank(a) - rank(b))
-  const value = (l: Latest, slot: number, col: string) => l.rows.find(r => r.slot === slot && key(r) === col)?.value
-  const stateOf = (l: Latest, slot: number, col: string) => l.states.find(r => r.slot === slot && key(r) === col)
-  const labels = Object.fromEntries(analyzers.map(a => [listingKey(a), a.label]))
-  const summary = gapSummary(rows, columns, labels)
-  const cell = 'border-b border-grid py-[9px]'
-  const th = 'border-b border-line pb-2 font-mono text-[10px] font-normal text-fg-3'
-  const any = latest.some(l => l.frame)
-
-  return (
-    <Panel>
-      <div className="flex min-w-0 flex-col gap-[3px]">
-        <span className="text-[15px] font-medium">Per pod, latest frames</span>
-        {summary && <span className="text-xs text-fg-3">{summary}</span>}
-      </div>
-      {!any
-        ? <p className="text-[13px] text-fg-2">No photos yet.</p>
-        : columns.length + stateColumns.length === 0
-          ? <p className="text-[13px] text-fg-2">These photos haven&apos;t been scored yet.</p>
-          : (
-              <div className="-mx-1 overflow-x-auto px-1">
-                <table className="w-full table-fixed border-collapse text-left text-[13px]">
-                  <thead>
-                    <tr>
-                      <th className={cn(th, 'w-9')}>POD</th>
-                      <th className={cn(th, 'pl-3 sm:w-[30%]')}>PLANT</th>
-                      <th className={cn(th, 'hidden pl-3.5 sm:table-cell')}>LEAF COVER</th>
-                      {columns.map(c => <th key={c} title={c} className={cn(th, 'w-[64px] pl-2 text-right sm:w-[84px] sm:pl-3.5')}>{head(c)}</th>)}
-                      {stateColumns.map(c => <th key={c} title={c} className={cn(th, 'w-[84px] pl-2 text-right sm:w-[104px] sm:pl-3.5')}>{head(c)}</th>)}
-                    </tr>
-                  </thead>
-                  {latest.filter(l => l.rows.length + l.states.length > 0).map((l) => {
-                    const slots = [...new Set([...l.rows, ...l.states].map(r => r.slot))].sort((a, b) => a - b)
-                    return (
-                      <tbody key={l.camera}>
-                        <tr>
-                          <th colSpan={columns.length + stateColumns.length + 2} scope="rowgroup" className="pb-1 pt-3 text-left font-mono text-[10px] font-normal text-fg-3">
-                            {`${l.camera.toUpperCase()}${l.frame ? ` · ${fmtStamp(l.frame.ts)}` : ''}`}
-                          </th>
-                          {/* The leaf-cover column is hidden on a phone; a span over it would leave a ghost column there. */}
-                          <th className="hidden sm:table-cell" aria-hidden />
-                        </tr>
-                        {slots.map((s) => {
-                          const vals = columns.map(c => value(l, s, c)).filter((v): v is number => v !== undefined)
-                          const lo = Math.min(...vals)
-                          const hi = Math.max(...vals)
-                          // A pod marked empty has no leaf cover to report, whatever the camera sees there.
-                          const none = empty(s)
-                          const read = none ? `Marked empty; analysers read ${vals.map(pct).join(', ')}` : undefined
-                          return (
-                            <tr key={s} title={read}>
-                              <td className={cn(cell, 'font-mono text-xs text-fg-3')}>{s}</td>
-                              <td className={cn(cell, 'max-w-0 truncate pl-3')}>{none ? <span className="text-xs text-fg-3">Empty · no cover</span> : plant(s)}</td>
-                              <td className={cn(cell, 'hidden pl-3.5 sm:table-cell')}>
-                                {!none && (
-                                  <div className="relative h-2.5">
-                                    <span className="absolute inset-x-0 top-0.5 h-1.5 rounded-[3px] bg-active" />
-                                    <span className="absolute top-0.5 h-1.5 rounded-[3px] bg-line-2" style={{ left: pct(lo), width: pct(hi - lo) }} />
-                                    {columns.map((c) => {
-                                      const v = value(l, s, c)
-                                      return v === undefined ? null : <span key={c} className="absolute top-0 h-2.5 w-0.5" style={{ left: pct(Math.min(1, v)), background: colorOf(c) }} />
-                                    })}
-                                  </div>
-                                )}
-                              </td>
-                              {columns.map((c, ci) => {
-                                const v = value(l, s, c)
-                                return <td key={c} className={cn(cell, 'pl-2 text-right font-mono text-xs sm:pl-3.5')} style={ci > 0 && !none ? { color: colorOf(c) } : undefined}>{v === undefined || none ? '—' : pct(v)}</td>
-                              })}
-                              {stateColumns.map((c) => {
-                                const r = stateOf(l, s, c)
-                                return <td key={c} title={r ? stateText(r) : undefined} className={cn(cell, 'truncate pl-2 text-right font-mono text-xs sm:pl-3.5')} style={{ color: colorOf(c) }}>{r ? stateText(r).split(' · ')[0] : '—'}</td>
-                              })}
-                            </tr>
-                          )
-                        })}
-                      </tbody>
-                    )
-                  })}
-                </table>
-              </div>
-            )}
-    </Panel>
-  )
-}
-
 type Calibration = ReturnType<typeof useCalibration>
 
 /**
  * The pod boxes on each camera (#143): the unit's, or a draft while they are
  * being edited. A draft starts empty and is layered on the saved boxes, so
  * entering edit before the query settles still shows the unit's calibration
- * once it arrives. Saving sends each camera's boxes; the unit keeps only the
- * ones that moved from the measured defaults.
+ * once it arrives. Saving sends each camera's boxes and removals.
  */
 function sameRegions(a: PodRegions, b: PodRegions): boolean {
   const slots = new Set([...Object.keys(a), ...Object.keys(b)])
@@ -441,21 +397,27 @@ function useCalibration() {
   const { show } = useToast()
   const saved = trpc.vision.regions.useQuery()
   const save = trpc.vision.setRegions.useMutation({ onSuccess: () => utils.vision.invalidate() })
-  const [draft, setDraft] = useState<Partial<Record<Camera, PodRegions>> | null>(null)
+  const [draft, setDraft] = useState<Partial<Record<Camera, Record<number, PodRect | null>>> | null>(null)
   const [done, setDone] = useState(false)
   const stored = (camera: Camera): PodRegions => {
     const row = saved.data?.find(r => r.camera === camera)
     return row ? Object.fromEntries(row.regions.map(({ slot, x, y, w, h, coreX, coreY }) => [slot, { x, y, w, h, coreX, coreY }])) : podRegions(camera)
   }
-  const boxes = (camera: Camera) => (draft ? { ...stored(camera), ...draft[camera] } : stored(camera))
+  const boxes = (camera: Camera): PodRegions => {
+    const merged = { ...stored(camera), ...draft?.[camera] }
+    return Object.fromEntries(Object.entries(merged).filter((entry): entry is [string, PodRect] => entry[1] !== null))
+  }
   const dirty = !!draft && (['upper', 'lower'] as const).some(camera => !sameRegions(boxes(camera), stored(camera)))
+  const canSave = dirty && !saved.isPending && !saved.error && !save.isPending
+  const removed = (camera: Camera, regions = boxes(camera)) => cameraSlots(camera).filter(s => !regions[s])
   return {
     draft,
     dirty,
     done,
     error: save.error?.message,
-    pending: save.isPending,
+    canSave,
     boxes,
+    removed,
     calibrated: (camera: Camera) => saved.data?.find(r => r.camera === camera)?.calibrated ?? false,
     edit: () => {
       setDone(false)
@@ -463,15 +425,17 @@ function useCalibration() {
       // regions query still fills in unmoved slots.
       setDraft(d => d ?? {})
     },
-    move: (camera: Camera, slot: number, r: PodRect) => setDraft(d => ({ ...d, [camera]: { ...stored(camera), ...d?.[camera], [slot]: r } })),
+    move: (camera: Camera, slot: number, r: PodRect) => setDraft(d => ({ ...d, [camera]: { ...d?.[camera], [slot]: r } })),
+    remove: (camera: Camera, slot: number) => setDraft(d => ({ ...d, [camera]: { ...d?.[camera], [slot]: null } })),
+    restore: (camera: Camera, slot: number) => setDraft(d => ({ ...d, [camera]: { ...d?.[camera], [slot]: podRegions(camera)[slot] as PodRect } })),
     reset: (cameras: Camera[]) => setDraft(d => ({ ...d, ...Object.fromEntries(cameras.map(c => [c, podRegions(c)])) })),
     cancel: () => setDraft(null),
     save: async () => {
-      if (!draft) return
+      if (!canSave) return
       try {
         for (const camera of ['upper', 'lower'] as const) {
           const regions = boxes(camera)
-          await save.mutateAsync({ camera, regions: Object.entries(regions).map(([slot, r]) => ({ slot: Number(slot), ...r })) })
+          await save.mutateAsync({ camera, regions: Object.entries(regions).map(([slot, r]) => ({ slot: Number(slot), ...r })), removed: removed(camera, regions) })
         }
         setDraft(null)
         setDone(true)
@@ -489,63 +453,26 @@ function useCalibration() {
 const CALIBRATE_ACTION = 'cursor-pointer border-0 bg-transparent p-0 text-xs text-fg-2 hover:text-fg disabled:cursor-default disabled:opacity-45'
 
 /** Editing the boxes: how, and a confirmation after they are saved. */
-function Calibrate({ c }: { c: Calibration }) {
+function Calibrate({ c, cameras }: { c: Calibration, cameras: Camera[] }) {
+  const gone = cameras.flatMap(camera => c.removed(camera).map(slot => ({ camera, slot })))
   return (
     <div className="-mt-1 flex flex-col gap-2 text-xs text-fg-3">
       <p>
         {c.draft
-          ? 'Drag the outer box to move it, or drag its corner to resize it. Drag the dashed cup area over the pod opening. Arrow keys move the focused box. Hold Shift to resize or Alt to move the dashed area. Save boxes keeps the layout; Discard drops unsaved edits.'
+          ? 'Drag the outer box to move it, or drag its corner to resize it. Drag the dashed cup area over the pod opening. Arrow keys move the focused box. Hold Shift to resize or Alt to move the dashed area. Use × or Delete on a box if the camera can\'t see that pod. Save boxes keeps the layout; Discard drops unsaved edits.'
           : 'The outer box sets the area scored for leaf cover. The dashed cup area helps attribute leaves to the pod they grow from.'}
       </p>
-      {c.done && !c.draft && <span>Saved. New photos use these boxes; Re-run an analyser to rescore stored ones.</span>}
-      {c.error && <InlineError>{c.error}</InlineError>}
-    </div>
-  )
-}
-
-/** One pod's series from every analyser, or every planted pod side by side. */
-function ComparePod({ colorOf, slot, onSlot, pods, trends }: { colorOf: (k: string) => string, slot: number, onSlot: (slot: number) => void, pods: Pod[], trends: Trend[] }) {
-  const one = slot > 0
-  const cmp = trpc.vision.compare.useQuery({ slot: Math.max(1, slot), metric: 'green_fraction', limit: 200 }, { enabled: one })
-  const states = trpc.vision.compare.useQuery({ slot: Math.max(1, slot), metric: 'pod_state', limit: 1 }, { enabled: one })
-  const series = (cmp.data ?? []).map(s => ({ name: key(s), color: colorOf(key(s)), points: s.points.map(p => ({ x: Date.parse(p.ts), y: p.value })) }))
-  const head = (
-    <div className="flex flex-wrap items-center gap-3">
-      <span className="flex-1 text-[15px] font-medium">{one ? 'One pod over time' : 'All pods over time'}</span>
-      <SelectValue label="Pod" value={slot} options={SLOTS} onChange={onSlot} />
-    </div>
-  )
-  if (!one) return (
-    <Panel>
-      {head}
-      <AllPods pods={pods} trends={trends} onPick={onSlot} />
-    </Panel>
-  )
-  return (
-    <Panel>
-      {head}
-      <TimeChart series={series} height={180} yMin={0} yMax={1} formatY={pct} formatX={x => new Date(x).toLocaleDateString()} />
-      {series.length > 0 && (
-        <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm">
-          {cmp.data?.map(s => (
-            <span key={key(s)} className="text-fg-2">
-              {`${key(s)} `}
-              <span className="font-mono text-fg">{pct(s.points.at(-1)?.value ?? 0)}</span>
-            </span>
+      {gone.length > 0 && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <span>{`No box, not scored: ${gone.map(g => g.slot).join(', ')}`}</span>
+          {c.draft && gone.map(g => (
+            <button key={g.slot} type="button" className={CALIBRATE_ACTION} onClick={() => c.restore(g.camera, g.slot)}>{`Put back ${g.slot}`}</button>
           ))}
         </div>
       )}
-      {(states.data ?? []).map((s) => {
-        const p = s.points.at(-1)
-        return p && (
-          <span key={key(s)} className="text-sm text-fg-2">
-            {`${key(s)} `}
-            <span className="font-mono text-fg">{POD_STATES[p.value] ?? `class ${p.value}`}</span>
-            <span className="text-xs text-fg-3">{` · ${fmtStamp(p.ts)}`}</span>
-          </span>
-        )
-      })}
-    </Panel>
+      {c.done && !c.draft && <span>Saved. New photos use these boxes; Re-run an analyser to rescore stored ones.</span>}
+      {c.error && <InlineError>{c.error}</InlineError>}
+    </div>
   )
 }
 

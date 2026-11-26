@@ -85,6 +85,7 @@ export function useLiveEvents(onEvent?: (e: CoreEvent) => void) {
     listener.current = onEvent
   })
   const pending = useRef(new Set<Area | 'all'>())
+  const reconnect = useRef(false)
   const readings = useRef(new Map<SensorId, Reading>())
   const connected = useRef(false)
   const failed = useRef(false)
@@ -95,6 +96,8 @@ export function useLiveEvents(onEvent?: (e: CoreEvent) => void) {
   const flush = () => {
     const areas = pending.current
     const fresh = readings.current
+    const reconnected = reconnect.current
+    reconnect.current = false
     pending.current = new Set()
     readings.current = new Map()
     timer.current = null
@@ -105,12 +108,15 @@ export function useLiveEvents(onEvent?: (e: CoreEvent) => void) {
       utils.sensors.latest.setData(undefined, { ...known, ...Object.fromEntries(fresh) })
     }
     if (areas.has('all')) void utils.invalidate()
+    // Missed events could have changed any page. Mark cached pages stale,
+    // but refetch only queries being used now and keep requests already running.
+    else if (reconnected) void utils.invalidate(undefined, { refetchType: 'active' }, { cancelRefetch: false })
     else for (const area of areas as Set<Area>) void utils[area].invalidate()
   }
   const stream = trpc.events.onChange.useSubscription(undefined, {
     onStarted() {
       if (connected.current || failed.current) {
-        pending.current.add('sensors')
+        reconnect.current = true
         schedule()
       }
       connected.current = true
