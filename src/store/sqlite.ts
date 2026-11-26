@@ -14,7 +14,7 @@ import { qualityCounts, trustedShareOf } from './memory'
 import { SqliteTelemetryReader } from './sqliteTelemetry'
 import type { AgreementReading, LatestAnalysisQuery, OmittedAnalysisSlots } from './types'
 import type { AlertQuery, AlertRow, Automation, AutomationRun, AnalysisPoint, AnalysisRow, AnalyzerStats, BackupRecord, Capture, CustomPlant, DeviceSettings, FlashSample, GrowCycle, GrowProtocolState, GrowStage, LightSpec, PlanRow, PlantProfile, Pod, PodCodePair, PodCodeRead, PodLabel, PodLabelCursor, PodLabelInput, PodLabelSource, PodLabelValue, PumpSpec, SavedCycle, SavedSchedule, Schedule, ScheduleRun, Store, SuggestionDismissal, TankAction, TankActionKind, TelemetryPoint, QualityCounts, QualitySample, PumpRun } from './types'
-import { DEFAULT_SETTINGS, POD_LABELS, profileKey } from './types'
+import { DEFAULT_SETTINGS, MAX_LIGHT_RECEIPTS, POD_LABELS, profileKey } from './types'
 
 export interface SqliteStoreOptions {
   /** File path or ':memory:'. */
@@ -285,6 +285,33 @@ export class SqliteStore implements Store {
     remove: (id: string): boolean => this.db.delete(t.scheduleLibrary).where(eq(t.scheduleLibrary.id, id)).run().changes > 0,
   }
 
+  diagnostics: Store['diagnostics'] = {
+    recordAttempt: (a) => {
+      this.db.insert(t.pumpAttempts).values(a).onConflictDoUpdate({
+        target: [t.pumpAttempts.runKey, t.pumpAttempts.attempt], set: a,
+      }).run()
+    },
+    attempts: keys => keys.length ? this.db.select().from(t.pumpAttempts).where(inArray(t.pumpAttempts.runKey, keys)).orderBy(asc(t.pumpAttempts.attempt)).all() : [],
+    recordLight: (light) => {
+      const { id } = t.lightReceipts
+      const table = t.lightReceipts
+      this.sqlite.transaction(() => {
+        this.db.insert(table).values(light).run()
+        const oldest = this.db.select({ id }).from(table).orderBy(desc(id)).limit(1).offset(MAX_LIGHT_RECEIPTS - 1).get()
+        if (oldest) this.db.delete(table).where(lt(id, oldest.id)).run()
+      })()
+    },
+    lights: (limit) => {
+      const { id, at, target, reported, source, outcome, fault } = t.lightReceipts
+      return this.db.select({ at, target, reported, source, outcome, fault }).from(t.lightReceipts).orderBy(desc(id)).limit(limit).all()
+    },
+    markFrame: (captureId, check) => {
+      if (!this.captures.get(captureId)) return
+      this.db.insert(t.frameChecks).values({ captureId, check }).onConflictDoUpdate({ target: t.frameChecks.captureId, set: { check } }).run()
+    },
+    frame: id => this.db.select({ check: t.frameChecks.check }).from(t.frameChecks).where(eq(t.frameChecks.captureId, id)).get()?.check ?? null,
+  }
+
   captures = {
     add: (c: Capture): void => {
       this.db.insert(t.captures).values(c).run()
@@ -300,7 +327,10 @@ export class SqliteStore implements Store {
     prune: (camera: 'upper' | 'lower', keep: number): Capture[] => {
       const rows = this.db.select().from(t.captures).where(eq(t.captures.camera, camera)).orderBy(desc(t.captures.ts)).all()
       const drop = rows.slice(keep)
-      for (const d of drop) this.db.delete(t.captures).where(eq(t.captures.id, d.id)).run()
+      for (const d of drop) {
+        this.db.delete(t.captures).where(eq(t.captures.id, d.id)).run()
+        this.db.delete(t.frameChecks).where(eq(t.frameChecks.captureId, d.id)).run()
+      }
       return drop
     },
   }
@@ -533,6 +563,23 @@ export class SqliteStore implements Store {
     range: (fromTs: string, toTs: string): AnalysisRow[] =>
       this.db.select().from(t.analysisResults).where(and(gte(t.analysisResults.ts, fromTs), lte(t.analysisResults.ts, toTs)))
         .orderBy(asc(t.analysisResults.ts), asc(t.analysisResults.id)).all().map(rowToAnalysis),
+    scan: (from: string, to: string): Iterable<AnalysisRow> => {
+      const a = t.analysisResults
+      const lastId = this.db.select({ id: sql<number>`coalesce(max(${a.id}), 0)` }).from(a).get()?.id ?? 0
+      const db = this.db
+      return (function* () {
+        let after: { ts: string, id: number } | undefined
+        for (;;) {
+          const page: (typeof a.$inferSelect)[] = db.select().from(a).where(and(
+            between(a.ts, after?.ts ?? from, to), lte(a.id, lastId),
+            after && sql`(${a.ts}, ${a.id}) > (${after.ts}, ${after.id})`,
+          )).orderBy(asc(a.ts), asc(a.id)).limit(128).all()
+          for (const row of page) yield rowToAnalysis(row)
+          if (page.length < 128) return
+          after = page.at(-1)
+        }
+      })()
+    },
     count: (from: string, to: string): number => this.db.select({ n: count() }).from(t.analysisResults).where(between(t.analysisResults.ts, from, to)).get()?.n ?? 0,
     stats: (): AnalyzerStats[] =>
       this.db.all<AnalyzerStats>(sql`SELECT analyzer, version, source, count(*) AS rows, count(DISTINCT captureId) AS captures, min(ts) AS firstTs, max(ts) AS lastTs

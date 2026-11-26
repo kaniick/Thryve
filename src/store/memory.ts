@@ -3,11 +3,26 @@ import type { AlertQuery, AlertRow, Automation, AutomationRun, AnalysisPoint, An
 import type { NotificationChannel, NotificationRule, NotificationRun } from '../notify/types'
 import type { ActivityToken, FeedItem, IosDevice } from '../notify/ios/types'
 import type { AutomationRule } from '../autopilot/types'
-import type { AgreementReading, LatestAnalysisQuery, OmittedAnalysisSlots } from './types'
-import { DEFAULT_SETTINGS, POD_LABELS, profileKey } from './types'
+import type { AgreementReading, FrameCheck, LatestAnalysisQuery, LightReceipt, OmittedAnalysisSlots, PumpAttempt } from './types'
+import { DEFAULT_SETTINGS, MAX_LIGHT_RECEIPTS, POD_LABELS, profileKey } from './types'
 
 /** In-memory Store for tests and the browser demo. Same semantics as SqliteStore. */
 export class MemoryStore implements Store {
+  private readonly pumpAttempts = new Map<string, PumpAttempt>()
+  private readonly lightReceipts: LightReceipt[] = []
+  private readonly frameChecks = new Map<string, FrameCheck>()
+  diagnostics: Store['diagnostics'] = {
+    recordAttempt: (a) => { this.pumpAttempts.set(JSON.stringify([a.runKey, a.attempt]), { ...a }) },
+    attempts: keys => [...this.pumpAttempts.values()].filter(a => keys.includes(a.runKey)).sort((a, b) => a.attempt - b.attempt).map(a => ({ ...a })),
+    recordLight: (l) => {
+      this.lightReceipts.push({ ...l })
+      if (this.lightReceipts.length > MAX_LIGHT_RECEIPTS) this.lightReceipts.shift()
+    },
+    lights: limit => this.lightReceipts.slice().reverse().slice(0, limit).map(l => ({ ...l })),
+    markFrame: (id, check) => { if (this.captures.get(id)) this.frameChecks.set(id, check) },
+    frame: id => this.frameChecks.get(id) ?? null,
+  }
+
   private settingsRow: DeviceSettings = { ...DEFAULT_SETTINGS, updatedAt: new Date(0).toISOString() }
   private readonly scheduleRows = new Map<string, Schedule>()
   private readonly runs: ScheduleRun[] = []
@@ -250,7 +265,10 @@ export class MemoryStore implements Store {
     prune: (camera: 'upper' | 'lower', keep: number): Capture[] => {
       const rows = this.captures.list(camera, Number.MAX_SAFE_INTEGER)
       const drop = rows.slice(keep)
-      for (const d of drop) this.captureRows.splice(this.captureRows.indexOf(d), 1)
+      for (const d of drop) {
+        this.captureRows.splice(this.captureRows.indexOf(d), 1)
+        this.frameChecks.delete(d.id)
+      }
       return drop
     },
   }
@@ -434,6 +452,7 @@ export class MemoryStore implements Store {
     },
     range: (fromTs: string, toTs: string): AnalysisRow[] =>
       this.analysisRows.filter(r => r.ts >= fromTs && r.ts <= toTs).sort((a, b) => a.ts.localeCompare(b.ts)),
+    scan: (from: string, to: string): Iterable<AnalysisRow> => this.analyses.range(from, to),
     count: (from: string, to: string): number => countWindow(this.analysisRows, from, to),
     stats: (): AnalyzerStats[] => {
       const m = new Map<string, AnalyzerStats & { ids: Set<string> }>()

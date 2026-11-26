@@ -30,6 +30,7 @@ vi.mock('@/src/utils/trpc', () => ({
       return { data: got, error: got ? null : { message: `no capture ${input.id}` } }
     } } },
     vision: {
+      frameQuality: { useQuery: (input: { captureId: string }) => ({ data: data.get(`quality:${input.captureId}`) }) },
       labels: { useQuery: (input: { captureId: string }, opts?: { enabled?: boolean }) => {
         calls.labels(input, opts)
         return { data: opts?.enabled === false ? undefined : data.get(`labels:${input.captureId}`) }

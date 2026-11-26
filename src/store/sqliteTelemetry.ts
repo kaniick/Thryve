@@ -63,9 +63,11 @@ export class SqliteTelemetryReader {
       SELECT id, ts, sensor, value FROM telemetry
       WHERE ${windowSql} AND id <= @lastId ORDER BY ts, id LIMIT 256
     `)
+    // Use the cursor as the actual index lower bound, not a second predicate
+    // after the original range. The latter can rescan earlier pages.
     this.nextPage = db.prepare<unknown[], PointRow>(`
       SELECT id, ts, sensor, value FROM telemetry
-      WHERE ${windowSql} AND id <= @lastId AND (ts, id) > (@afterTs, @afterId)
+      WHERE sensor = @sensor AND ts BETWEEN @afterTs AND @to AND id <= @lastId AND (ts, id) > (@afterTs, @afterId)
       ORDER BY ts, id LIMIT 256
     `)
   }

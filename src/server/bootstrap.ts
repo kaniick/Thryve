@@ -124,11 +124,11 @@ export function createCore(opts: CoreOptions): Core {
   const notifier = createNotifier({ hal: o.hal, store: o.store, events, now: o.now, update: o.update, log: m => console.warn(m), ios })
   const flash = new FlashMeter({ store: o.store, source: o.flashSource ?? null, disk: o.disk, now: o.now })
   const podCodes = new PodCodeService({ store: o.store, captures, reader: o.codeReader ?? null, log: m => console.warn(m), onRead: () => events.emit({ kind: 'mutation', path: 'podCodes' }) })
-  const ctx: Context = { hal: o.hal, events, store: o.store, captures, analysis, podCodes, mirror: o.mirror, backup: o.backup, restore: o.restore, update: o.update, bootLog: o.bootLog, homekit: o.homekit, models: o.models, podvision: o.podvision, bridge: o.bridge, hardwareBroker: o.hardwareBroker, flash, database: o.database, logging: o.logging, wifi, light, autopilot, notifier, ios, version: o.version, host: o.host, now: o.now }
+  const scheduler = new Scheduler({ store: o.store, hal: o.hal, events, light, now: o.now, clockTrusted: o.clockTrusted, autoHours: () => autoLight(o.store) })
+  const ctx: Context = { hal: o.hal, events, store: o.store, captures, analysis, podCodes, mirror: o.mirror, backup: o.backup, restore: o.restore, update: o.update, bootLog: o.bootLog, homekit: o.homekit, models: o.models, podvision: o.podvision, bridge: o.bridge, hardwareBroker: o.hardwareBroker, flash, database: o.database, logging: o.logging, wifi, light, autopilot, notifier, ios, version: o.version, host: o.host, now: o.now, scheduleActivity: () => scheduler.receiptState() }
   o.homekit?.attach(ctx)
   const recorder = new Recorder({ store: o.store, events, now: o.now })
   const retention = new TelemetryRetention({ store: o.store, now: o.now })
-  const scheduler = new Scheduler({ store: o.store, hal: o.hal, events, light, now: o.now, clockTrusted: o.clockTrusted, autoHours: () => autoLight(o.store) })
   const grow = new GrowEngine({ store: o.store, events, now: o.now })
   const care = new CareEngine({ store: o.store, hal: o.hal, events, now: o.now })
 

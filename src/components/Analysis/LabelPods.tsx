@@ -9,6 +9,7 @@ import type { AppRouter } from '@/src/server/routers/app'
 import { POD_LABELS, type PodLabelValue } from '@/src/store/types'
 import { apiBase, trpc } from '@/src/utils/trpc'
 import type { PodRegions } from '@/src/vision/regions'
+import { FrameQualityNote } from './FrameQualityNote'
 import { PodCodes } from './PodCodes'
 import { PodOrder } from './PodOrder'
 import { BoundsCard, SuggestionsCard, type BoxOff } from './TeachQueue'
@@ -399,6 +400,7 @@ export function LabelPods({ boxes, onEditBoxes, boxesOff = [] }: {
                         compact={!single}
                         empty={single || !moment ? 'No photos from this camera yet.' : `No ${c} still this round.`}
                       />
+                      {frames[c] && <FrameQualityNote id={frames[c].id} historical />}
                     </div>
                   ))}
                 </div>

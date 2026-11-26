@@ -10,6 +10,7 @@ import { Recorder } from '../../telemetry/recorder'
 import { downsample, MemoryStore } from '../memory'
 import { defaultMigrationsFolder, MAX_HELD_QUALITY, MAX_HELD_TELEMETRY, SqliteStore } from '../sqlite'
 import type { AnalysisRow, PodLabel, PodLabelValue, Store, TelemetryPoint } from '../types'
+import { MAX_LIGHT_RECEIPTS } from '../types'
 
 const impls: [string, () => Store][] = [
   ['MemoryStore', () => new MemoryStore(30)],
@@ -479,6 +480,18 @@ for (const [name, make] of impls) {
       expect(store.tankActions.list()).toHaveLength(2)
     })
 
+    it('scans analysis data across pages in timestamp and insertion order without including later inserts', () => {
+      store = make()
+      const base = { ts: '2026-11-01T00:00:00.000Z', camera: 'upper' as const, analyzer: 'green-threshold', version: 1, source: 'device' as const, slot: 1, metric: 'green_fraction', value: 0.35, artifact: null, detail: null }
+      store.analyses.add(Array.from({ length: 300 }, (_, i) => ({ ...base, captureId: `a-${i}` })))
+      const scan = store.analyses.scan(base.ts, base.ts)[Symbol.iterator]()
+      const first = Array.from({ length: 143 }, () => scan.next().value)
+      store.analyses.add([{ ...base, captureId: 'late' }])
+      for (let p = scan.next(); !p.done; p = scan.next()) first.push(p.value)
+      expect(first.map(r => r.captureId)).toEqual(Array.from({ length: 300 }, (_, i) => `a-${i}`))
+      expect([...store.analyses.scan(base.ts, base.ts)]).toHaveLength(301)
+    })
+
     it('aggregates dataset metadata inside inclusive bounds, including retained rows of pruned captures', () => {
       store = make()
       const before = '2026-11-01T00:00:00.000Z'
@@ -683,6 +696,30 @@ for (const [name, make] of impls) {
 }
 
 describe('SqliteStore on disk', () => {
+  it('keeps bounded light history and the attempt result across a reopen', () => {
+    const root = mkdtempSync(join(tmpdir(), 'thryve-receipts-'))
+    const url = join(root, 'thryve.db')
+    try {
+      const first = new SqliteStore({ url })
+      const at = '2026-11-26T16:00:00.000Z'
+      try {
+        for (let i = 0; i <= MAX_LIGHT_RECEIPTS; i++) {
+          first.diagnostics.recordLight({ at: new Date(Date.parse(at) + i * 60_000).toISOString(), target: 70, reported: 70, source: 'schedule', fault: null, outcome: 'matched' })
+        }
+        first.diagnostics.recordAttempt({ runKey: 'am:2026-11-26:960', attempt: 1, at, result: 'refused', reason: 'water low', requestedS: 15, reportedStart: null })
+      }
+      finally { first.close() }
+      const second = new SqliteStore({ url })
+      try {
+        const lights = second.diagnostics.lights(MAX_LIGHT_RECEIPTS + 1)
+        expect(lights).toHaveLength(MAX_LIGHT_RECEIPTS)
+        expect(lights.at(-1)?.at).toBe('2026-11-26T16:01:00.000Z')
+        expect(second.diagnostics.attempts(['am:2026-11-26:960'])).toMatchObject([{ attempt: 1, result: 'refused', reason: 'water low' }])
+      }
+      finally { second.close() }
+    }
+    finally { rmSync(root, { recursive: true, force: true }) }
+  })
   it('refreshes cached settings after an update and keeps returned JSON fields isolated', () => {
     const store = new SqliteStore({ url: ':memory:' })
     try {

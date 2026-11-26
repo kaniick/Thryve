@@ -374,6 +374,28 @@ describe('today timeline', () => {
   })
 })
 
+describe('schedule receipts', () => {
+  it('shows reported success and uncertainty without putting controls on the status card', () => {
+    data.set('schedules.receipts', {
+      timezone: 'UTC',
+      watering: [
+        { key: '1', name: 'Morning cycle', at: at(8), outcome: 'completed', durationS: 30 },
+        { key: '2', name: 'Evening cycle', at: at(17), outcome: 'unconfirmed', durationS: null, reason: 'No matching pump event was recorded.' },
+      ],
+      lights: [{ at: at(7), outcome: 'held', source: 'manual', target: 70, reported: 20 }],
+    })
+    page()
+    const receipts = within(screen.getByRole('region', { name: 'Schedule receipts' }))
+    expect(receipts.getByText('Completed')).toBeTruthy()
+    expect(receipts.getByText(/30s recorded/)).toBeTruthy()
+    expect(receipts.getByText('Unconfirmed')).toBeTruthy()
+    expect(receipts.getByText(/No matching pump event was recorded/)).toBeTruthy()
+    expect(receipts.getByText('Target 70% · Reported 20%')).toBeTruthy()
+    expect(receipts.getByText(/Manual control/)).toBeTruthy()
+    expect(receipts.queryByRole('button')).toBeNull()
+  })
+})
+
 describe('cards', () => {
   it('sums up light, water and climate, each linking to its page', () => {
     data.set('schedules.list', [

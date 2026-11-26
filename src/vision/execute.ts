@@ -5,6 +5,7 @@
  */
 import { deviceAnalyzers, runAnalyzers, type AnalyzerOptions, type AnalyzerOutput } from './analyzer'
 import { decodeJpeg, hasZeroFilledRows } from './analyze'
+import { brightness } from './podState'
 import type { PodRegions } from './regions'
 
 export interface AnalysisJob {
@@ -17,7 +18,7 @@ export interface AnalysisJob {
   opts: AnalyzerOptions
 }
 
-export type JobOutput = Array<AnalyzerOutput & { analyzer: string, version: number }>
+export type JobOutput = Array<AnalyzerOutput & { analyzer: string, version: number, dark?: true }>
 
 /** The still is a picture of a damaged frame, so nothing it ever scored should stand. */
 export const DAMAGED = 'damaged'
@@ -29,7 +30,8 @@ export function execute(job: AnalysisJob): JobResult {
   const img = decodeJpeg(job.bytes)
   if (!img) return null
   if (hasZeroFilledRows(img)) return DAMAGED
-  return runAnalyzers(img, job.camera, deviceAnalyzers().filter(a => !a.disabled && job.analyzers.includes(a.id)), job.opts, job.regions)
+  const out = runAnalyzers(img, job.camera, deviceAnalyzers().filter(a => !a.disabled && job.analyzers.includes(a.id)), job.opts, job.regions)
+  return brightness(img) < 0.08 ? out.map(o => ({ ...o, dark: true })) : out
 }
 
 /** Runs a job somewhere: on this thread, or on a worker so the event loop never stalls. */

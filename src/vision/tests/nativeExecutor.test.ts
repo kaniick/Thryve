@@ -109,7 +109,7 @@ describe('native executor', () => {
 
   it('stores nothing for a dark still and drops a damaged one', async () => {
     const dark = await createNativeExecutor({ bin: fake({ stdout: answer({}, { dark: true, pods: [] }) }), fallback, learned: [shipped], log }).run(job(['pod-state']))
-    expect(dark).toEqual([{ analyzer: 'pod-state', version, results: [] }])
+    expect(dark).toEqual([{ analyzer: 'pod-state', version, results: [], dark: true }])
     const damaged = await createNativeExecutor({ bin: fake({ stdout: answer({ damaged: true, models: [] }) }), fallback, learned: [shipped], log }).run(job(['exg-otsu', 'pod-state']))
     expect(damaged).toBe('damaged')
     expect(fallback).not.toHaveBeenCalled()

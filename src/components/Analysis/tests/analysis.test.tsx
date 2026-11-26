@@ -34,7 +34,7 @@ vi.mock('@/src/utils/trpc', () => {
     if (name === 'capture') calls.capture(input, opts)
     if (name === 'summary') calls.summary(input)
     // Per camera or per capture when a test sets it so, else one answer for every input.
-    const by = name === 'frames' ? (input as { camera: string }).camera : ['capture', 'suggestions', 'labels'].includes(name) ? (input as { captureId: string }).captureId : name === 'compare' ? (input as { metric: string }).metric : name === 'still' ? (input as { id: string }).id : null
+    const by = name === 'frames' ? (input as { camera: string }).camera : ['capture', 'frameQuality', 'suggestions', 'labels'].includes(name) ? (input as { captureId: string }).captureId : name === 'compare' ? (input as { metric: string }).metric : name === 'still' ? (input as { id: string }).id : null
     const answer = by !== null && data.has(`${name}:${by}`) ? data.get(`${name}:${by}`) : data.get(name)
     return { data: opts?.enabled === false ? undefined : answer }
   } })
@@ -55,7 +55,7 @@ vi.mock('@/src/utils/trpc', () => {
     apiBase: () => '',
     trpc: {
       useUtils: () => ({ vision: { invalidate } }),
-      vision: { analyzers: query('analyzers'), status: query('status'), podTrends: query('podTrends'), allPodSeries: query('allPodSeries'), compare: query('compare'), capture: query('capture'), regions: query('regions'), suggestions: query('suggestions'), labels: query('labels'), labelStats: query('labelStats'), podCodes: query('podCodes'), boxesOff: query('boxesOff'), agreement: query('agreement'), podLabels: query('podLabels'), setPrimary: mutation('setPrimary'), rerun: mutation('rerun'), setRegions: mutation('setRegions') },
+      vision: { analyzers: query('analyzers'), status: query('status'), podTrends: query('podTrends'), allPodSeries: query('allPodSeries'), compare: query('compare'), capture: query('capture'), frameQuality: query('frameQuality'), regions: query('regions'), suggestions: query('suggestions'), labels: query('labels'), labelStats: query('labelStats'), podCodes: query('podCodes'), boxesOff: query('boxesOff'), agreement: query('agreement'), podLabels: query('podLabels'), setPrimary: mutation('setPrimary'), rerun: mutation('rerun'), setRegions: mutation('setRegions') },
       camera: { list: query('frames'), get: query('still') },
       grow: { pods: query('pods'), current: query('current') },
       datasets: { summary: query('summary') },
@@ -96,7 +96,10 @@ const openExport = () => {
   open('Teach')
   fireEvent.click(screen.getByText('Export dataset'))
 }
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  vi.unstubAllGlobals()
+})
 
 describe('AnalysisPage', () => {
   it('lists every method version as a row, the primary picked by its radio', () => {
@@ -677,23 +680,40 @@ describe('AnalysisPage', () => {
     expect(calls.capture).toHaveBeenLastCalledWith({ captureId: '' }, { enabled: false })
   })
 
-  it('offers a dataset download for the chosen window, with or without photos', () => {
+  it('shows the live frame and waiting count while a historical rescore is still open', () => {
+    data.set('status', { running: 'upper-new', runningKind: 'live', waiting: ['lower-new'], dropped: 2, failed: 0, backfill: { analyzer: 'exg-otsu', done: 3, total: 10 } })
+    render(<AnalysisPage />)
+    expect(screen.getByText(/Re-running exg-otsu: 3 of 10 captures · Scoring upper-new · 1 fresh frame waiting · 2 older frames replaced/)).toBeTruthy()
+  })
+
+  it('prepares the chosen dataset and lets the browser stream it or the user cancel it', async () => {
     data.set('summary', { from: '', to: '', images: true, captures: 12, analyses: 360, telemetry: 900, labels: 45, imageBytes: 2_400_000 })
     render(<AnalysisPage />)
     expect(screen.queryByText('Download')).toBeNull()
     openExport()
     expect(screen.getByText('12 photos · 360 results · 45 labels · 900 readings · about 2.4 MB')).toBeTruthy()
     expect(screen.getByTestId('label-pods-stub').textContent).toBe(Array.from({ length: 15 }, (_, i) => i + 16).join(','))
-    const link = screen.getByText('Download').closest('a') as HTMLAnchorElement
-    const q = new URL(link.href, 'http://unit').searchParams
-    expect(q.get('images')).toBe('1')
-    expect(Date.parse(q.get('to') ?? '') - Date.parse(q.get('from') ?? '')).toBe(30 * 86_400_000)
     fireEvent.click(screen.getByRole('tab', { name: '7 days' }))
     fireEvent.click(screen.getByLabelText('Include photos'))
-    const q2 = new URL((screen.getByText('Download').closest('a') as HTMLAnchorElement).href, 'http://unit').searchParams
-    expect(q2.get('images')).toBe('0')
-    expect(Date.parse(q2.get('to') ?? '') - Date.parse(q2.get('from') ?? '')).toBe(7 * 86_400_000)
     expect(calls.summary).toHaveBeenLastCalledWith(expect.objectContaining({ images: false }))
+    const starting = { id: 'export-a', analyses: 12, telemetry: 9, bytes: 0, error: null }
+    const fetchMock = vi.fn(async (_url: string, options?: RequestInit) => {
+      if (options?.method === 'POST') return Response.json({ ...starting, state: 'preparing' })
+      if (options?.method === 'DELETE') return new Response(null, { status: 204 })
+      return Response.json({ ...starting, state: 'ready' })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Prepare download' })))
+    expect(screen.getByText(/12 analysis rows and 9 readings staged/)).toBeTruthy()
+    const q = new URL(fetchMock.mock.calls[0]?.[0] ?? '/', 'http://unit').searchParams
+    expect(q.get('images')).toBe('0')
+    expect(Date.parse(q.get('to') ?? '') - Date.parse(q.get('from') ?? '')).toBe(7 * 86_400_000)
+    const link = await screen.findByRole('link', { name: 'Download' }, { timeout: 3000 })
+    expect(link.getAttribute('href')).toBe('/api/datasets/jobs/export-a/download')
+    expect(link.hasAttribute('download')).toBe(true)
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Cancel export' })))
+    expect(screen.getByText('Export cancelled.')).toBeTruthy()
+    expect(fetchMock).toHaveBeenLastCalledWith('/api/datasets/jobs/export-a', { method: 'DELETE' })
   })
 
   it('explains that the demo cannot download', () => {
