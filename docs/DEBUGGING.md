@@ -71,6 +71,7 @@ sources: [{"resource": "https://github.com/iot-root/garden-of-eden", "title": "i
   ```
 
 - **Benchmark Core without touching a garden.** Run `node --import tsx tests/perf/core-read-paths.mts` from a checkout with dependencies installed. It creates a temporary synthetic database and measures care checks, settings reads, tank quality, and history sampling. Use the same machine and Node version for comparison. Before rollout to an ARMv6 unit, compare local HTTP and SSH availability across a normal light/watering cycle, and verify that the scheduled runs still happen.
+- **Check past schedule outcomes.** Under **System → Status → Schedule receipts**, a watering run is confirmed only by a matching recorded pump event. An accepted command without that event is unconfirmed. Refused attempts show their last reason and whether the scheduler is still retrying. A light receipt is the target and hardware-reported level at that scheduler check. These observations are kept only for the current Core session. Neither receipt measures water flow or light output.
 - **Compare a known-good build with a dev candidate.** Record the running Core revision (Settings or the SSH banner) and save a known-good probe log first. Once you're back at the unit and have installed the dev candidate, verify its revision and start a new log. Probe from the same device and network, and include a normal watering run and light transition in both windows when practical.
 
   ```sh
