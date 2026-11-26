@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { MemoryStore } from '../../store/memory'
 import type { PodStatus } from '../../store/types'
 import { seenEmpty } from '../seenEmpty'
@@ -82,5 +82,22 @@ describe('seenEmpty', () => {
     store.settings.update({ podRegions: { upper: { 4: null } } })
     expect(seenEmpty(store, NOW).map(s => s.slot)).toEqual([5])
     expect(store.analyses.forCapture('upper-2026-11-16T10:00:00Z')).toHaveLength(2)
+  })
+
+  it('batches only eligible slots, without reading stats, series or entire frames', () => {
+    const { store, plant, scored } = unit()
+    const batch = vi.spyOn(store.analyses, 'latestBySlot')
+    const expensive = ['stats', 'series', 'forCapture'] as const
+    const wide = expensive.map(k => vi.spyOn(store.analyses, k))
+    plant(1, 'seeded')
+    plant(4)
+    plant(17)
+    plant(18)
+    store.settings.update({ podRegions: { upper: { 4: null }, lower: { 17: null } } })
+    scored(4, 'empty', 0.99)
+    scored(18, 'empty', 0.94)
+    expect(seenEmpty(store, NOW).map(s => s.slot)).toEqual([18])
+    expect(batch).toHaveBeenCalledExactlyOnceWith({ analyzer: 'pod-state', metric: 'pod_state', slots: [18], fromTs: '2026-11-14T12:00:00.000Z' })
+    for (const q of wide) expect(q).not.toHaveBeenCalled()
   })
 })

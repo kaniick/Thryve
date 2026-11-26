@@ -290,6 +290,36 @@ for (const [name, make] of impls) {
       expect(store.analyses.forCapture('b')).toHaveLength(1)
     })
 
+    it('gets one recent row per requested slot from the latest analyser version', () => {
+      store = make()
+      const fromTs = '2026-11-20T00:00:00.000Z'
+      const row = (patch: Partial<AnalysisRow>): AnalysisRow => ({
+        captureId: 'a', ts: fromTs, camera: 'upper', analyzer: 'pod-state', version: 2, source: 'device',
+        slot: 1, metric: 'pod_state', value: 0, detail: { state: 'empty' }, artifact: null, ...patch,
+      })
+      const q = { analyzer: 'pod-state', metric: 'pod_state', slots: [6, 1, 2, 1, 3, 4], fromTs }
+      expect(store.analyses.latestBySlot(q)).toEqual([])
+      store.analyses.add([
+        row({ version: 1, slot: 2, ts: '2026-11-24T00:00:00.000Z' }),
+        row({ slot: 1 }),
+        row({ slot: 4, ts: '2026-11-19T23:59:59.999Z' }),
+        row({ slot: 3, source: 'remote', detail: { state: 'growing', confidence: 0.9 } }),
+        row({ slot: 6, metric: 'green_fraction' }),
+        row({ analyzer: 'other', version: 10 }),
+        // Equal timestamps still choose one deterministic row.
+        row({ slot: 1, captureId: 'second', detail: { state: 'sprouted' } }),
+      ])
+      expect(store.analyses.latestBySlot(q)).toMatchObject([
+        { slot: 1, captureId: 'second', version: 2, detail: { state: 'sprouted' } },
+        { slot: 3, captureId: 'a', version: 2, source: 'remote', detail: { state: 'growing', confidence: 0.9 } },
+      ])
+      // Newer versions, even those without this metric yet, replace the previous version.
+      store.analyses.add([row({ metric: 'green_fraction', version: 3 })])
+      expect(store.analyses.latestBySlot(q)).toEqual([])
+      expect(store.analyses.latestBySlot({ ...q, metric: 'green_fraction' })).toMatchObject([{ slot: 1, version: 3 }])
+      expect(store.analyses.latestBySlot({ ...q, slots: [] })).toEqual([])
+    })
+
     it('automations round-trip their AST, update in place and keep a pruned run log', () => {
       store = make()
       const rule = { name: 'pH high', enabled: true, dryRun: true, priority: 50, cooldownMin: 30, trigger: { kind: 'tick' as const, everyMin: 5 }, conditions: { kind: 'compare' as const, op: '>' as const, left: { kind: 'signal' as const, signal: 'sensor.ph' }, right: { kind: 'literal' as const, value: 6.5 } }, actions: [{ kind: 'notify' as const, message: 'high' }] }

@@ -251,6 +251,12 @@ export interface AnalysisRow {
   artifact: string | null
 }
 export interface AnalysisPoint { ts: string, value: number, captureId: string }
+export interface LatestAnalysisQuery {
+  analyzer: string
+  metric: string
+  slots: readonly number[]
+  fromTs: string
+}
 export type AgreementReading = Pick<AnalysisRow, 'captureId' | 'slot' | 'analyzer' | 'version' | 'metric' | 'value' | 'detail'>
 export interface OmittedAnalysisSlots {
   captureId: string
@@ -507,6 +513,8 @@ export interface Store {
     forCapture(captureId: string): AnalysisRow[]
     /** Agreement metrics on labelled capture/slot pairs, with only the fields required to score them. */
     agreementReadings(): AgreementReading[]
+    /** Latest row per requested slot from the analyser's newest version, ordered by slot. No older-version fallback. */
+    latestBySlot(q: LatestAnalysisQuery): AnalysisRow[]
     /** Remove what the unit itself scored for one capture; remote results stay. */
     removeDevice(captureId: string): void
     /** Rows whose capture time falls in [fromTs, toTs], oldest first. */

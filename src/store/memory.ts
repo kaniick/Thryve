@@ -3,7 +3,7 @@ import type { AlertQuery, AlertRow, Automation, AutomationRun, AnalysisPoint, An
 import type { NotificationChannel, NotificationRule, NotificationRun } from '../notify/types'
 import type { ActivityToken, FeedItem, IosDevice } from '../notify/ios/types'
 import type { AutomationRule } from '../autopilot/types'
-import type { AgreementReading, OmittedAnalysisSlots } from './types'
+import type { AgreementReading, LatestAnalysisQuery, OmittedAnalysisSlots } from './types'
 import { DEFAULT_SETTINGS, POD_LABELS, profileKey } from './types'
 
 /** In-memory Store for tests and the browser demo. Same semantics as SqliteStore. */
@@ -397,6 +397,23 @@ export class MemoryStore implements Store {
     agreementReadings: (): AgreementReading[] => this.analysisRows
       .filter(r => (r.metric === 'green_fraction' || r.metric === 'pod_state') && this.labelRows.has(`${r.captureId}#${r.slot}`))
       .map(({ captureId, slot, analyzer, version, metric, value, detail }) => ({ captureId, slot, analyzer, version, metric, value, detail })),
+    latestBySlot: ({ analyzer, metric, slots, fromTs }: LatestAnalysisQuery): AnalysisRow[] => {
+      if (!slots.length) return []
+      const wanted = new Set(slots)
+      const result = new Map<number, AnalysisRow>()
+      let version = Number.NEGATIVE_INFINITY
+      for (const r of this.analysisRows) {
+        if (r.analyzer !== analyzer || r.version < version) continue
+        if (r.version > version) {
+          version = r.version
+          result.clear()
+        }
+        if (r.metric !== metric || !wanted.has(r.slot) || r.ts < fromTs) continue
+        const previous = result.get(r.slot)
+        if (!previous || previous.ts <= r.ts) result.set(r.slot, r)
+      }
+      return [...result.values()].sort((a, b) => a.slot - b.slot)
+    },
     removeDevice: (captureId: string): void => {
       const keep = this.analysisRows.filter(r => r.captureId !== captureId || r.source !== 'device')
       this.analysisRows.splice(0, this.analysisRows.length, ...keep)
