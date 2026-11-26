@@ -264,9 +264,9 @@ describe('grow cycle start date', () => {
     await c.grow.start({ notes: '', startedAt: '2026-08-01' })
     for (const k of ['reminder_thinning', 'reminder_root_check', 'reminder_nutrients:1', 'reminder_nutrients:2', 'reminder_nutrients:3', 'custom']) store.grow.markIssued(k)
     await c.grow.setStage({ stage: 'harvest' })
-    // Day 15: thinning (14) and the first two nutrient top-ups (7, 14) were due; root check (21) and the third (21) wait again.
+    // Day 15: thinning (14) was due; root check (21) waits again. The fixed nutrient timer is retired.
     const moved = await c.grow.setStart({ startedAt: '2026-10-26' })
-    expect(moved.issued).toEqual(['reminder_thinning', 'reminder_nutrients:1', 'reminder_nutrients:2', 'custom'])
+    expect(moved.issued).toEqual(['reminder_thinning', 'custom'])
     // Past the seedling days a harvest stays called.
     expect(moved.stage).toBe('harvest')
     // Back to the first days: germination, with nothing issued.

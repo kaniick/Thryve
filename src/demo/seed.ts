@@ -4,6 +4,7 @@
  * camera frames (SVGs standing in for JPEGs). Deterministic so the demo looks
  * the same every load.
  */
+import { FEED_ALERT } from '../care/feedAlerts'
 import type { HalClient } from '../hardware/types'
 import { planLayout, sowingPlan } from '../plants/planner'
 import type { AnalysisRow, Store, TelemetryPoint } from '../store/types'
@@ -25,8 +26,6 @@ export function seedDemo(store: Store, hal: HalClient, now = new Date()): void {
   const cycle = store.grow.start(started.toISOString(), 'Autumn greens + herbs')
   store.grow.setStage('vegetative', now.toISOString())
   store.grow.markIssued('reminder_thinning')
-  store.grow.markIssued('reminder_nutrients:1')
-  store.grow.markIssued('reminder_nutrients:2')
   void cycle
 
   for (let slot = 1; slot <= 30; slot++) {
@@ -66,7 +65,7 @@ export function seedDemo(store: Store, hal: HalClient, now = new Date()): void {
   store.telemetry.add(pts)
   store.counters.add('light_hours', 19 * 14 + 2130, now.toISOString())
 
-  store.alerts.raise('reminder_nutrients', 'Add nutrients (every 7 days)', new Date(now.getTime() - 2 * 3_600_000).toISOString())
+  store.alerts.raise(FEED_ALERT, 'Feed the tower · it’s time since the last feed.', new Date(now.getTime() - 2 * 3_600_000).toISOString())
 
   // Camera frames: generated SVG "stills" so the gallery has something to show.
   for (const cam of ['upper', 'lower'] as const) {

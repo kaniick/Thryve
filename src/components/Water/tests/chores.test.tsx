@@ -76,6 +76,20 @@ describe('Chores', () => {
     expect(calls.invalidateCare).toHaveBeenCalled()
   })
 
+  it('can log Feed early with the amount and product, only after saving', async () => {
+    data.set('chores', [chore('feed', 'ok')])
+    render(<Chores />)
+    fireEvent.click(screen.getByRole('button', { name: 'Log feed' }))
+    const form = within(screen.getByRole('dialog', { name: 'Log a feed' }))
+    expect(calls.logAction).not.toHaveBeenCalled()
+    fireEvent.change(form.getByLabelText('Amount (optional)'), { target: { value: '0.5' } })
+    fireEvent.change(form.getByLabelText('Product (optional)'), { target: { value: 'Gardyn Plant Food' } })
+    await act(async () => fireEvent.click(form.getByRole('button', { name: 'Save' })))
+    expect(calls.logAction).toHaveBeenCalledExactlyOnceWith({ kind: 'feed', amount: 0.5, unit: 'tsp', product: 'Gardyn Plant Food', note: '' })
+    expect(calls.acknowledge).not.toHaveBeenCalled()
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
   it('acknowledges a chore\'s open alert for Done, as Alerts and Needs you do, and waits for the alerts to load', async () => {
     data.set('chores', [chore('top_off', 'due', { basis: 'reading' })])
     data.delete('alerts')

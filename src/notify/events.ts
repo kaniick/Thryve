@@ -1,6 +1,7 @@
 
 import { pumpFault } from '../lib/pumpFault'
 import type { NotifyEvent } from './types'
+import { currentFeedAlert, LEGACY_FEED_ALERT } from '../care/feedAlerts'
 
 /** Care / chore alert kinds that count as a due task. */
 const TASK_KINDS = /^(chore_|reminder_|care_|setup_)/
@@ -59,6 +60,7 @@ export function edges(prev: EventSnapshot | null, next: EventSnapshot): FiredEve
   const out: FiredEvent[] = []
 
   for (const [kind, row] of next.alerts) {
+    if (kind === LEGACY_FEED_ALERT) continue
     const was = prev.alerts.get(kind)
     if (row.active && !was?.active) {
       out.push({ event: 'alert_raised', key: `alert_raised:${kind}`, alert: { kind, detail: row.detail } })
@@ -76,6 +78,7 @@ export function edges(prev: EventSnapshot | null, next: EventSnapshot): FiredEve
     }
   }
   for (const [kind, was] of prev.alerts) {
+    if (kind === LEGACY_FEED_ALERT) continue
     if (was.active && !next.alerts.has(kind)) {
       out.push({ event: 'alert_cleared', key: `alert_cleared:${kind}`, alert: { kind, detail: was.detail } })
       if (kind === 'hal_offline') out.push({ event: 'unit_online', key: 'unit_online', alert: { kind, detail: was.detail } })
@@ -113,6 +116,6 @@ export function edges(prev: EventSnapshot | null, next: EventSnapshot): FiredEve
 
 export function eventMatches(trigger: { event: NotifyEvent, alertKind?: string }, fired: FiredEvent): boolean {
   if (trigger.event !== fired.event) return false
-  if (trigger.alertKind && fired.alert?.kind !== trigger.alertKind) return false
+  if (trigger.alertKind && fired.alert?.kind !== currentFeedAlert(trigger.alertKind)) return false
   return true
 }

@@ -54,16 +54,18 @@ describe('HaBridge', () => {
     expect(mqtt.published.find(p => p.topic === 'thryve/u1/core/availability')?.payload).toBe('online')
   })
 
-  it('state reflects reminders and grow day; done button clears a reminder', async () => {
+  it('keeps the existing nutrients entity and Done topic, recording one feed', async () => {
     const { mqtt, store, bridge } = setup()
     store.grow.start('2026-10-20T00:00:00Z')
-    store.alerts.raise('reminder_nutrients', 'feed', '2026-10-31T00:00:00Z')
+    store.alerts.raise('chore_feed', 'feed', '2026-10-31T00:00:00Z')
     bridge.publishState()
     const state = JSON.parse(mqtt.published.at(-1)?.payload ?? '{}') as { grow: { day: number }, reminders: Record<string, boolean> }
     expect(state.grow.day).toBe(11)
     expect(state.reminders.reminder_nutrients).toBe(true)
     await bridge.onMessage('thryve/u1/core/done/reminder_nutrients', '{}')
+    await bridge.onMessage('thryve/u1/core/done/reminder_nutrients', '{}')
     expect(store.alerts.list({ activeOnly: true })).toHaveLength(0)
+    expect(store.tankActions.list({ kind: 'feed' })).toMatchObject([{ kind: 'feed', note: 'Marked done in Home Assistant' }])
     const after = JSON.parse(mqtt.published.at(-1)?.payload ?? '{}') as { reminders: Record<string, boolean> }
     expect(after.reminders.reminder_nutrients).toBe(false)
   })

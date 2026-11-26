@@ -83,9 +83,16 @@ refresh, feed and clean. Each says whether it comes **from a reading** or the
   probe", or "tank level reading suspect". A suspect or stale tank level is
   never used to ask for a top-off.
 
-Every dose and target links the knowledge note it comes from. **Done** logs the
-chore in the tank log, and the chore counts from there. An agent reads the same
-list over MCP (`list_chores`).
+Every dose and target links the knowledge note it comes from. **Log feed**
+records a feed even before it is due, with an optional amount and product.
+Feed replaces the old fixed-cycle nutrients reminder. Without a trusted EC
+reading, its next follow-up counts from the last logged feed or refresh.
+Set the interval to zero in Settings to turn off the calendar reminder
+without turning off guidance from a trusted EC reading. The existing Home
+Assistant nutrients entity and Done button follow the Feed chore.
+
+**Done** logs other chores in the tank log. An agent reads the same list
+over MCP (`list_chores`).
 
 ## Keep a tank log
 
