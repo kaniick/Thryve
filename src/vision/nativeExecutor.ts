@@ -163,7 +163,7 @@ export function createNativeExecutor(o: NativeExecutorOptions): NativeExecutor {
         const m = out.models.find(x => x.id === n.id)
         if (!m) throw new Error(`no result for ${n.id}`)
         if (m.version !== n.version) throw new Error(`${n.id} ran version ${m.version}, core lists ${n.version}`)
-        return { analyzer: n.id, version: n.version, results: m.pods.flatMap(p => podStateRows(p.slot, p.probabilities, p.class, m.classes, m.revision)) }
+        return { analyzer: n.id, version: n.version, ...(m.dark && { dark: true as const }), results: m.pods.flatMap(p => podStateRows(p.slot, p.probabilities, p.class, m.classes, m.revision)) }
       })
     }
     catch (e) {

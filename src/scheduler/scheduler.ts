@@ -16,6 +16,7 @@ import type { HalClient, HalSnapshot } from '../hardware/types'
 import type { EventBus } from '../lib/eventBus'
 import type { LightSpec, PumpSpec, Schedule, Store } from '../store/types'
 import type { SunHours } from './lightPlan'
+import { readLightReceipt, type LightReceipt } from './receipts'
 import { followSun } from './sun'
 import { dayEnabled, localTime, minuteToHHMM } from './time'
 
@@ -123,6 +124,7 @@ export class Scheduler {
   private readonly log: (msg: string) => void
   /** Refused scheduled pump runs being tried again, by schedule id. */
   private readonly retries = new Map<string, Retry>()
+  private lastLightReceipt: LightReceipt | null | undefined
 
   constructor(private readonly deps: SchedulerDeps) {
     this.now = deps.now ?? (() => new Date())
@@ -138,6 +140,22 @@ export class Scheduler {
   stop(): void {
     if (this.timer) clearInterval(this.timer)
     this.timer = null
+  }
+
+  /** Read-only diagnostics. */
+  receiptState(): { lights: LightReceipt[], retrying: string[] } {
+    return { lights: this.deps.store.diagnostics.lights(12), retrying: [...this.retries.values()].map(r => r.key) }
+  }
+
+  private observeLight(at: Date, target: number | null): void {
+    const { hal, light } = this.deps
+    const receipt = readLightReceipt(at.toISOString(), target, light?.status().source ?? null, hal.snapshot())
+    const previous = this.lastLightReceipt === undefined ? this.deps.store.diagnostics.lights(1)[0] : this.lastLightReceipt
+    this.lastLightReceipt = previous ?? null
+    if (previous && receipt.target === previous.target && receipt.reported === previous.reported
+      && receipt.source === previous.source && receipt.outcome === previous.outcome && receipt.fault === previous.fault) return
+    this.deps.store.diagnostics.recordLight(receipt)
+    this.lastLightReceipt = receipt
   }
 
   private timerTick(): void {
@@ -175,6 +193,13 @@ export class Scheduler {
     }
 
     // Pump: fire once per schedule/day/minute.
+    try {
+      this.observeLight(now, lightTarget)
+    }
+    catch (e) {
+      // Diagnostics must not get in the way of evaluating due watering.
+      this.log(`light observation failed: ${(e as Error).message}`)
+    }
     const pumpFired: string[] = []
     for (const s of schedules.filter((s): s is Schedule & { spec: PumpSpec } => s.kind === 'pump')) {
       if (s.spec.minute !== lt.minute) continue
@@ -206,12 +231,29 @@ export class Scheduler {
   private async runPump(s: Schedule & { spec: PumpSpec }, key: string, tries: number, now: Date): Promise<boolean> {
     const { store, hal, events } = this.deps
     let reason: string | null = null
+    let reportedStart: string | null = null
+    // An ACK that simply reflects an already-running pump is not a new start.
+    let wasOff = false
+    try {
+      const snapshot = hal.snapshot()
+      wasOff = snapshot.online && snapshot.actuators.pump?.on === false
+    }
+    catch {
+      // Missing diagnostics must not change the existing guard/command path.
+    }
     try {
       const state = await hal.setActuator('pump', { on: true, level: s.spec.level, durationS: s.spec.durationS })
       if (!state.on) reason = refusalReason(hal.snapshot(), undefined, state)
+      else if (wasOff && Date.parse(state.since) >= now.getTime() - 1000) reportedStart = state.since
     }
     catch (e) {
       reason = refusalReason(hal.snapshot(), e)
+    }
+    try {
+      store.diagnostics.recordAttempt({ runKey: key, attempt: tries, at: now.toISOString(), result: reason === null ? 'accepted' : 'refused', reason, reportedStart, requestedS: s.spec.durationS })
+    }
+    catch (e) {
+      this.log(`pump receipt could not be saved: ${(e as Error).message}`)
     }
     const at = minuteToHHMM(s.spec.minute)
     if (reason === null) {

@@ -117,6 +117,28 @@ export interface Schedule {
 
 export interface ScheduleRun { scheduleId: string, key: string, firedAt: string, result: string }
 
+export interface PumpAttempt {
+  runKey: string
+  attempt: number
+  at: string
+  result: 'accepted' | 'refused'
+  reason: string | null
+  reportedStart: string | null
+  requestedS: number
+}
+
+export interface LightReceipt {
+  at: string
+  target: number | null
+  reported: number | null
+  outcome: 'matched' | 'held' | 'not-matched' | 'unconfirmed' | 'no-target'
+  source: 'manual' | 'autopilot' | 'schedule' | null
+  fault: string | null
+}
+
+export type FrameCheck = 'scored' | 'dark' | 'damaged' | 'unreadable' | 'failed' | 'no-result'
+export const MAX_LIGHT_RECEIPTS = 256
+
 export interface AlertQuery { activeOnly?: boolean, kind?: string, since?: string, limit?: number, offset?: number }
 
 export interface AlertRow {
@@ -392,6 +414,14 @@ export interface PodCodeRead {
 export interface FlashSample { ts: string, sectors: number, bytes: number }
 
 export interface Store {
+  diagnostics: {
+    recordAttempt(attempt: PumpAttempt): void
+    attempts(keys: string[]): PumpAttempt[]
+    recordLight(receipt: LightReceipt): void
+    lights(limit: number): LightReceipt[]
+    markFrame(id: string, check: FrameCheck): void
+    frame(id: string): FrameCheck | null
+  }
   settings: {
     get(): DeviceSettings
     update(patch: Partial<Omit<DeviceSettings, 'updatedAt'>>): DeviceSettings
@@ -521,6 +551,8 @@ export interface Store {
     removeDevice(captureId: string): void
     /** Rows whose capture time falls in [fromTs, toTs], oldest first. */
     range(fromTs: string, toTs: string): AnalysisRow[]
+    /** Bounded, chronological pages for exports. New rows after the scan begins are excluded. */
+    scan(fromTs: string, toTs: string): Iterable<AnalysisRow>
     /** The latest version with stored results, or null if the analyser has none. */
     latestVersion(analyzer: string): number | null
     count(fromTs: string, toTs: string): number

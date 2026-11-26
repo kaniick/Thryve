@@ -113,8 +113,12 @@ number per pod in `pod_growth`. It works as a first signal, but:
    threshold, the PlantCV approach). A learned model is one more analyser
    that loads an ONNX file (superseded by the 2026-11-09 amendment: plain
    TypeScript with a weights file). Every enabled on-device analyser runs on each new
-   capture, on a worker thread, through a single queue that drops to the
-   newest capture when it falls behind.
+   capture, on a worker thread. The queue keeps at most one waiting frame per
+   camera and replaces it with the newest. Historical rescoring yields between
+   frames and waits behind live work. The Analysis page shows the live queue
+   alongside rescore progress. Frame-quality notes distinguish missing or
+   stale evidence, unreadable or dark frames, missing pod boxes, and
+   low-confidence pod-state guesses without replacing existing results.
 
 2. **One results table replaces `pod_growth`.** Each row is
    `(captureId, analyzer, version, slot, metric, value, detail?)`, where
@@ -130,7 +134,14 @@ number per pod in `pod_growth`. It works as a first signal, but:
    bundle of photos, results, pod and grow-cycle metadata and the sensor
    telemetry for the same windows, as JSONL (Parquet later if it earns it).
    This is thryve's counterpart of sleepypod's sleep-stage dataset script:
-   the thing you pull to a laptop to measure, recalibrate or train.
+   the thing you pull to a laptop to measure, recalibrate or train. Because a
+   TAR header needs the uncompressed entry length, the largest JSONL files are
+   staged in bounded batches on the data volume and sent in chunks. The archive
+   paths and format are unchanged. The web UI prepares one export at a time,
+   reports staging and transfer progress, and lets the browser save the
+   archive directly. Cancelling or leaving a prepared export unclaimed
+   discards its staging files. A full data volume reports an actionable
+   preparation error.
 
 4. **Off-device storage is a second `BlobSink`.** `BlobSink` already
    abstracts where stills live (`FsSink`, `MemorySink`). A `S3Sink` (any
