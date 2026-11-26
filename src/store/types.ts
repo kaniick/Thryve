@@ -447,6 +447,8 @@ export interface Store {
   captures: {
     add(c: Capture): void
     list(camera?: 'upper' | 'lower', limit?: number): Capture[]
+    /** Capture count and recorded bytes in the inclusive timestamp window. */
+    totals(fromTs: string, toTs: string): { count: number, bytes: number }
     get(id: string): Capture | null
     prune(camera: 'upper' | 'lower', keep: number): Capture[]
   }
@@ -502,6 +504,7 @@ export interface Store {
     removeDevice(captureId: string): void
     /** Rows whose capture time falls in [fromTs, toTs], oldest first. */
     range(fromTs: string, toTs: string): AnalysisRow[]
+    count(fromTs: string, toTs: string): number
     stats(): AnalyzerStats[]
   }
   podLabels: {
@@ -515,6 +518,7 @@ export interface Store {
     forCapture(captureId: string): PodLabel[]
     /** Labels whose capture time falls in [fromTs, toTs], oldest first, then by slot. */
     range(fromTs: string, toTs: string): PodLabel[]
+    count(fromTs: string, toTs: string): number
     /** Newest capture first, then by pod; `before` continues after a page's last row. */
     list(q: { label?: PodLabelValue, camera?: 'upper' | 'lower', limit: number, before?: PodLabelCursor }): PodLabel[]
     /** How many pods carry each label. */

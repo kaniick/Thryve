@@ -62,14 +62,14 @@ function telemetryIn(ctx: Context, w: ExportWindow) {
 }
 
 export function summarize(ctx: Context, w: ExportWindow): DatasetSummary {
-  const captures = capturesIn(ctx, w)
+  const captures = ctx.store.captures.totals(w.from, w.to)
   return {
     ...w,
-    captures: captures.length,
-    analyses: ctx.store.analyses.range(w.from, w.to).length,
+    captures: captures.count,
+    analyses: ctx.store.analyses.count(w.from, w.to),
     telemetry: SensorId.options.reduce((n, s) => n + ctx.store.telemetry.count(s, w.from, w.to), 0),
-    labels: ctx.store.podLabels.range(w.from, w.to).length,
-    imageBytes: captures.reduce((n, c) => n + c.bytes, 0),
+    labels: ctx.store.podLabels.count(w.from, w.to),
+    imageBytes: captures.bytes,
   }
 }
 

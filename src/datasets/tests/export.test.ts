@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process'
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createApp } from '../../../server/app'
 import { MemorySink } from '../../camera/captures'
 import { SimHal } from '../../hardware/sim'
@@ -96,6 +96,30 @@ describe('dataset export', () => {
     expect(await c.datasets.summary()).toMatchObject({ captures: 3, analyses: 60, telemetry: 1, labels: 5, images: true })
     expect((await c.datasets.summary({ from: '2026-01-01T00:00:00Z' })).captures).toBe(4)
     await expect(c.datasets.summary({ from: 'nope' })).rejects.toThrow(/ISO/)
+  })
+
+  it('previews counts and image sizes without loading capture, analysis or label rows', async () => {
+    const ctx = await unit()
+    const fail = () => {
+      throw new Error('preview loaded full records')
+    }
+    const spies = [
+      vi.spyOn(ctx.store.captures, 'list').mockImplementation(fail),
+      vi.spyOn(ctx.store.analyses, 'range').mockImplementation(fail),
+      vi.spyOn(ctx.store.podLabels, 'range').mockImplementation(fail),
+    ]
+    try {
+      const c = createCallerFactory(appRouter)(ctx)
+      const from = '2026-10-29T00:00:00.000Z'
+      const to = '2026-10-29T01:00:00.000Z'
+      // Inline preview images keep their recorded byte count, even if the archive omits images.
+      expect(await c.datasets.summary({ from, to, images: false })).toEqual({
+        from, to, images: false, captures: 1, analyses: 0, telemetry: 0, labels: 1, imageBytes: 10,
+      })
+    }
+    finally {
+      for (const spy of spies) spy.mockRestore()
+    }
   })
 
   it('streams a tar of manifest, JSONL tables, metadata and stills over HTTP', async () => {

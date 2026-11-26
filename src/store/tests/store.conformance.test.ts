@@ -422,6 +422,28 @@ for (const [name, make] of impls) {
       expect(store.tankActions.list()).toHaveLength(2)
     })
 
+    it('aggregates dataset metadata inside inclusive bounds, including retained rows of pruned captures', () => {
+      store = make()
+      const before = '2026-11-01T00:00:00.000Z'
+      const from = '2026-11-02T00:00:00.000Z'
+      const to = '2026-11-03T00:00:00.000Z'
+      store.captures.add({ id: 'before', camera: 'upper', ts: before, path: 'before.jpg', bytes: 500 })
+      store.captures.add({ id: 'first', camera: 'lower', ts: from, path: 'first.jpg', bytes: 250 })
+      store.captures.add({ id: 'last', camera: 'upper', ts: to, path: 'last.jpg', bytes: 470 })
+      const row = { captureId: 'pruned', camera: 'upper' as const, ts: to, analyzer: 'green-threshold', version: 1, source: 'device' as const, slot: 1, metric: 'green_fraction', value: 0.35, artifact: null, detail: null }
+      store.analyses.add([row, { ...row, version: 2, source: 'remote' }, { ...row, captureId: 'before', ts: before }])
+      const label = { captureId: 'pruned', camera: 'upper' as const, ts: to, slot: 1, label: 'growing' as const, labelledAt: to, plant: null, plantedAt: null }
+      store.podLabels.set(label)
+      store.podLabels.set({ ...label, label: 'ready' })
+      expect(store.captures.totals(from, to)).toEqual({ count: 2, bytes: 720 })
+      expect(store.captures.totals(to, to)).toEqual({ count: 1, bytes: 470 })
+      expect(store.analyses.count(from, to)).toBe(2)
+      expect(store.podLabels.count(from, to)).toBe(1)
+      expect(store.captures.totals(to, from)).toEqual({ count: 0, bytes: 0 })
+      expect(store.analyses.count(from, from)).toBe(0)
+      expect(store.podLabels.count(from, from)).toBe(0)
+    })
+
     it('pod labels upsert per capture and pod, clear, range by capture time and count', () => {
       store = make()
       const at = (captureId: string, ts: string, slot: number, label: PodLabelValue) =>

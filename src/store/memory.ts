@@ -235,6 +235,16 @@ export class MemoryStore implements Store {
     },
     list: (camera?: 'upper' | 'lower', limit = 100): Capture[] =>
       this.captureRows.filter(c => !camera || c.camera === camera).slice().sort((a, b) => b.ts.localeCompare(a.ts)).slice(0, limit),
+    totals: (from: string, to: string) => {
+      let count = 0
+      let bytes = 0
+      for (const c of this.captureRows) {
+        if (c.ts < from || c.ts > to) continue
+        count++
+        bytes += c.bytes
+      }
+      return { count, bytes }
+    },
     get: (id: string): Capture | null => this.captureRows.find(c => c.id === id) ?? null,
     prune: (camera: 'upper' | 'lower', keep: number): Capture[] => {
       const rows = this.captures.list(camera, Number.MAX_SAFE_INTEGER)
@@ -392,6 +402,7 @@ export class MemoryStore implements Store {
     },
     range: (fromTs: string, toTs: string): AnalysisRow[] =>
       this.analysisRows.filter(r => r.ts >= fromTs && r.ts <= toTs).sort((a, b) => a.ts.localeCompare(b.ts)),
+    count: (from: string, to: string): number => countWindow(this.analysisRows, from, to),
     stats: (): AnalyzerStats[] => {
       const m = new Map<string, AnalyzerStats & { ids: Set<string> }>()
       for (const r of this.analysisRows) {
@@ -422,6 +433,7 @@ export class MemoryStore implements Store {
     range: (fromTs: string, toTs: string): PodLabel[] =>
       [...this.labelRows.values()].filter(l => l.ts >= fromTs && l.ts <= toTs)
         .sort((a, b) => a.ts.localeCompare(b.ts) || a.captureId.localeCompare(b.captureId) || a.slot - b.slot).map(l => ({ ...l })),
+    count: (from: string, to: string): number => countWindow(this.labelRows.values(), from, to),
     list: (q: { label?: PodLabelValue, camera?: 'upper' | 'lower', limit: number, before?: PodLabelCursor }): PodLabel[] => {
       // Code-unit order, as SQLite compares text, so both stores page alike.
       const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
@@ -698,6 +710,12 @@ export class MemoryStore implements Store {
   close(): void {
     // nothing to release
   }
+}
+
+function countWindow(rows: Iterable<{ ts: string }>, from: string, to: string): number {
+  let count = 0
+  for (const row of rows) if (row.ts >= from && row.ts <= to) count++
+  return count
 }
 
 /** Keep at most `max` points by uniform stride (good enough for charts). */

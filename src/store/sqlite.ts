@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3'
-import { and, asc, desc, eq, gt, gte, isNull, lt, lte, notInArray, or, sql } from 'drizzle-orm'
+import { and, asc, between, count, desc, eq, gt, gte, isNull, lt, lte, notInArray, or, sql } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { existsSync, mkdirSync } from 'node:fs'
@@ -276,6 +276,8 @@ export class SqliteStore implements Store {
       return rows
     },
     get: (id: string): Capture | null => this.db.select().from(t.captures).where(eq(t.captures.id, id)).get() ?? null,
+    totals: (from: string, to: string) => this.db.select({ count: count(), bytes: sql<number>`coalesce(sum(${t.captures.bytes}), 0)` })
+      .from(t.captures).where(between(t.captures.ts, from, to)).get() ?? { count: 0, bytes: 0 },
     prune: (camera: 'upper' | 'lower', keep: number): Capture[] => {
       const rows = this.db.select().from(t.captures).where(eq(t.captures.camera, camera)).orderBy(desc(t.captures.ts)).all()
       const drop = rows.slice(keep)
@@ -491,6 +493,7 @@ export class SqliteStore implements Store {
     range: (fromTs: string, toTs: string): AnalysisRow[] =>
       this.db.select().from(t.analysisResults).where(and(gte(t.analysisResults.ts, fromTs), lte(t.analysisResults.ts, toTs)))
         .orderBy(asc(t.analysisResults.ts), asc(t.analysisResults.id)).all().map(rowToAnalysis),
+    count: (from: string, to: string): number => this.db.select({ n: count() }).from(t.analysisResults).where(between(t.analysisResults.ts, from, to)).get()?.n ?? 0,
     stats: (): AnalyzerStats[] =>
       this.db.all<AnalyzerStats>(sql`SELECT analyzer, version, source, count(*) AS rows, count(DISTINCT captureId) AS captures, min(ts) AS firstTs, max(ts) AS lastTs
         FROM analysis_results GROUP BY analyzer, version, source ORDER BY analyzer, version`),
@@ -523,6 +526,7 @@ export class SqliteStore implements Store {
     range: (fromTs: string, toTs: string): PodLabel[] =>
       this.db.select().from(t.podLabels).where(and(gte(t.podLabels.ts, fromTs), lte(t.podLabels.ts, toTs)))
         .orderBy(asc(t.podLabels.ts), asc(t.podLabels.captureId), asc(t.podLabels.slot)).all().map(rowToLabel),
+    count: (from: string, to: string): number => this.db.select({ n: count() }).from(t.podLabels).where(between(t.podLabels.ts, from, to)).get()?.n ?? 0,
     list: (q: { label?: PodLabelValue, camera?: 'upper' | 'lower', limit: number, before?: PodLabelCursor }): PodLabel[] => {
       const b = q.before
       return this.db.select().from(t.podLabels).where(and(
