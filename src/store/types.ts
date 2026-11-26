@@ -521,6 +521,8 @@ export interface Store {
     removeDevice(captureId: string): void
     /** Rows whose capture time falls in [fromTs, toTs], oldest first. */
     range(fromTs: string, toTs: string): AnalysisRow[]
+    /** Bounded, chronological pages for exports. New rows after the scan begins are excluded. */
+    scan(fromTs: string, toTs: string): Iterable<AnalysisRow>
     /** The latest version with stored results, or null if the analyser has none. */
     latestVersion(analyzer: string): number | null
     count(fromTs: string, toTs: string): number

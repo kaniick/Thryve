@@ -130,7 +130,10 @@ number per pod in `pod_growth`. It works as a first signal, but:
    bundle of photos, results, pod and grow-cycle metadata and the sensor
    telemetry for the same windows, as JSONL (Parquet later if it earns it).
    This is thryve's counterpart of sleepypod's sleep-stage dataset script:
-   the thing you pull to a laptop to measure, recalibrate or train.
+   the thing you pull to a laptop to measure, recalibrate or train. Because a
+   TAR header needs the uncompressed entry length, the largest JSONL files are
+   staged in bounded batches on the data volume and sent in chunks. The archive
+   paths and format are unchanged.
 
 4. **Off-device storage is a second `BlobSink`.** `BlobSink` already
    abstracts where stills live (`FsSink`, `MemorySink`). A `S3Sink` (any

@@ -1,0 +1,1 @@
+CREATE INDEX `analysis_results_ts` ON `analysis_results` (`ts`);

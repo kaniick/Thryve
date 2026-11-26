@@ -4,12 +4,21 @@
  * hundreds of megabytes of stills and a Pi has 512 MB of RAM.
  */
 
-export interface TarEntry {
+export interface BufferedTarEntry {
   name: string
   bytes: Uint8Array
   /** Seconds since the epoch. */
   mtime?: number
 }
+
+export interface StreamedTarEntry {
+  name: string
+  size: number
+  chunks: AsyncIterable<Uint8Array>
+  mtime?: number
+}
+
+export type TarEntry = BufferedTarEntry | StreamedTarEntry
 
 const BLOCK = 512
 const enc = new TextEncoder()
@@ -42,29 +51,43 @@ export function header(name: string, size: number, mtime: number): Uint8Array {
 }
 
 /** Header, data and padding for one file. */
-export function entryChunks(e: TarEntry): Uint8Array[] {
+export function entryChunks(e: BufferedTarEntry): Uint8Array[] {
   const pad = (BLOCK - (e.bytes.length % BLOCK)) % BLOCK
   return [header(e.name, e.bytes.length, e.mtime ?? Date.now() / 1000), e.bytes, new Uint8Array(pad)]
 }
 
+async function* archiveChunks(entries: AsyncIterable<TarEntry>): AsyncGenerator<Uint8Array> {
+  for await (const entry of entries) {
+    if ('bytes' in entry) {
+      yield* entryChunks(entry).filter(c => c.length)
+      continue
+    }
+    yield header(entry.name, entry.size, entry.mtime ?? Date.now() / 1000)
+    let written = 0
+    for await (const chunk of entry.chunks) {
+      written += chunk.length
+      if (written > entry.size) throw new Error(`tar entry grew: ${entry.name}`)
+      if (chunk.length) yield chunk
+    }
+    if (written !== entry.size) throw new Error(`tar entry truncated: ${entry.name}`)
+    const padding = (BLOCK - (written % BLOCK)) % BLOCK
+    if (padding) yield new Uint8Array(padding)
+  }
+  yield new Uint8Array(BLOCK * 2)
+}
+
 /** A tar stream over lazily produced entries, ending with the two zero blocks. */
-export function tarStream(entries: AsyncIterable<TarEntry>): ReadableStream<Uint8Array> {
-  const it = entries[Symbol.asyncIterator]()
-  let done = false
+export function tarStream(entries: AsyncIterable<TarEntry>, onCancel?: () => void): ReadableStream<Uint8Array> {
+  const it = archiveChunks(entries)
   return new ReadableStream<Uint8Array>({
     async pull(controller) {
-      if (done) return
       const next = await it.next()
-      if (next.done) {
-        done = true
-        controller.enqueue(new Uint8Array(BLOCK * 2))
-        controller.close()
-        return
-      }
-      for (const c of entryChunks(next.value)) if (c.length) controller.enqueue(c)
+      if (next.done) controller.close()
+      else controller.enqueue(next.value)
     },
     async cancel() {
-      await it.return?.()
+      onCancel?.()
+      await it.return(undefined)
     },
   })
 }

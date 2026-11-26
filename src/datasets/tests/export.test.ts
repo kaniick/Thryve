@@ -10,7 +10,8 @@ import { createCore } from '../../server/bootstrap'
 import { appRouter } from '../../server/routers/app'
 import { createCallerFactory } from '../../server/trpc'
 import { MemoryStore } from '../../store/memory'
-import type { PodLabel } from '../../store/types'
+import { SqliteStore } from '../../store/sqlite'
+import type { PodLabel, Store } from '../../store/types'
 import { cropPixels } from '../../vision/regions'
 import { jpeg } from '../../vision/tests/fixtures'
 import { datasetName, resolveWindow } from '../export'
@@ -22,9 +23,8 @@ afterEach(() => {
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true })
 })
 
-async function unit() {
+async function unit(store: Store = new MemoryStore()) {
   const sink = new MemorySink()
-  const store = new MemoryStore()
   const core = createCore({ hal: new SimHal({ tickMs: 0 }), store, version: 'test', sink, now: () => now })
   store.settings.update({ unitName: 'Kitchen Gardyn' })
   for (const [i, ts] of ['2026-09-01T00:00:00Z', '2026-10-20T00:00:00Z', '2026-10-30T00:00:00Z'].entries()) {
@@ -79,6 +79,31 @@ describe('tar writer', () => {
     const dir = untar(new Uint8Array(await new Response(stream).arrayBuffer()))
     expect(readFileSync(join(dir, 'x/hello.txt'), 'utf8')).toBe('hi\n')
     expect(readFileSync(join(dir, 'x/empty'), 'utf8')).toBe('')
+  })
+
+  it('streams one chunk at a time and unwinds the entry producer on cancellation', async () => {
+    const closed = vi.fn()
+    const delivered = vi.fn()
+    async function* rows() {
+      for (let i = 0; i < 300; i++) {
+        delivered()
+        yield new Uint8Array([i])
+      }
+    }
+    const readable = tarStream((async function* () {
+      try {
+        yield { name: 'rows.jsonl', size: 300, chunks: rows() }
+      }
+      finally {
+        closed()
+      }
+    })())
+    const reader = readable.getReader()
+    expect((await reader.read()).value?.length).toBe(512)
+    expect((await reader.read()).value?.length).toBe(1)
+    await reader.cancel()
+    expect(delivered.mock.calls.length).toBeLessThan(5)
+    expect(closed).toHaveBeenCalledOnce()
   })
 })
 
@@ -176,6 +201,35 @@ describe('dataset export', () => {
     expect(readme).toContain('`suggestedBy`')
     expect(readme).toMatch(/`seeded` \(a yCube in, nothing\s+visible yet\)/)
     expect(readme).toMatch(/map `seeded` to `empty`/)
+  })
+
+  it('exports large JSONL entries and counts without materializing entire tables', async () => {
+    const store = new SqliteStore({ url: ':memory:' })
+    try {
+      const ctx = await unit(store)
+      const dir = mkdtempSync(join(tmpdir(), 'dataset-stage-'))
+      dirs.push(dir)
+      const rows = Array.from({ length: 1200 }, (_, i) => ({ ts: '2026-10-30T12:00:00.000Z', sensor: 'humidity' as const, value: i }))
+      store.telemetry.add(rows.slice(0, 1000))
+      store.telemetry.flush()
+      store.telemetry.add(rows.slice(1000))
+      const fail = () => {
+        throw new Error('export read an entire table')
+      }
+      vi.spyOn(store.analyses, 'range').mockImplementation(fail)
+      vi.spyOn(store.telemetry, 'range').mockImplementation(fail)
+      const { app } = createApp({ ctx, datasetSpoolDir: dir })
+      const res = await app.request('/api/datasets/export?images=0')
+      const packed = join(untar(new Uint8Array(await res.arrayBuffer())), 'thryve-kitchen-gardyn-20261001-20261031')
+      const raw = readFileSync(join(packed, 'telemetry.jsonl'), 'utf8')
+      expect(Buffer.byteLength(raw)).toBeGreaterThan(65_536)
+      expect(raw.trimEnd().split('\n').map(line => JSON.parse(line)).filter(p => p.sensor === 'humidity')).toEqual(rows)
+      expect(JSON.parse(readFileSync(join(packed, 'manifest.json'), 'utf8')).counts).toMatchObject({ analyses: 60, telemetry: 1201 })
+      expect(readdirSync(dir)).toEqual([])
+    }
+    finally {
+      store.close()
+    }
   })
 
   it('leaves the stills out on request and rejects a bad window', async () => {
