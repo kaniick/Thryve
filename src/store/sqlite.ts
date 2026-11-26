@@ -12,7 +12,7 @@ import type { ActivityToken, ApnsEnvironment, FeedItem, FeedLevel, IosDevice } f
 import * as t from '../db/schema'
 import { qualityCounts, trustedShareOf } from './memory'
 import { SqliteTelemetryReader } from './sqliteTelemetry'
-import type { AgreementReading, OmittedAnalysisSlots } from './types'
+import type { AgreementReading, LatestAnalysisQuery, OmittedAnalysisSlots } from './types'
 import type { AlertQuery, AlertRow, Automation, AutomationRun, AnalysisPoint, AnalysisRow, AnalyzerStats, BackupRecord, Capture, CustomPlant, DeviceSettings, FlashSample, GrowCycle, GrowProtocolState, GrowStage, LightSpec, PlanRow, PlantProfile, Pod, PodCodePair, PodCodeRead, PodLabel, PodLabelCursor, PodLabelInput, PodLabelSource, PodLabelValue, PumpSpec, SavedCycle, SavedSchedule, Schedule, ScheduleRun, Store, SuggestionDismissal, TankAction, TankActionKind, TelemetryPoint, QualityCounts, QualitySample, PumpRun } from './types'
 import { DEFAULT_SETTINGS, POD_LABELS, profileKey } from './types'
 
@@ -55,6 +55,7 @@ export class SqliteStore implements Store {
   private readonly db
   private readonly telemetryReader
   private readonly countQuality
+  private readonly latestAnalysisBySlot
   private readonly selectSettings
   private cachedSettings: DeviceSettings | null = null
   /** Rows waiting for the next flush (ADR-0021). */
@@ -81,6 +82,23 @@ export class SqliteStore implements Store {
         count(CASE WHEN quality = 'good' THEN 1 END) AS good,
         count(CASE WHEN quality = 'suspect' THEN 1 END) AS suspect
       FROM sensor_quality WHERE sensor = ? AND ts BETWEEN ? AND ?
+    `)
+    // One indexed seek for the newest version, then one bounded seek per requested slot.
+    // Fetch just the winning rows by primary key; no frame-wide decode or historical GROUP BY.
+    this.latestAnalysisBySlot = this.sqlite.prepare<{ slots: string, analyzer: string, metric: string, fromTs: string }, typeof t.analysisResults.$inferSelect>(`
+      WITH latest(version) AS (
+        SELECT max(version) FROM analysis_results WHERE analyzer = @analyzer
+      )
+      SELECT result.* FROM json_each(@slots) AS wanted
+      CROSS JOIN latest
+      JOIN analysis_results AS result ON result.id = (
+        SELECT reading.id FROM analysis_results AS reading
+        WHERE reading.analyzer = @analyzer AND reading.metric = @metric
+          AND reading.version = latest.version AND reading.slot = wanted.value
+          AND reading.ts >= @fromTs
+        ORDER BY reading.ts DESC, reading.id DESC LIMIT 1
+      )
+      ORDER BY result.slot
     `)
   }
 
@@ -501,6 +519,8 @@ export class SqliteStore implements Store {
         .where(inArray(a.metric, ['green_fraction', 'pod_state'])).all()
         .map(r => ({ ...r, detail: r.detail ? JSON.parse(r.detail) as Record<string, unknown> : null }))
     },
+    latestBySlot: ({ analyzer, metric, slots, fromTs }: LatestAnalysisQuery): AnalysisRow[] =>
+      slots.length ? this.latestAnalysisBySlot.all({ analyzer, metric, slots: JSON.stringify([...new Set(slots)]), fromTs }).map(rowToAnalysis) : [],
     removeDevice: (captureId: string): void => {
       this.db.delete(t.analysisResults).where(and(eq(t.analysisResults.captureId, captureId), eq(t.analysisResults.source, 'device'))).run()
     },

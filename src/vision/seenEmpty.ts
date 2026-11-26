@@ -32,23 +32,19 @@ export function seenEmpty(store: Pick<Store, 'pods' | 'analyses' | 'settings'>, 
   const calibration = store.settings.get().podRegions
   const boxes = { upper: podRegions('upper', calibration), lower: podRegions('lower', calibration) }
   const since = now.getTime() - SEEN_MAX_AGE_MS
-  const version = Math.max(0, ...store.analyses.stats().filter(s => s.analyzer === POD_STATE_ID).map(s => s.version))
-  if (!version) return []
-  const byCapture = new Map<string, ReturnType<Store['analyses']['forCapture']>>()
-  const out: SeenEmpty[] = []
+  const changedAt = new Map<number, string>()
   for (const pod of planted) {
     const camera = cameraOf(pod.slot)
-    if (!camera || !boxes[camera][pod.slot]) continue
-    const last = store.analyses.series({ analyzer: POD_STATE_ID, version, slot: pod.slot, metric: 'pod_state', limit: 1 }).at(-1)
-    const t = last ? Date.parse(last.ts) : Number.NaN
-    if (!last || !(t >= since) || t > now.getTime() || t <= Date.parse(pod.updatedAt)) continue
-    let frame = byCapture.get(last.captureId)
-    if (!frame) {
-      frame = store.analyses.forCapture(last.captureId).filter(r => r.analyzer === POD_STATE_ID && r.version === version && r.metric === 'pod_state')
-      byCapture.set(last.captureId, frame)
-    }
-    const d = frame.find(r => r.slot === pod.slot)?.detail
-    if (d?.state === 'empty' && typeof d.confidence === 'number' && d.confidence >= SUGGEST_CONFIDENCE) out.push({ slot: pod.slot, confidence: d.confidence, ts: last.ts })
+    if (camera && boxes[camera][pod.slot]) changedAt.set(pod.slot, pod.updatedAt)
+  }
+  if (!changedAt.size) return []
+  const out: SeenEmpty[] = []
+  const rows = store.analyses.latestBySlot({ analyzer: POD_STATE_ID, metric: 'pod_state', slots: [...changedAt.keys()], fromTs: new Date(since).toISOString() })
+  for (const last of rows) {
+    const t = Date.parse(last.ts)
+    if (last.version <= 0 || !(t >= since) || t > now.getTime() || t <= Date.parse(changedAt.get(last.slot) ?? '')) continue
+    const d = last.detail
+    if (d?.state === 'empty' && typeof d.confidence === 'number' && d.confidence >= SUGGEST_CONFIDENCE) out.push({ slot: last.slot, confidence: d.confidence, ts: last.ts })
   }
   return out
 }
