@@ -73,6 +73,7 @@ const Analyzer = z.object({
 })
 const Status = z.object({
   running: z.string().nullable(),
+  runningKind: z.enum(['live', 'backfill']).nullable(),
   waiting: z.array(z.string()),
   dropped: z.number(),
   failed: z.number(),
