@@ -11,7 +11,7 @@
 import type { HalClient } from '../hardware/types'
 import type { EventBus } from '../lib/eventBus'
 import type { Store, TankActionKind } from '../store/types'
-import { choresForAlerts, type Chore, type ChoreId } from './chores'
+import { chores, type Chore, type ChoreId } from './chores'
 import { FOLLOW_ALERT, type FollowChange } from './follow'
 import { runProtocol } from './protocol'
 import { assessSetup, SETUP_ALERTS, TANK_SENSOR_ALERT, type SetupReport } from './setup'
@@ -60,7 +60,7 @@ export class CareEngine {
     for (const n of notices) events.emit({ kind: 'mutation', path: `alerts.${n.kind}` })
     const active = store.alerts.list({ activeOnly: true })
     const { report: setup, tankKnown } = assessSetup(store, snap, now, active.find(a => a.kind === TANK_SENSOR_ALERT) ?? null)
-    const list = choresForAlerts(store, snap, now)
+    const list = chores(store, snap, now, 'alerts')
     for (const kind of SETUP_ALERTS) {
       if (kind === TANK_SENSOR_ALERT && !tankKnown) continue
       this.sync(active.find(a => a.kind === kind), kind, setup.issues.find(i => i.alert === kind)?.detail ?? null, false)

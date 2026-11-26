@@ -245,16 +245,16 @@ function thin(store: Store, now: Date, planted: Pod[]): Chore {
 }
 
 /** Every chore for the unit as it is now, in a fixed order. */
-export function chores(store: Store, snap: HalSnapshot, now: Date): Chore[] {
+export function chores(store: Store, snap: HalSnapshot, now: Date, mode: 'all' | 'alerts' = 'all'): Chore[] {
   const planted = store.pods.list().filter(p => p.status !== 'empty')
+  if (mode === 'alerts') return choresForAlerts(store, snap, now, planted)
   const all = [thin(store, now, planted), trimRoots(store, now, planted), topOff(store, snap, now, planted), refresh(store, now, planted), feed(store, snap, now, planted), clean(store, now, planted)]
   // An empty tower needs no feeding or topping off; cleaning between grows still counts.
   return planted.length ? all : all.map(c => (c.id === 'clean' ? c : { ...c, state: 'ok', dueAt: null, reason: 'Nothing planted.' }))
 }
 
 /** A background alert only needs current, actionable readings, not forecasts or calendar chores. */
-export function choresForAlerts(store: Store, snap: HalSnapshot, now: Date): Chore[] {
-  const planted = store.pods.list().filter(p => p.status !== 'empty')
+function choresForAlerts(store: Store, snap: HalSnapshot, now: Date, planted: Pod[]): Chore[] {
   if (!planted.length) return []
   const due = [thin(store, now, planted)]
   const level = trusted(snap, 'water_level_pct', now).reading
