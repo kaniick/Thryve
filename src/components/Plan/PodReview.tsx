@@ -8,50 +8,67 @@ import type { Plant } from '@/src/plants/catalog'
 import type { PlanOverrides } from '@/src/plants/planner'
 
 const describe = (p: MovePod) => `Pod ${p.slot} · ${p.status === 'empty' ? 'Empty' : p.plant ?? 'Unnamed plant'}`
+type ReviewPod = MovePod & { updatedAt: string }
+export interface MovePair { from: number, to: number }
+interface Review { pair: MovePair, source: string, destination: string, aUpdatedAt: string, bUpdatedAt: string }
 
-export function PodReview({ pods, slots, plants, reserved, overrides }: {
-  pods: MovePod[]
+export function PodReview({ pods, slots, plants, reserved, overrides, pair, picking, ready, onPair, onPick }: {
+  pods: ReviewPod[]
   slots: MoveSlot[]
   plants: Plant[]
   reserved: ReadonlySet<number>
   overrides?: PlanOverrides
+  pair: MovePair
+  picking: boolean
+  ready: boolean
+  onPair: (pair: MovePair) => void
+  onPick?: () => void
 }) {
   const utils = trpc.useUtils()
   const slotSet = new Set(slots.map(s => s.slot))
   const shown = pods.filter(p => slotSet.has(p.slot))
   const planted = shown.filter(p => p.status !== 'empty')
   const camera = trpc.vision.seenEmpty.useQuery(undefined, { enabled: planted.some(p => p.status !== 'seeded') })
-  const [from, setFrom] = useState(0)
-  const [to, setTo] = useState(0)
-  const [confirm, setConfirm] = useState<{ source: string, destination: string } | null>(null)
+  const { from, to } = pair
+  const [confirm, setConfirm] = useState<Review | null>(null)
   const [recorded, setRecorded] = useState<string | null>(null)
   const swap = trpc.grow.swapPods.useMutation({
-    onSuccess: () => {
-      setRecorded(`Pod records updated for ${from} and ${to}.`)
+    onSuccess: (_rows, { a, b }) => {
+      setRecorded(`Pod records updated for ${a} and ${b}.`)
       setConfirm(null)
-      setFrom(0)
-      setTo(0)
+      onPair({ from: 0, to: 0 })
       void utils.grow.invalidate()
       void utils.planner.invalidate()
       void utils.vision.seenEmpty.invalidate()
+    },
+    onError: (error) => {
+      if (error.data?.code === 'CONFLICT') void utils.grow.invalidate()
     },
   })
   if (!planted.length || shown.length < 2) return null
   const source = planted.find(p => p.slot === from)
   const destination = shown.find(p => p.slot === to && to !== from && !reserved.has(to))
-  const valid = !!source && !!destination && (!confirm || (confirm.source === describe(source) && confirm.destination === describe(destination)))
+  const valid = ready && !!source && !!destination && (!confirm || (
+    confirm.pair.from === from && confirm.pair.to === to
+    && confirm.source === describe(source) && confirm.destination === describe(destination)
+    && confirm.aUpdatedAt === source.updatedAt && confirm.bUpdatedAt === destination.updatedAt
+  ))
   const kind = destination?.status === 'empty' ? 'move' : 'swap'
   const suspects = (camera.data ?? []).filter(h => planted.some(p => p.slot === h.slot && p.status !== 'seeded'))
   const suggestions = overrides?.replant ? [] : podMoveOptions(shown, slots, plants, reserved, overrides)
   const input = 'mt-1 min-w-0 rounded-[var(--radius-ctl)] border border-line bg-surface px-2 py-1.5 text-sm text-fg'
   const selectPair = (a: number, b: number) => {
-    setFrom(a)
-    setTo(b)
+    onPair({ from: a, to: b })
     setRecorded(null)
     swap.reset()
   }
+  const review = () => {
+    if (!valid || !source || !destination) return
+    swap.reset()
+    setConfirm({ pair: { from, to }, source: describe(source), destination: describe(destination), aUpdatedAt: source.updatedAt, bUpdatedAt: destination.updatedAt })
+  }
   return (
-    <Card>
+    <Card id="planted-pods" className="scroll-mt-4">
       <CardHeader title="Planted pods" subtitle="Review camera hints and record physical moves" icon={ArrowRightLeft} />
       {suspects.length > 0 && (
         <div role="status" aria-label="Camera review" className="mt-3 rounded-[var(--radius-ctl)] border border-line p-3 text-[13px]">
@@ -83,16 +100,21 @@ export function PodReview({ pods, slots, plants, reserved, overrides }: {
         </label>
         <label className="grid min-w-0 flex-1 basis-40 text-xs text-fg-2">
           To pod
-          <select className={input} value={to} disabled={!source} onChange={e => selectPair(from, Number(e.currentTarget.value))}>
+          <select className={input} value={to} disabled={!source || !ready} onChange={e => selectPair(from, Number(e.currentTarget.value))}>
             <option value={0}>Choose a pod</option>
             {shown.filter(p => p.slot !== from && !reserved.has(p.slot)).map(p => <option key={p.slot} value={p.slot}>{describe(p)}</option>)}
           </select>
         </label>
-        <Button size="sm" disabled={!valid || swap.isPending} onClick={() => { if (source && destination) setConfirm({ source: describe(source), destination: describe(destination) }) }}>
+        <Button size="sm" disabled={!valid || swap.isPending} onClick={review}>
           {`Review ${kind}`}
         </Button>
       </div>
-      {recorded && <p className="mt-2 text-xs text-fg-2" role="status">{recorded}</p>}
+      {onPick && source && (
+        <Button size="sm" className="self-start" disabled={!ready || swap.isPending} onClick={onPick}>
+          {picking ? 'Cancel layout selection' : 'Choose destination on layout'}
+        </Button>
+      )}
+      {recorded && !from && <p className="mt-2 text-xs text-fg-2" role="status">{recorded}</p>}
       {confirm && (
         <Modal
           open
@@ -101,7 +123,15 @@ export function PodReview({ pods, slots, plants, reserved, overrides }: {
           footer={(
             <div className="flex justify-end gap-2">
               <Button disabled={swap.isPending} onClick={() => setConfirm(null)}>Cancel</Button>
-              <Button variant="primary" disabled={!valid || swap.isPending} onClick={() => { if (valid) swap.mutate({ a: from, b: to }) }}>{`Record ${kind}`}</Button>
+              <Button
+                variant="primary"
+                disabled={!valid || swap.isPending || swap.error?.data?.code === 'CONFLICT'}
+                onClick={() => {
+                  if (valid) swap.mutate({ a: from, b: to, expected: { aUpdatedAt: confirm.aUpdatedAt, bUpdatedAt: confirm.bUpdatedAt } })
+                }}
+              >
+                {`Record ${kind}`}
+              </Button>
             </div>
           )}
         >

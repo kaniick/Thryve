@@ -19,7 +19,7 @@ vi.mock('@/src/components/Grow/TowerView', () => ({
 // The hooks answer from the real planner, so the page renders real layouts and sowing dates.
 const { state, calls, invalidate } = vi.hoisted(() => ({
   state: {
-    pods: [] as { slot: number, plant: string | null, status: string }[],
+    pods: [] as { slot: number, plant: string | null, status: string, updatedAt?: string }[],
     plans: [] as unknown[],
     applied: null as null | { seeded: number[], scheduled: { slot: number, plantName: string, sowOn: string }[] },
     custom: [] as unknown[],
@@ -32,6 +32,7 @@ const { state, calls, invalidate } = vi.hoisted(() => ({
   calls: { catalog: vi.fn(), layout: vi.fn(), save: vi.fn(), apply: vi.fn(), remove: vi.fn(), addPlant: vi.fn(), updatePlant: vi.fn(), removePlant: vi.fn(), swapPods: vi.fn() },
   invalidate: vi.fn(),
 }))
+const POD_REVISION = '2026-11-24T08:00:00.000Z'
 
 vi.mock('@/src/utils/trpc', async () => {
   const { searchPlants } = await import('@/src/plants/catalog')
@@ -40,13 +41,13 @@ vi.mock('@/src/utils/trpc', async () => {
   type Model = 'home' | 'studio'
   type PlanOverrides = Parameters<typeof planLayout>[0]['overrides']
   const mutation = (fn: (i: unknown) => void, data?: () => unknown) => ({
-    useMutation: (o?: { onSuccess?: () => void }) => ({
+    useMutation: (o?: { onSuccess?: (rows: unknown, input: unknown) => void }) => ({
       isPending: false,
       reset: () => {},
       data: data?.(),
       mutate: (input: unknown) => {
         fn(input)
-        o?.onSuccess?.()
+        o?.onSuccess?.(data?.(), input)
       },
     }),
   })
@@ -74,7 +75,7 @@ vi.mock('@/src/utils/trpc', async () => {
         updatePlant: mutation(calls.updatePlant),
         removePlant: mutation(calls.removePlant),
       },
-      grow: { pods: { useQuery: () => ({ data: state.loading || state.podsPending ? undefined : state.pods }) }, swapPods: mutation(calls.swapPods) },
+      grow: { pods: { useQuery: () => ({ data: state.loading || state.podsPending ? undefined : state.pods.map(p => ({ updatedAt: POD_REVISION, ...p })) }) }, swapPods: mutation(calls.swapPods) },
       vision: { seenEmpty: { useQuery: () => ({ data: state.seenEmpty }) } },
     },
   }
@@ -120,7 +121,50 @@ describe('PlanPage', () => {
     expect(review.textContent).toContain('Move the yCubes on the tower first')
     expect(calls.swapPods).not.toHaveBeenCalled()
     fireEvent.click(within(review).getByRole('button', { name: 'Record move' }))
-    expect(calls.swapPods).toHaveBeenCalledExactlyOnceWith({ a: 1, b: 2 })
+    expect(calls.swapPods).toHaveBeenCalledExactlyOnceWith({ a: 1, b: 2, expected: { aUpdatedAt: POD_REVISION, bUpdatedAt: POD_REVISION } })
+  })
+
+  it('chooses physical moves on the grid without dragging or offering draft-reserved slots', () => {
+    state.pods = slots('home').map(({ slot }) => ({ slot, plant: slot === 1 ? 'Mint' : null, status: slot === 1 ? 'growing' : 'empty' }))
+    render(<PlanPage />)
+    flat()
+    search('basil')
+    add('Basil')
+    const grid = within(screen.getByTestId('plan-grid'))
+    const reserved = grid.getByRole('button', { name: /, Basil$/ })
+    const plannedSlot = Number(reserved.getAttribute('data-slot'))
+    const target = plannedSlot === 2 ? 3 : 2
+    fireEvent.keyDown(grid.getByRole('button', { name: 'Pod 1, Mint' }), { key: 'Enter' })
+    expect((screen.getByLabelText('From planted pod') as HTMLSelectElement).value).toBe('1')
+    fireEvent.click(screen.getByRole('button', { name: 'Choose destination on layout' }))
+    const picking = within(screen.getByTestId('plan-grid'))
+    const blocked = picking.getByRole('button', { name: /, Basil$/ })
+    expect(blocked.getAttribute('aria-disabled')).toBe('true')
+    expect(blocked.getAttribute('draggable')).toBe('false')
+    fireEvent.click(blocked)
+    expect((screen.getByLabelText('To pod') as HTMLSelectElement).value).toBe('0')
+    fireEvent.keyDown(picking.getByRole('button', { name: `Pod ${target}` }), { key: ' ' })
+    expect((screen.getByLabelText('To pod') as HTMLSelectElement).value).toBe(String(target))
+    fireEvent.click(screen.getByRole('button', { name: 'Review move' }))
+    expect(calls.swapPods).not.toHaveBeenCalled()
+    expect(screen.getByRole('dialog', { name: 'Record pod move?' }).textContent).toContain(`Pod 1 · Mint → Pod ${target} · Empty`)
+  })
+
+  it('picks from the 3D layout and disables an open review after a pod changes', () => {
+    state.pods = [{ slot: 1, plant: 'Basil', status: 'growing' }, { slot: 2, plant: null, status: 'empty' }]
+    const { rerender } = render(<PlanPage />)
+    const pick = (slot: number) => act(() => (tower.props?.onSelect as (slot: number) => void)(slot))
+    pick(1)
+    expect(screen.getByRole('link', { name: 'Review move for pod 1' }).getAttribute('href')).toBe('#planted-pods')
+    fireEvent.click(screen.getByRole('button', { name: 'Choose destination on layout' }))
+    pick(2)
+    fireEvent.click(screen.getByRole('button', { name: 'Review move' }))
+    state.pods[1] = { ...state.pods[1], updatedAt: '2026-11-24T08:15:00.000Z' }
+    rerender(<PlanPage />)
+    const review = within(screen.getByRole('dialog', { name: 'Record pod move?' }))
+    expect((review.getByRole('button', { name: 'Record move' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(review.getByText(/records changed/)).toBeTruthy()
+    expect(calls.swapPods).not.toHaveBeenCalled()
   })
 
   it('does not commit a reviewed swap that was cancelled', () => {
