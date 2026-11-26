@@ -9,6 +9,7 @@ import { Button, Card } from '@/src/components/ds/core'
 import { useToast } from '@/src/components/ds/toast'
 import type { ChoreRow } from '@/src/components/Water/Chores'
 import { CHORE_ALERTS } from '@/src/care/engine'
+import { raisesChoreAlert } from '@/src/care/chores'
 import type { AppRouter } from '@/src/server/routers/app'
 import { trpc } from '@/src/utils/trpc'
 
@@ -29,15 +30,15 @@ export function useChoreAlerts(): { ready: boolean, alertOf: (c: Pick<ChoreRow, 
  * The chores, less any the person skipped, and the due ones among them, each
  * with its open alert when a reading raised one. A skipped chore stays off
  * until the engine raises it again: a due reading with no open alert may have
- * been skipped, and only for those is the alert's last row asked for. Calendar
- * chores have no alert, so old history never hides one. `ready` once the open
+ * been skipped, and only for those is the alert's last row asked for. Feed is
+ * the only calendar chore that can carry an alert. `ready` once the open
  * alerts and those last rows are in.
  */
 export function useNeedsChores(): { items: Array<{ chore: ChoreRow, alert: AlertRow | undefined }>, chores: ChoreRow[], ready: boolean } {
   const list = trpc.care.chores.useQuery(undefined, { refetchInterval: 5 * 60_000 })
   const { ready, alertOf } = useChoreAlerts()
   const all = list.data ?? []
-  const unraised = ready ? all.flatMap(c => (c.state === 'due' && c.basis === 'reading' && !alertOf(c) ? [{ chore: c, kind: alertKind(c.id) }] : [])).filter((u): u is { chore: ChoreRow, kind: string } => !!u.kind) : []
+  const unraised = ready ? all.flatMap(c => (raisesChoreAlert(c) && !alertOf(c) ? [{ chore: c, kind: alertKind(c.id) }] : [])).filter((u): u is { chore: ChoreRow, kind: string } => !!u.kind) : []
   const last = trpc.useQueries(t => unraised.map(u => t.alerts.list({ activeOnly: false, kind: u.kind, limit: 1 })))
   const hidden = new Set(unraised.filter((_, i) => {
     const row = last[i]?.data?.[0]
@@ -114,8 +115,8 @@ export function useChoreActions() {
       .then(settle)
       .catch((e: Error) => show({ id: `chore-undo:${c.id}`, kind: 'info', tone: 'danger', icon: TriangleAlert, title: `Couldn't undo: ${c.title}`, detail: e.message, action: { label: 'Retry', onClick: () => undo(c, id) } }))
   }
-  const complete = async (c: Pick<ChoreRow, 'id' | 'title' | 'doneKind'>, alert?: Pick<AlertRow, 'id'>) => {
-    if (!completing.start(c.id)) return
+  const complete = async (c: Pick<ChoreRow, 'id' | 'title' | 'doneKind'>, alert?: Pick<AlertRow, 'id'>, details?: Pick<Parameters<typeof log.mutateAsync>[0], 'amount' | 'unit' | 'product' | 'note'>) => {
+    if (!completing.start(c.id)) return false
     try {
       if (alert) {
         const row = await ack.mutateAsync({ id: alert.id })
@@ -123,22 +124,22 @@ export function useChoreActions() {
         if (row?.acknowledgedAt && row.clearedAt === row.acknowledgedAt) marked(c)
       }
       else {
-        const row = await log.mutateAsync({ kind: c.doneKind, note: '' })
+        const row = await log.mutateAsync({ note: '', ...details, kind: c.doneKind })
         marked(c, () => undo(c, row.id))
       }
       await settle()
+      return true
     }
     catch {
       // The mutation's error says why, under the row.
+      return false
     }
     finally {
       completing.end(c.id)
     }
   }
   return {
-    done: (c: Pick<ChoreRow, 'id' | 'title' | 'doneKind'>, alert?: Pick<AlertRow, 'id'>) => {
-      void complete(c, alert)
-    },
+    done: complete,
     skip: (alert: Pick<AlertRow, 'id'>) => dismiss.mutate({ id: alert.id }),
     /** This chore is being marked done here or in another row, or a Skip is in flight. */
     busy: (id: string) => completing.has(id) || dismiss.isPending,

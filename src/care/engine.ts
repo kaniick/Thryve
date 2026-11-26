@@ -4,8 +4,8 @@
  * pod, the grow cycle, the sensor inventory, hald coming and going, the tank
  * level turning suspect, a logged tank action, a new capture) and on a slow
  * tick, and keeps one alert per problem. A chore raises an alert only when a
- * reading makes it due: calendar chores are the grow reminders' job, and a
- * reading is news. Event-driven so an agent watching
+ * reading makes it due, except Feed, which owns its calendar reminder too.
+ * Event-driven so an agent watching
  * alerts wakes only on a change.
  */
 import type { HalClient } from '../hardware/types'
@@ -15,13 +15,14 @@ import { chores, type Chore, type ChoreId } from './chores'
 import { FOLLOW_ALERT, type FollowChange } from './follow'
 import { runProtocol } from './protocol'
 import { assessSetup, SETUP_ALERTS, TANK_SENSOR_ALERT, type SetupReport } from './setup'
+import { FEED_ALERT } from './feedAlerts'
 
 const TICK_MS = 15 * 60_000
 /** HAL bursts need one care check. This does not debounce any actuator or HAL fault. */
 export const CARE_HAL_BATCH_MS = 5_000
 
-/** The chores a reading can make due, and the alert each raises. */
-export const CHORE_ALERTS = { top_off: 'chore_top_off', feed: 'chore_feed', thin: 'chore_thin' } as const satisfies Partial<Record<ChoreId, string>>
+/** Chores that can raise an alert and the kind each raises. */
+export const CHORE_ALERTS = { top_off: 'chore_top_off', feed: FEED_ALERT, thin: 'chore_thin' } as const satisfies Partial<Record<ChoreId, string>>
 
 /** The tank action that marks a chore alert's chore done, for acknowledging it. */
 export function choreDoneKind(alert: string): TankActionKind | null {
@@ -68,12 +69,12 @@ export class CareEngine {
     for (const [id, kind] of Object.entries(CHORE_ALERTS)) {
       const c = list.find(x => x.id === id)
       // A chore's detail carries the reading, so it changes every sample: held in memory, and dismissal goes by kind.
-      this.sync(active.find(a => a.kind === kind), kind, c?.reason ?? null, true)
+      this.sync(active.find(a => a.kind === kind), kind, c?.reason ?? null, true, id === 'feed' ? c?.lastDoneAt : null)
     }
     return { setup, chores: list, followed }
   }
 
-  private sync(active: ReturnType<Store['alerts']['list']>[number] | undefined, kind: string, detail: string | null, live: boolean): void {
+  private sync(active: ReturnType<Store['alerts']['list']>[number] | undefined, kind: string, detail: string | null, live: boolean, rearmAt?: string | null): void {
     const { store, events } = this.deps
     const ts = this.now().toISOString()
     if (detail === null) {
@@ -89,7 +90,7 @@ export class CareEngine {
       // Dismissed stays dismissed until the problem changes (setup) or goes away and comes back.
       const [last] = store.alerts.list({ kind, limit: 1 })
       const resolved = this.resolvedAt.get(kind)
-      if (last?.dismissedAt && (live || last.detail === detail) && (!resolved || resolved < last.dismissedAt)) return
+      if (last?.dismissedAt && (live || last.detail === detail) && (!resolved || resolved < last.dismissedAt) && (!rearmAt || rearmAt <= last.dismissedAt)) return
     }
     store.alerts.raise(kind, detail, ts, { live: live && !!active })
     if (!active || !live) events.emit({ kind: 'mutation', path: `alerts.${kind}` })
@@ -107,7 +108,7 @@ export class CareEngine {
       const relevant = (e.kind === 'schedule' && e.action === 'changed')
         || (e.kind === 'mutation' && (e.path === 'pods' || e.path === 'grow' || e.path === 'devices' || e.path === 'tank' || e.path === 'captures'))
         || (e.kind === 'hal' && (e.event.type === 'availability' || e.event.type === 'devices'))
-      if (relevant) this.safeTick()
+      if (relevant || (e.kind === 'mutation' && e.path === 'settings')) this.safeTick()
     })
     this.safeTick()
     this.timer = setInterval(() => this.safeTick(), TICK_MS)

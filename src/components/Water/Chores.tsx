@@ -1,8 +1,10 @@
-import { Check } from 'lucide-react'
+import { Check, Plus } from 'lucide-react'
 import type { inferRouterOutputs } from '@trpc/server'
+import { useState } from 'react'
 import { cn } from '@/lib/utils'
 import { useChoreActions, useChoreAlerts } from '@/src/components/Care/ChoreItem'
 import { Button, Card, InlineError } from '@/src/components/ds/core'
+import { TankActionForm } from './TankLog'
 import type { AppRouter } from '@/src/server/routers/app'
 import { trpc } from '@/src/utils/trpc'
 
@@ -29,6 +31,7 @@ export function Chores() {
   const list = trpc.care.chores.useQuery(undefined, { refetchInterval: 5 * 60_000 })
   const actions = useChoreActions()
   const { ready, alertOf } = useChoreAlerts()
+  const [logging, setLogging] = useState<ChoreRow | null>(null)
   const rows = byUrgency(list.data ?? [])
   return (
     <div className="flex flex-col gap-2.5" id="chores">
@@ -52,13 +55,23 @@ export function Chores() {
                 </span>
               )}
             </div>
-            {(c.state === 'due' || c.state === 'soon') && (
+            {c.id === 'feed' && <Button icon={Plus} className="px-3 py-[7px]" disabled={actions.busy(c.id)} onClick={() => setLogging(c)}>Log feed</Button>}
+            {c.id !== 'feed' && (c.state === 'due' || c.state === 'soon') && (
               <Button icon={Check} className="px-3 py-[7px]" disabled={!ready || actions.busy(c.id)} onClick={() => actions.done(c, alertOf(c))}>Done</Button>
             )}
           </div>
         ))}
       </Card>
       {actions.error && <InlineError>{actions.error.message}</InlineError>}
+      {logging && (
+        <TankActionForm
+          fixedKind="feed"
+          busy={actions.busy('feed')}
+          error={actions.error?.message}
+          onClose={() => setLogging(null)}
+          onSave={a => void actions.done(logging, undefined, a).then((ok) => { if (ok) setLogging(null) })}
+        />
+      )}
     </div>
   )
 }

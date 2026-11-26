@@ -25,6 +25,13 @@ export function describeAction(a: Pick<TankAction, 'kind' | 'amount' | 'unit' | 
 }
 
 interface Draft { kind: TankActionKind, amount: string, unit: TankUnit, product: string, note: string }
+export interface TankActionDraft {
+  kind: TankActionKind
+  amount: number | null
+  unit: TankUnit | null
+  product: string | null
+  note: string
+}
 const blank = (kind: TankActionKind = 'feed'): Draft => ({ kind, amount: '', unit: DEFAULT_UNIT[kind] ?? 'mL', product: '', note: '' })
 
 /** The tank action log (ADR-0029): what was fed, topped off, refreshed or pH-adjusted, so readings can be read against it. */
@@ -34,24 +41,15 @@ export function TankLog() {
   const done = { onSuccess: () => void utils.tank.invalidate() }
   const log = trpc.tank.logAction.useMutation(done)
   const remove = trpc.tank.removeAction.useMutation(done)
-  const [draft, setDraft] = useState<Draft | null>(null)
+  const [open, setOpen] = useState(false)
   const rows = actions.data ?? []
   const now = new Date()
-  const amount = draft ? Number(draft.amount.replace(',', '.')) : 0
-  const badAmount = !!draft && draft.amount.trim() !== '' && !(amount > 0)
-
-  const save = () => {
-    if (!draft || badAmount) return
-    const has = draft.amount.trim() !== ''
-    log.mutate({ kind: draft.kind, amount: has ? amount : null, unit: has ? draft.unit : null, product: draft.product.trim() || null, note: draft.note })
-    setDraft(null)
-  }
 
   return (
     <div className="flex flex-col gap-2.5">
       <div className="flex items-center gap-3">
         <h2 className={`${EYEBROW} flex-1`}>Tank log</h2>
-        <Button icon={Plus} onClick={() => setDraft(blank())}>Log action</Button>
+        <Button icon={Plus} onClick={() => setOpen(true)}>Log action</Button>
       </div>
       <Card className="gap-0 p-0" data-testid="tank-log">
         {rows.length === 0 && <p className="px-5 py-3 text-[13px] text-fg-3">Nothing logged yet. Log feeds, top-offs, refreshes and pH doses so the readings can be read against them.</p>}
@@ -69,33 +67,64 @@ export function TankLog() {
       </Card>
       {(log.error ?? remove.error) && <InlineError>{(log.error ?? remove.error)?.message}</InlineError>}
 
-      <Modal
-        open={!!draft}
-        onClose={() => setDraft(null)}
-        title="Log a tank action"
-        icon={NotebookPen}
-        footer={(
-          <div className="flex gap-2">
-            <Button variant="primary" disabled={badAmount} onClick={save}>Save</Button>
-            <Button onClick={() => setDraft(null)}>Cancel</Button>
-          </div>
-        )}
-      >
-        {draft && (
-          <div className="flex flex-col gap-4">
-            <label className="flex flex-col gap-1.5 text-xs text-fg-2">
-              What
-              <SelectValue label="What was done" value={draft.kind} options={TANK_ACTION_KINDS.map(k => ({ value: k, label: KIND_LABEL[k] }))} onChange={kind => setDraft({ ...blank(kind), product: draft.product, note: draft.note })} />
-            </label>
-            <div className="flex items-end gap-2">
-              <TextField label="Amount (optional)" inputMode="decimal" className="flex-1" value={draft.amount} onChange={v => setDraft({ ...draft, amount: v })} hint={badAmount ? 'A number above 0' : undefined} />
-              <SelectValue label="Unit" value={draft.unit} options={TANK_UNITS.map(u => ({ value: u, label: u }))} onChange={unit => setDraft({ ...draft, unit })} className="mb-0.5" />
-            </div>
-            <TextField label="Product (optional)" mono={false} placeholder="MaxiGro, Gardyn Plant Food, pH Down…" value={draft.product} onChange={v => setDraft({ ...draft, product: v })} />
-            <TextField label="Note (optional)" mono={false} value={draft.note} onChange={v => setDraft({ ...draft, note: v })} />
-          </div>
-        )}
-      </Modal>
+      {open && (
+        <TankActionForm
+          onClose={() => setOpen(false)}
+          onSave={(a) => {
+            log.mutate(a)
+            setOpen(false)
+          }}
+        />
+      )}
     </div>
+  )
+}
+
+/** The same manual log entry in Tank log and the Feed chore. */
+export function TankActionForm({ onClose, onSave, fixedKind, busy = false, error }: {
+  onClose: () => void
+  onSave: (a: TankActionDraft) => void
+  fixedKind?: TankActionKind
+  busy?: boolean
+  error?: string
+}) {
+  const [draft, setDraft] = useState(() => blank(fixedKind))
+  const amount = Number(draft.amount.replace(',', '.'))
+  const hasAmount = draft.amount.trim() !== ''
+  const badAmount = hasAmount && (!Number.isFinite(amount) || amount <= 0 || amount > 100_000)
+  const save = () => {
+    if (busy || badAmount) return
+    onSave({ kind: draft.kind, amount: hasAmount ? amount : null, unit: hasAmount ? draft.unit : null, product: draft.product.trim() || null, note: draft.note })
+  }
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={fixedKind === 'feed' ? 'Log a feed' : 'Log a tank action'}
+      icon={NotebookPen}
+      footer={(
+        <div className="flex gap-2">
+          <Button variant="primary" disabled={busy || badAmount} onClick={save}>Save</Button>
+          <Button onClick={onClose}>Cancel</Button>
+        </div>
+      )}
+    >
+      <div className="flex flex-col gap-4">
+        {!fixedKind && (
+          <label className="flex flex-col gap-1.5 text-xs text-fg-2">
+            What
+            <SelectValue label="What was done" value={draft.kind} options={TANK_ACTION_KINDS.map(k => ({ value: k, label: KIND_LABEL[k] }))} onChange={kind => setDraft({ ...blank(kind), product: draft.product, note: draft.note })} />
+          </label>
+        )}
+        <div className="flex items-end gap-2">
+          <TextField label="Amount (optional)" inputMode="decimal" className="flex-1" value={draft.amount} onChange={v => setDraft({ ...draft, amount: v })} hint={badAmount ? (Number.isFinite(amount) && amount > 0 ? 'No more than 100,000' : 'A number above 0') : undefined} />
+          <SelectValue label="Unit" value={draft.unit} options={TANK_UNITS.map(u => ({ value: u, label: u }))} onChange={unit => setDraft({ ...draft, unit })} className="mb-0.5" />
+        </div>
+        <TextField label="Product (optional)" mono={false} placeholder="MaxiGro, Gardyn Plant Food, pH Down…" value={draft.product} onChange={v => setDraft({ ...draft, product: v })} />
+        <TextField label="Note (optional)" mono={false} value={draft.note} onChange={v => setDraft({ ...draft, note: v })} />
+        {error && <InlineError>{error}</InlineError>}
+      </div>
+    </Modal>
   )
 }

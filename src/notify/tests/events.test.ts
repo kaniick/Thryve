@@ -6,6 +6,15 @@ function snap(p: Partial<EventSnapshot> = {}): EventSnapshot {
 }
 
 describe('notification events', () => {
+  it('keeps saved nutrient rules matching Feed without notifying about legacy retirement', () => {
+    const legacy = snap({ alerts: new Map([['reminder_nutrients', { detail: 'old timer', active: true }]]) })
+    const current = snap({ alerts: new Map([['chore_feed', { detail: 'feed is due', active: true }]]) })
+    const fired = edges(legacy, current)
+    expect(fired.map(e => e.event)).toEqual(['alert_raised', 'task_due'])
+    expect(fired.some(e => eventMatches({ event: 'alert_raised', alertKind: 'reminder_nutrients' }, e))).toBe(true)
+    expect(fired.some(e => eventMatches({ event: 'task_due', alertKind: 'reminder_nutrients' }, e))).toBe(true)
+    expect(edges(snap(), legacy)).toEqual([])
+  })
   it('classifies pump faults and task alerts', () => {
     expect(classifyPumpAlert('pump: dry-run: water below 16 cm')).toBe('dry_run')
     expect(classifyPumpAlert('pump: brown-out: supply fell to 10.2 V')).toBe('brown_out')

@@ -175,7 +175,9 @@ function feed(store: Store, snap: HalSnapshot, now: Date, planted: Pod[]): Chore
   const { group } = cropGroup(store, planted)
   const { reading, why } = trusted(snap, 'ec', now)
   if (!reading) {
-    const every = done ? store.settings.get().nutrientReminderDays || TOP_OFF_DAYS : SPROUT_DOSE_DAYS
+    const interval = store.settings.get().nutrientReminderDays
+    if (interval === 0) return { ...c, state: 'ok', basis: 'timeline', dueAt: null, readings: [], reason: `Calendar feed reminders are off (${why}).`, citations: [CITE.plantFood, CITE.dosesByProduct] }
+    const every = done ? interval : SPROUT_DOSE_DAYS
     const rule = done
       ? `Gardyn adds plant food with the weekly top-off: 1/2 tsp per gallon of Gardyn Plant Food in early growth, 1 tsp once mature. Other products dose differently.`
       : `The first feed, Gardyn's sprout dose of 1/4 tsp Gardyn Plant Food per gallon, goes in once most yCubes have sprouted, usually within ${SPROUT_DOSE_DAYS} d.`
@@ -253,12 +255,15 @@ export function chores(store: Store, snap: HalSnapshot, now: Date, mode: 'all' |
   return planted.length ? all : all.map(c => (c.id === 'clean' ? c : { ...c, state: 'ok', dueAt: null, reason: 'Nothing planted.' }))
 }
 
-/** A background alert only needs current, actionable readings, not forecasts or calendar chores. */
+/** Background alerts need actionable readings or a due Feed reminder, never forecasts. */
 function choresForAlerts(store: Store, snap: HalSnapshot, now: Date, planted: Pod[]): Chore[] {
   if (!planted.length) return []
   const due = [thin(store, now, planted)]
   const level = trusted(snap, 'water_level_pct', now).reading
   if (level && level.value < TANK_MIN_PCT) due.push(topOff(store, snap, now, planted, false))
-  if (trusted(snap, 'ec', now).reading) due.push(feed(store, snap, now, planted))
-  return due.filter(c => c.state === 'due' && c.basis === 'reading')
+  due.push(feed(store, snap, now, planted))
+  return due.filter(raisesChoreAlert)
 }
+
+/** Feed is the sole calendar chore that also owns a reminder alert. */
+export const raisesChoreAlert = (c: Pick<Chore, 'id' | 'state' | 'basis'>) => c.state === 'due' && (c.basis === 'reading' || c.id === 'feed')

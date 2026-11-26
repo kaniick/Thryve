@@ -24,6 +24,7 @@ function rig(initial: Partial<HalSnapshot['sensors']> = {}) {
   let sensors = initial
   hal.snapshot = () => ({ ...base(), sensors: { ...base().sensors, ...sensors } })
   const store = new MemoryStore()
+  store.settings.update({ nutrientReminderDays: 0 })
   store.pods.update(1, { plant: 'Arugula', status: 'growing', plantedAt: '2026-10-20T12:00:00Z' }, T)
   store.schedules.upsert({ id: 'day', kind: 'light', name: 'Day', enabled: true, days: 127, spec: { setpoints: [{ minute: 360, level: 80 }] } })
   store.schedules.upsert({ id: 'cycle', kind: 'pump', name: 'Cycle', enabled: true, days: 127, spec: { minute: 480, durationS: 300 } })
@@ -106,6 +107,27 @@ describe('chore alerts (ADR-0029)', () => {
     set({ water_level_pct: level(45) })
     care.tick()
     expect(active(store)).toEqual(['chore_top_off'])
+  })
+
+  it('has one calendar feed reminder and re-arms from a logged feed even after a restart', () => {
+    const { store, hal, events, care } = rig()
+    store.settings.update({ nutrientReminderDays: 7 })
+    expect(care.tick().chores).toMatchObject([{ id: 'feed', basis: 'timeline', state: 'due' }])
+    const [first] = store.alerts.list({ activeOnly: true, kind: 'chore_feed' })
+    expect(first).toBeDefined()
+    store.alerts.dismiss(first?.id ?? 0, T)
+
+    const feedAt = new Date(NOW.getTime() + 60_000).toISOString()
+    store.tankActions.add({ kind: 'feed', ts: feedAt, amount: 0.5, unit: 'tsp', product: 'Gardyn Plant Food', note: '', source: 'user' }, feedAt)
+    let clock = new Date(NOW.getTime() + 7 * 86_400_000)
+    const resumed = new CareEngine({ store, hal, events, now: () => clock })
+    resumed.tick()
+    expect(active(store)).toEqual([])
+    // A second restart has no in-memory record of the quiet stretch.
+    clock = new Date(Date.parse(feedAt) + 7 * 86_400_000)
+    new CareEngine({ store, hal, events, now: () => clock }).tick()
+    expect(store.alerts.list({ activeOnly: true })).toMatchObject([{ kind: 'chore_feed', raisedAt: clock.toISOString() }])
+    expect(store.alerts.list({ kind: 'chore_feed' })).toHaveLength(2)
   })
 
   it('maps each chore alert to the tank action that does it', () => {
