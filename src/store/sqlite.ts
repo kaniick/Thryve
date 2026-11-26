@@ -533,6 +533,23 @@ export class SqliteStore implements Store {
     range: (fromTs: string, toTs: string): AnalysisRow[] =>
       this.db.select().from(t.analysisResults).where(and(gte(t.analysisResults.ts, fromTs), lte(t.analysisResults.ts, toTs)))
         .orderBy(asc(t.analysisResults.ts), asc(t.analysisResults.id)).all().map(rowToAnalysis),
+    scan: (from: string, to: string): Iterable<AnalysisRow> => {
+      const a = t.analysisResults
+      const lastId = this.db.select({ id: sql<number>`coalesce(max(${a.id}), 0)` }).from(a).get()?.id ?? 0
+      const db = this.db
+      return (function* () {
+        let after: { ts: string, id: number } | undefined
+        for (;;) {
+          const page: (typeof a.$inferSelect)[] = db.select().from(a).where(and(
+            between(a.ts, after?.ts ?? from, to), lte(a.id, lastId),
+            after && sql`(${a.ts}, ${a.id}) > (${after.ts}, ${after.id})`,
+          )).orderBy(asc(a.ts), asc(a.id)).limit(128).all()
+          for (const row of page) yield rowToAnalysis(row)
+          if (page.length < 128) return
+          after = page.at(-1)
+        }
+      })()
+    },
     count: (from: string, to: string): number => this.db.select({ n: count() }).from(t.analysisResults).where(between(t.analysisResults.ts, from, to)).get()?.n ?? 0,
     stats: (): AnalyzerStats[] =>
       this.db.all<AnalyzerStats>(sql`SELECT analyzer, version, source, count(*) AS rows, count(DISTINCT captureId) AS captures, min(ts) AS firstTs, max(ts) AS lastTs

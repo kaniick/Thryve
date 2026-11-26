@@ -434,6 +434,7 @@ export class MemoryStore implements Store {
     },
     range: (fromTs: string, toTs: string): AnalysisRow[] =>
       this.analysisRows.filter(r => r.ts >= fromTs && r.ts <= toTs).sort((a, b) => a.ts.localeCompare(b.ts)),
+    scan: (from: string, to: string): Iterable<AnalysisRow> => this.analyses.range(from, to),
     count: (from: string, to: string): number => countWindow(this.analysisRows, from, to),
     stats: (): AnalyzerStats[] => {
       const m = new Map<string, AnalyzerStats & { ids: Set<string> }>()

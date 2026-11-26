@@ -112,7 +112,7 @@ const core = createCore({ hal, store, events, version, sink: mirror, mirror, bac
 
 const performance = startCorePerformance()
 core.ctx.cameraRecovery = { restart: restartCamera, recent: listRestartLog }
-const { app, injectWebSocket } = createApp({ ctx: core.ctx, staticRoot: './web/dist', performanceWindow: performance.latest })
+const { app, injectWebSocket } = createApp({ ctx: core.ctx, staticRoot: './web/dist', datasetSpoolDir: DATA_DIR, performanceWindow: performance.latest })
 
 const server = serve({ fetch: app.fetch, port: PORT, hostname: HOST }, (info) => {
   console.log(`thryve core ${core.ctx.version} listening on http://${info.address}:${info.port}`)

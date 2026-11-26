@@ -479,6 +479,18 @@ for (const [name, make] of impls) {
       expect(store.tankActions.list()).toHaveLength(2)
     })
 
+    it('scans analysis data across pages in timestamp and insertion order without including later inserts', () => {
+      store = make()
+      const base = { ts: '2026-11-01T00:00:00.000Z', camera: 'upper' as const, analyzer: 'green-threshold', version: 1, source: 'device' as const, slot: 1, metric: 'green_fraction', value: 0.35, artifact: null, detail: null }
+      store.analyses.add(Array.from({ length: 300 }, (_, i) => ({ ...base, captureId: `a-${i}` })))
+      const scan = store.analyses.scan(base.ts, base.ts)[Symbol.iterator]()
+      const first = Array.from({ length: 143 }, () => scan.next().value)
+      store.analyses.add([{ ...base, captureId: 'late' }])
+      for (let p = scan.next(); !p.done; p = scan.next()) first.push(p.value)
+      expect(first.map(r => r.captureId)).toEqual(Array.from({ length: 300 }, (_, i) => `a-${i}`))
+      expect([...store.analyses.scan(base.ts, base.ts)]).toHaveLength(301)
+    })
+
     it('aggregates dataset metadata inside inclusive bounds, including retained rows of pruned captures', () => {
       store = make()
       const before = '2026-11-01T00:00:00.000Z'

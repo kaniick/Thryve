@@ -250,6 +250,7 @@ export const analysisResults = sqliteTable('analysis_results', {
   uniqueIndex('analysis_results_key').on(t.captureId, t.analyzer, t.version, t.slot, t.metric),
   index('analysis_results_series').on(t.analyzer, t.metric, t.slot, t.ts),
   index('analysis_results_analyzer_version').on(t.analyzer, t.version),
+  index('analysis_results_ts').on(t.ts),
 ])
 
 /**

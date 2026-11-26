@@ -17,6 +17,7 @@ import { IngestBatch, IngestRefused, ingestResults } from '../src/vision/ingest'
 import { MAX_MODEL_BYTES, ModelRefused } from '../src/vision/registry'
 import { podCrop } from '../src/vision/shareCodes'
 import { apiKeyGuard, timingSafeEqual } from './auth'
+import { datasetSpool } from './datasetSpool'
 import type { CorePerformanceWindow } from './performance'
 import { mountMaintenance, type MaintenanceOptions } from './maintenance'
 
@@ -24,6 +25,8 @@ export interface CreateAppOptions {
   ctx: Context
   /** Directory of the built SPA; omit to skip static serving (tests). */
   staticRoot?: string
+  /** Data volume for large JSONL files staged while building a dataset download. */
+  datasetSpoolDir?: string
   performanceWindow?: () => CorePerformanceWindow | null
   maintenance?: MaintenanceOptions
 }
@@ -45,7 +48,7 @@ export function staticCacheControl(path: string, contentType: string | null): st
  * mount it on an ephemeral port without touching process signals.
  */
 
-export function createApp({ ctx, staticRoot, performanceWindow, maintenance }: CreateAppOptions) {
+export function createApp({ ctx, staticRoot, datasetSpoolDir, performanceWindow, maintenance }: CreateAppOptions) {
   const app = new Hono()
   const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app })
 
@@ -171,7 +174,10 @@ export function createApp({ ctx, staticRoot, performanceWindow, maintenance }: C
       return c.json({ error: (e as Error).message }, 400)
     }
     const name = datasetName(ctx.store.settings.get().unitName, w)
-    return c.body(tarStream(datasetEntries(ctx, w)), 200, { 'content-type': 'application/x-tar', 'content-disposition': `attachment; filename="${name}.tar"` })
+    const abort = new AbortController()
+    const signal = AbortSignal.any([abort.signal, c.req.raw.signal])
+    const entries = datasetEntries(ctx, w, datasetSpool(signal, datasetSpoolDir))
+    return c.body(tarStream(entries, () => abort.abort()), 200, { 'content-type': 'application/x-tar', 'content-disposition': `attachment; filename="${name}.tar"` })
   })
 
   // A line per boot from hald, for reading away from the unit. Read-only: nothing in it is secret.
