@@ -251,6 +251,18 @@ export interface AnalysisRow {
   artifact: string | null
 }
 export interface AnalysisPoint { ts: string, value: number, captureId: string }
+export interface LatestAnalysisQuery {
+  analyzer: string
+  metric: string
+  slots: readonly number[]
+  fromTs: string
+}
+export type AgreementReading = Pick<AnalysisRow, 'captureId' | 'slot' | 'analyzer' | 'version' | 'metric' | 'value' | 'detail'>
+export interface OmittedAnalysisSlots {
+  captureId: string
+  runs: Array<{ analyzer: string, version: number }>
+  slots: number[]
+}
 /** What the table holds per analyser@version. */
 export interface AnalyzerStats { analyzer: string, version: number, source: 'device' | 'remote', rows: number, captures: number, firstTs: string, lastTs: string }
 export interface TelemetryPoint { ts: string, sensor: SensorId, value: number }
@@ -447,6 +459,8 @@ export interface Store {
   captures: {
     add(c: Capture): void
     list(camera?: 'upper' | 'lower', limit?: number): Capture[]
+    /** Capture count and recorded bytes in the inclusive timestamp window. */
+    totals(fromTs: string, toTs: string): { count: number, bytes: number }
     get(id: string): Capture | null
     prune(camera: 'upper' | 'lower', keep: number): Capture[]
   }
@@ -494,14 +508,22 @@ export interface Store {
   }
   analyses: {
     /** Upsert on (capture, analyser, version, slot, metric): re-running is idempotent. */
-    add(rows: AnalysisRow[]): void
+    /** If present, drop device scores from these removed boxes for the versions just scored. */
+    add(rows: AnalysisRow[], omitted?: OmittedAnalysisSlots): void
     /** Oldest → newest for one pod; `version` defaults to the newest version that has rows. */
     series(q: { analyzer: string, version?: number, slot: number, metric: string, limit?: number }): AnalysisPoint[]
     forCapture(captureId: string): AnalysisRow[]
+    /** Agreement metrics on labelled capture/slot pairs, with only the fields required to score them. */
+    agreementReadings(): AgreementReading[]
+    /** Latest row per requested slot from the analyser's newest version, ordered by slot. No older-version fallback. */
+    latestBySlot(q: LatestAnalysisQuery): AnalysisRow[]
     /** Remove what the unit itself scored for one capture; remote results stay. */
     removeDevice(captureId: string): void
     /** Rows whose capture time falls in [fromTs, toTs], oldest first. */
     range(fromTs: string, toTs: string): AnalysisRow[]
+    /** The latest version with stored results, or null if the analyser has none. */
+    latestVersion(analyzer: string): number | null
+    count(fromTs: string, toTs: string): number
     stats(): AnalyzerStats[]
   }
   podLabels: {
@@ -515,6 +537,9 @@ export interface Store {
     forCapture(captureId: string): PodLabel[]
     /** Labels whose capture time falls in [fromTs, toTs], oldest first, then by slot. */
     range(fromTs: string, toTs: string): PodLabel[]
+    /** One pod's newest `limit` labels whose capture time falls in [from, to] (either end open), oldest first. */
+    forSlot(slot: number, q: { from?: string, to?: string, limit: number }): PodLabel[]
+    count(fromTs: string, toTs: string): number
     /** Newest capture first, then by pod; `before` continues after a page's last row. */
     list(q: { label?: PodLabelValue, camera?: 'upper' | 'lower', limit: number, before?: PodLabelCursor }): PodLabel[]
     /** How many pods carry each label. */

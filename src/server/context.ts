@@ -7,6 +7,7 @@ import type { AutopilotEngine } from '../autopilot/engine'
 import type { NotifyEngine } from '../notify/engine'
 import type { IosService } from '../notify/ios/service'
 import type { CaptureService } from '../camera/captures'
+import type { CameraName, CameraRestartResult } from './cameraReset'
 import type { MirroredSink } from '../camera/mirrorSink'
 import type { AnalysisService } from '../vision/service'
 import type { FlashMeter } from '../telemetry/flash'
@@ -26,6 +27,11 @@ export interface Context {
   events: EventBus
   store: Store
   captures: CaptureService
+  /** Physical camera restart and its audit log are injected by the Node host. */
+  cameraRecovery?: {
+    restart(camera: CameraName): Promise<CameraRestartResult>
+    recent(): CameraRestartResult[]
+  }
   analysis: AnalysisService
   /** yCube dot codes (#224): pod-ID stills read by podvision, and the owner's code → plant pairs. */
   podCodes: PodCodeService

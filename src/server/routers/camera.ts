@@ -47,4 +47,35 @@ export const cameraRouter = router({
         throw new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: (e as Error).message })
       }
     }),
+  restart: publicProcedure
+    .meta({ openapi: { method: 'POST', path: '/camera/{camera}/restart', tags: ['camera'], summary: 'Power-cycle one camera USB port (does not reboot the Pi)' } })
+    .input(z.object({ camera: Cam }))
+    .output(z.object({
+      ok: z.boolean(),
+      camera: Cam,
+      detail: z.string(),
+      method: z.string().optional(),
+      code: z.string().optional(),
+      present: z.boolean().optional(),
+      simulated: z.boolean().optional(),
+      ts: z.string(),
+    }))
+    .mutation(({ ctx, input }) => {
+      if (ctx.cameraRecovery) return ctx.cameraRecovery.restart(input.camera)
+      // The browser demo has no root helper or filesystem.
+      return { ok: true, camera: input.camera, ts: (ctx.now?.() ?? new Date()).toISOString(), method: 'simulated', simulated: true, present: true, detail: `Simulated a restart of the ${input.camera} camera.` }
+    }),
+  restarts: publicProcedure
+    .meta({ openapi: { method: 'GET', path: '/camera/restarts', tags: ['camera'], summary: 'Recent Restart camera attempts, newest first' } })
+    .output(z.array(z.object({
+      ok: z.boolean(),
+      camera: Cam,
+      detail: z.string(),
+      method: z.string().optional(),
+      code: z.string().optional(),
+      present: z.boolean().optional(),
+      simulated: z.boolean().optional(),
+      ts: z.string(),
+    })))
+    .query(({ ctx }) => (ctx.cameraRecovery?.recent() ?? []).filter(r => r.camera === 'upper' || r.camera === 'lower')),
 })

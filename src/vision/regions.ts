@@ -5,8 +5,8 @@
  *
  * The defaults are measured on a Gardyn Home 3.0's reference stills: one box
  * per cup, centred on its opening. The owner can move and resize any box per
- * camera (stored in settings as a calibration); the boxes they leave alone keep
- * the defaults.
+ * camera (stored in settings as a calibration), or remove one the camera
+ * can't see a pod in; the boxes they leave alone keep the defaults.
  *
  * Slot numbering follows the rest of the app (towerLayout.ts): three columns
  * left to right as the cameras see them, counted across then down from the
@@ -19,8 +19,8 @@ import { bounds, CORE_SIZE, coreOffset, type PodRect, type Rect } from './greenA
 export type Camera = 'upper' | 'lower'
 /** Each pod's box as fractions of the frame, by slot. */
 export type PodRegions = Record<number, PodRect>
-/** Boxes the owner has moved, per camera and slot; every other box keeps its default. */
-export type RegionCalibration = Partial<Record<Camera, PodRegions>>
+/** Boxes the owner moved or removed (null), per camera and slot; every other box keeps its default. */
+export type RegionCalibration = Partial<Record<Camera, Record<number, PodRect | null>>>
 
 export const CAMERAS: Camera[] = ['upper', 'lower']
 
@@ -101,11 +101,14 @@ function fromCups(camera: Camera): PodRegions {
   return out
 }
 
-/** One camera's boxes: the owner's where they moved one, the defaults elsewhere. */
+/** One camera's boxes: the owner's where they moved one, none where they removed it, the defaults elsewhere. */
 export function podRegions(camera: Camera, calibration?: RegionCalibration | null): PodRegions {
   const own = calibration?.[camera] ?? {}
   const out: PodRegions = {}
-  for (const slot of cameraSlots(camera)) out[slot] = own[slot] ?? (DEFAULT_REGIONS[camera][slot] as PodRect)
+  for (const slot of cameraSlots(camera)) {
+    const r = own[slot]
+    if (r !== null) out[slot] = r ?? (DEFAULT_REGIONS[camera][slot] as PodRect)
+  }
   return out
 }
 

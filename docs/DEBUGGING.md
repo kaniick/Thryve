@@ -11,7 +11,7 @@ sources: [{"resource": "https://github.com/iot-root/garden-of-eden", "title": "i
 
 - `ssh <your-login>@thryve.local`, with the username you gave Raspberry Pi Imager: there's no default `pi` ([Installation → The login](INSTALLATION.md#the-login)).
 - `hald --check` validates `hal.toml`; `journalctl -u hald -f` streams the daemon.
-- **A watchdog kill.** hald pings systemd from its engine loop; if the loop hangs for 10 s, systemd kills it and restarts it ([hal.md → Watchdog](hardware/hal.md#watchdog)). In `journalctl -u hald` that reads `hald.service: Watchdog timeout (limit 10s)!`, then `Killing process … with signal SIGABRT`, `Failed with result 'watchdog'`, the `pump-off: GPIO24 driven low (pinctrl)` line from the pump-off script, and `Scheduled restart job`. `systemctl show hald -p NRestarts -p WatchdogUSec` counts restarts and shows the limit (`0` means the unit has no watchdog: rerun `sudo scripts/install-hal`). The lines before the timeout show what the loop was last doing. `pump-off: couldn't drive GPIO24 low` means none of `pinctrl`, `raspi-gpio`, sysfs GPIO or `gpioset` worked for hald's user.
+- **A watchdog kill.** hald pings systemd from its engine loop; if the loop hangs for 20 s, systemd kills it and restarts it ([hal.md → Watchdog](hardware/hal.md#watchdog)). In `journalctl -u hald` that reads `hald.service: Watchdog timeout (limit 20s)!`, then `Killing process … with signal SIGABRT`, `Failed with result 'watchdog'`, the `pump-off: GPIO24 driven low (pinctrl)` line from the pump-off script, and `Scheduled restart job`. `systemctl show hald -p NRestarts -p WatchdogUSec` counts restarts and shows the limit (`0` means the unit has no watchdog: rerun `sudo scripts/install-hal`). The lines before the timeout show what the loop was last doing. `pump-off: couldn't drive GPIO24 low` means none of `pinctrl`, `raspi-gpio`, sysfs GPIO or `gpioset` worked for hald's user.
 - `journalctl -u thryve-core -f` for core; `curl localhost:3000/api/system`.
 - **Logs only last until reboot.** `install-hal` keeps the journal in RAM to spare the SD card (ADR-0021). Alerts and faults are still in the database (**Alerts**, `GET /api/alerts`). To chase a crash that needs logs from before a reboot, keep the journal on the card for a while, then turn it back off:
 
@@ -60,6 +60,8 @@ sources: [{"resource": "https://github.com/iot-root/garden-of-eden", "title": "i
   - SSH is failing while Core and hald answer: investigate port 22, the SSH service and the failing client's path.
   - All three stop: check whether the Pi remained associated with Wi-Fi in the access point's event log. After recovery, check `sudo journalctl --list-boots` and `cat /proc/sys/kernel/random/boot_id`. A different boot ID confirms a reboot, not its cause. A HAL uptime reset alone may only be a HAL restart. All three failing cannot distinguish a network drop from a host freeze by itself.
 
+- **Tank warnings around photos.** Compare the capture and ranger timestamps in `journalctl -u hald -b -o short-monotonic` with the tank alert and pump timeline. A capture-overlapped missing sample immediately after a trusted wet reading does not count toward the alert. It does not prove recovery, does not hide repeated missing samples, and never bypasses `PumpGuard`. During a normal watering, lighting and capture cycle, check that both cameras, HALD, Core and SSH stay responsive. When testing a per-camera restart on the physical hub, use it while the pump is idle, then check that the other camera and the rest of the gateway still answer. Do not deliberately run the pump dry to test alerts.
+
   If a shell is still open during the incident, leave it open and check Core and hald on loopback before restarting. After reconnection, capture the recent logs. Match the UTC timestamps to the probe and the AP logs. Select `-b -1` instead of `-b` only if there was a reboot and the previous journal is available.
 
   ```sh
@@ -69,6 +71,18 @@ sources: [{"resource": "https://github.com/iot-root/garden-of-eden", "title": "i
   ```
 
 - **Benchmark Core without touching a garden.** Run `node --import tsx tests/perf/core-read-paths.mts` from a checkout with dependencies installed. It creates a temporary synthetic database and measures care checks, settings reads, tank quality, and history sampling. Use the same machine and Node version for comparison. Before rollout to an ARMv6 unit, compare local HTTP and SSH availability across a normal light/watering cycle, and verify that the scheduled runs still happen.
+- **Compare a known-good build with a dev candidate.** Record the running Core revision (Settings or the SSH banner) and save a known-good probe log first. Once you're back at the unit and have installed the dev candidate, verify its revision and start a new log. Probe from the same device and network, and include a normal watering run and light transition in both windows when practical.
+
+  ```sh
+  # First, with the known-good build still running. Use your unit's numeric IP.
+  python3 scripts/thryve-observe.py 10.10.20.202 --interval 5 --duration 86400 | tee known-good.jsonl
+
+  # Later, after confirming the intended dev revision started.
+  python3 scripts/thryve-observe.py 10.10.20.202 --interval 5 --duration 86400 | tee dev-candidate.jsonl
+  python3 scripts/thryve-soak-report.py dev-candidate.jsonl --baseline known-good.jsonl --interval 5
+  ```
+
+  The report reads only those files. It compares response times from successful checks, failure counts for each service, and gaps when the observer missed samples. SSH checks only test the banner, so also sign in at least once. A HAL uptime drop may only be a daemon restart. Confirm the scheduled watering and lights on the tower, check the alert history, and try the changed screens before promoting the candidate. If the device stays reachable but Core times out again, collect the UTC performance journal excerpt and the report before restarting Core.
 - **Core takes a while after a restart.** It's one bundle (`scripts/build-server.mjs`), because a cold start used to go on resolving `node_modules`. A stack trace points into `server/dist/*.js`, with source maps beside it. The MCP and OpenAPI stacks load on first use, so the first `/api/mcp` or REST call after a restart is slower than the next. V8's compile cache lives in `/var/cache/thryve/compile-cache`, written once a minute after the first start of a version; deleting it is always safe.
 - **A restore that didn't finish.** The helper logs each step to `/var/lib/thryve-restore/status.json`. When the web UI starts the restore, it runs as a transient unit: `journalctl -u 'thryve-restore-*'`. `sudo thryve-restore --status` prints the last run. "restore isn't installed" means `scripts/install` hasn't put the helper and its sudoers rule in place; `sudo -n -l /usr/local/sbin/thryve-restore` as the core user should print the path. `sudo thryve-restore --undo` puts back what the last restore replaced. A failed restore puts the old files back by itself.
 - **SD card writes:** **Settings → Storage** (or `GET /api/storage/flash`) shows writes per day. To see who is writing, `sudo iotop -ao` or `cat /proc/<pid>/io`; **Settings → SD card → Database** (or `GET /api/storage/database`) splits the database's share by table. `swapon --show` should list only `/dev/zram0`.

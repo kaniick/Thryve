@@ -1,6 +1,6 @@
 import { TRPCError } from '@trpc/server'
 import { z } from 'zod'
-import { FOLLOW_ALERT, redateGermination } from '../../care/follow'
+import { FOLLOW_ALERT, noteFollow, redateGermination } from '../../care/follow'
 import { cycleDay, MAX_BACKDATE_DAYS, restarted } from '../../grow/grow'
 import { harvestOutlook } from '../../grow/harvest'
 import { presetSchedules, PUMP_PRESETS, type PumpPreset } from '../../scheduler/pumpPlan'
@@ -102,7 +102,7 @@ export const growRouter = router({
       // Germination's weekly run goes with it, while watering follows the cycle.
       const moved = redateGermination(store, now)
       if (moved) {
-        store.alerts.raise(FOLLOW_ALERT, moved.detail, now.toISOString())
+        noteFollow(store, moved.detail, now.toISOString())
         events.emit({ kind: 'schedule', action: 'changed', id: 'follow:germination' })
         events.emit({ kind: 'mutation', path: `alerts.${FOLLOW_ALERT}` })
       }
@@ -164,13 +164,21 @@ export const growRouter = router({
     }),
   swapPods: publicProcedure
     .meta({ openapi: { method: 'POST', path: '/pods/swap', tags: ['grow'], summary: 'Swap what two pods hold (plant, sow date, status, notes, last cut), after moving their yCubes; camera history stays with each pod position' } })
-    .input(z.object({ a: z.number().int().min(1).max(60), b: z.number().int().min(1).max(60) }))
+    .input(z.object({
+      a: z.number().int().min(1).max(60),
+      b: z.number().int().min(1).max(60),
+      expected: z.object({ aUpdatedAt: z.string().datetime({ offset: true }), bUpdatedAt: z.string().datetime({ offset: true }) }).optional(),
+    }))
     .output(z.array(PodOut))
     .mutation(({ ctx, input }) => {
       const pods = ctx.store.pods.list()
       const a = pods.find(p => p.slot === input.a)
       const b = pods.find(p => p.slot === input.b)
       if (!a || !b) throw new TRPCError({ code: 'NOT_FOUND', message: `no pod ${a ? input.b : input.a}` })
+      const expected = input.expected
+      if (expected && (expected.aUpdatedAt !== a.updatedAt || expected.bUpdatedAt !== b.updatedAt)) {
+        throw new TRPCError({ code: 'CONFLICT', message: 'A pod changed since you reviewed this pair. Refresh the records and review the move again.' })
+      }
       if (a.slot === b.slot) return [a, b]
       const out = swapPodRecords(ctx.store, a.slot, b.slot, (ctx.now ?? (() => new Date()))().toISOString())
       ctx.events.emit({ kind: 'mutation', path: 'pods' })

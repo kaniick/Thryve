@@ -5,6 +5,7 @@
  * served by the unit itself (no CDN: many units sit on LANs without internet).
  */
 import * as THREE from 'three'
+import { pointerHit, TAP_SLOP } from '@/src/components/charts/viz3d/pick'
 import { createRoom } from './towerRoom'
 import { createTower, DARK_PALETTE, LIGHT_PALETTE, type TowerState, type TowerTarget } from './towerScene'
 
@@ -132,13 +133,7 @@ export function mountTower(host: HTMLElement, o: TowerMountOptions) {
 
   // Picking: hover highlights a pod, a click that didn't drag selects it.
   const ray = new THREE.Raycaster()
-  const pointer = new THREE.Vector2()
-  const pick = (e: PointerEvent | MouseEvent): TowerTarget | null => {
-    const r = canvas.getBoundingClientRect()
-    pointer.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1)
-    ray.setFromCamera(pointer, camera)
-    return tower.targetOf(ray.intersectObjects(tower.pickables, false)[0]?.object)
-  }
+  const pick = (e: PointerEvent | MouseEvent): TowerTarget | null => tower.targetOf(pointerHit(ray, camera, canvas, e, tower.pickables))
   const same = (a: TowerTarget | null, b: TowerTarget | null) => JSON.stringify(a) === JSON.stringify(b)
   let drag: { x: number, y: number, moved: boolean } | null = null
   let hovered: TowerTarget | null = null
@@ -150,7 +145,7 @@ export function mountTower(host: HTMLElement, o: TowerMountOptions) {
     if (drag && (e.buttons & 1 || e.pointerType === 'touch')) {
       const dx = e.clientX - drag.x
       const dy = e.clientY - drag.y
-      if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true
+      if (Math.abs(dx) + Math.abs(dy) > TAP_SLOP) drag.moved = true
       if (drag.moved) {
         view.azimuth = clamp(view.azimuth - dx * 0.008, -VIEW.maxAzimuth, VIEW.maxAzimuth)
         view.elevation = clamp(view.elevation + dy * 0.005, VIEW.minElevation, VIEW.maxElevation)

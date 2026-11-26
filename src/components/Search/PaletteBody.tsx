@@ -5,7 +5,7 @@ import { cn } from '@/lib/utils'
 import { trpc } from '@/src/utils/trpc'
 import { loadLiveDocsIndex, type DocsIndex } from './docsIndex'
 import docsSnapshot from './docsIndex.json'
-import { buildDocsEntries, buildSearchEntries, createSearch, type SearchEntry } from './searchIndex'
+import { buildDocsEntries, buildSearchEntries, createSearch, plantSearchEntries, type SearchEntry } from './searchIndex'
 
 const MAX_RESULTS = 12
 
@@ -38,7 +38,7 @@ export function PaletteBody({ onClose }: { onClose: () => void }) {
     const entries = buildSearchEntries({ pods: pods.data, rules: rules.data })
     return {
       pages: entries.filter(e => e.id.startsWith('page:') && e.crumbs.length === 0 && !e.boost),
-      search: createSearch([...entries, ...buildDocsEntries(docsIndex)]),
+      search: createSearch([...entries, ...plantSearchEntries, ...buildDocsEntries(docsIndex)]),
     }
   }, [pods.data, rules.data, docsIndex])
 

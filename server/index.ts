@@ -6,6 +6,7 @@ import { arch, hostname } from 'node:os'
 import { join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { latestStill } from '../src/camera/captures'
+import { listRestartLog, restartCamera } from '../src/server/cameraReset'
 import { FsSink } from '../src/camera/fsSink'
 import { RestoreClient, restoreCommand } from '../src/backup/restore'
 import { BackupService } from '../src/backup/service'
@@ -110,6 +111,7 @@ const bootLog = () => readFile(join(backupPaths(process.env, DATA_DIR).stateDir,
 const core = createCore({ hal, store, events, version, sink: mirror, mirror, backup, restore, update, bootLog, homekit, startServices: process.env.CI !== '1', analysisExecutor: native?.run ?? vision?.run, models, podvision: native && podvision ? { bin: podvision, lastError: native.lastError } : undefined, codeReader: podvision ? podvisionCodeReader(podvision) : null, wifi, clockTrusted: () => nodeClockTrusted(), flashSource: nodeFlashSource(), database, logging, disk: nodeDiskUsage(DATA_DIR), bridge: () => bridgeStatus(store.settings.get().mqttUrl, haBridge.bridge(), haBridge.error()), hardwareBroker: { status: loadHalBrokerStatus, canApply: (sim: boolean) => !sim && !!halMqttCommand(), apply: applyHalBroker }, host: { hostname: hostname(), arch: arch() }, apns: new ApnsClient() })
 
 const performance = startCorePerformance()
+core.ctx.cameraRecovery = { restart: restartCamera, recent: listRestartLog }
 const { app, injectWebSocket } = createApp({ ctx: core.ctx, staticRoot: './web/dist', performanceWindow: performance.latest })
 
 const server = serve({ fetch: app.fetch, port: PORT, hostname: HOST }, (info) => {

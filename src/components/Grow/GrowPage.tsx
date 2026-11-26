@@ -8,6 +8,7 @@ import { apiBase, trpc } from '@/src/utils/trpc'
 import { LineChart } from '@/src/components/ds/charts'
 import { cameraOf, podRegions, type RegionCalibration } from '@/src/vision/regions'
 import { CATALOG } from './plants/catalog'
+import { PlantCare } from './PlantCare'
 import { PlantModel } from './PlantModel'
 import { ProtocolCard } from './ProtocolCard'
 import { PlantThumb, podForm } from './PlantThumb'
@@ -24,9 +25,22 @@ const TREND: Record<string, string> = { growing: 'Growing', stalled: 'Stalled', 
 type View = 'pods' | 'tower'
 const VIEW_KEY = 'thryve.growView'
 const VIEWS: { value: View, label: ReactNode }[] = [
-  { value: 'pods', label: [<LayoutGrid key="i" size={16} aria-hidden="true" />, 'Pods'] },
+  { value: 'pods', label: [<LayoutGrid key="i" size={16} aria-hidden="true" />, 'List'] },
   { value: 'tower', label: [<Box key="i" size={16} aria-hidden="true" />, 'Tower'] },
 ]
+export type GrowTab = 'protocol' | 'pods'
+const TAB_KEY = 'thryve.growTab'
+const TABS = [{ value: 'protocol', label: 'Protocol' }, { value: 'pods', label: 'Pods' }] as const
+export const isGrowTab = (v: unknown): v is GrowTab => v === 'protocol' || v === 'pods'
+
+function savedTab(): GrowTab {
+  try {
+    return localStorage.getItem(TAB_KEY) === 'protocol' ? 'protocol' : 'pods'
+  }
+  catch {
+    return 'pods'
+  }
+}
 const PLANTS = [...new Set(CATALOG.map(e => e.name))].sort()
 /** Catalog plants that grow best in `zone`, for an empty pod. */
 const suitedTo = (zone: LightZone) => PLANTS.filter(p => plantLight(p)?.zone === zone)
@@ -75,11 +89,24 @@ interface Draft { slot: number, plant: string, status: PodStatus, notes: string 
  * Pods (three tower columns of rows) or the 3D tower on the left, the picked
  * pod down the right; on a phone the panel drops below.
  */
-export function GrowPage() {
+export function GrowPage({ tab: asked, pod, onTabChange }: { tab?: GrowTab, pod?: number, onTabChange?: (tab: GrowTab) => void } = {}) {
+  const [lastTab, setTab] = useState<GrowTab>(savedTab)
+  const tab = pod !== undefined ? 'pods' : asked ?? lastTab
+  const podsTab = tab === 'pods'
+  const chooseTab = (next: GrowTab) => {
+    setTab(next)
+    try {
+      localStorage.setItem(TAB_KEY, next)
+    }
+    catch {
+      // Private browsing can make storage unavailable.
+    }
+    onTabChange?.(next)
+  }
   const utils = trpc.useUtils()
   const grow = trpc.grow.current.useQuery()
-  const pods = trpc.grow.pods.useQuery()
-  const harvest = trpc.grow.harvest.useQuery()
+  const pods = trpc.grow.pods.useQuery(undefined, { enabled: podsTab })
+  const harvest = trpc.grow.harvest.useQuery(undefined, { enabled: podsTab })
   const settings = trpc.settings.get.useQuery()
   // The grow protocol counts from the cycle and picks its track by the pods, so it's read again with them.
   const growChanged = () => {
@@ -94,18 +121,18 @@ export function GrowPage() {
   const swapPods = trpc.grow.swapPods.useMutation({ onSuccess: growChanged })
   // The pod whose yCube moved, while the one it swapped with is being picked.
   const [swapping, setSwapping] = useState<number | null>(null)
-  const trends = trpc.vision.podTrends.useQuery()
-  const sensors = trpc.sensors.latest.useQuery()
-  const light = trpc.light.get.useQuery()
-  // `?pod=N` (from Home, the sidebar and search) opens that pod until another is picked.
-  const [selected, setSelected] = useState<number | null>(() => {
-    const n = Number(new URLSearchParams(typeof window === 'undefined' ? '' : window.location.search).get('pod'))
-    return Number.isInteger(n) && n > 0 ? n : null
-  })
+  const trends = trpc.vision.podTrends.useQuery(undefined, { enabled: podsTab })
+  // Links from Home and search can change the pod without remounting Grow.
+  const [selection, setSelection] = useState<{ requested: number | undefined, slot: number | null }>({ requested: pod, slot: pod ?? null })
+  const selected = selection.requested === pod ? selection.slot : pod ?? null
+  const setSelected = (slot: number | null) => setSelection({ requested: pod, slot })
   const [edited, setDraft] = useState<Draft | null>(null)
   const [name, setName] = useState('')
   const [view, setView] = useState<View>(savedView)
   const [noWebGL, setNoWebGL] = useState(false)
+  const showTower = podsTab && view === 'tower' && !noWebGL
+  const sensors = trpc.sensors.latest.useQuery(undefined, { enabled: showTower })
+  const light = trpc.light.get.useQuery(undefined, { enabled: showTower })
   const chooseView = (v: View) => {
     setView(v)
     try {
@@ -115,7 +142,7 @@ export function GrowPage() {
       // private window: the choice lasts for this visit
     }
   }
-  const all = [...(pods.data ?? [])].sort((a, b) => a.slot - b.slot)
+  const all = podsTab ? [...(pods.data ?? [])].sort((a, b) => a.slot - b.slot) : []
   const trendBySlot = new Map((trends.data ?? []).map(t => [t.slot, t]))
   const outlook = new Map((harvest.data ?? []).map(h => [h.slot, h]))
   const towerPods: PodState[] = all.map((p) => {
@@ -137,7 +164,7 @@ export function GrowPage() {
     setDraft(null)
   }
   const saved = selected === null ? undefined : all.find(p => p.slot === selected)
-  const draft: Draft | null = edited ?? (saved ? { slot: saved.slot, plant: saved.plant ?? '', status: saved.status, notes: saved.notes } : null)
+  const draft: Draft | null = edited && edited.slot === selected ? edited : saved ? { slot: saved.slot, plant: saved.plant ?? '', status: saved.status, notes: saved.notes } : null
   const dirty = !!draft && !!saved && (draft.plant !== (saved.plant ?? '') || draft.status !== saved.status || draft.notes !== saved.notes)
   const shown: View = noWebGL ? 'pods' : view
   const cycle = grow.data?.cycle
@@ -157,7 +184,7 @@ export function GrowPage() {
           <h1 className="text-2xl font-semibold">Grow</h1>
           <div className="text-[13px] text-fg-2">{cycle ? [cycle.notes, `started ${shortDate(cycle.startedAt)}`].filter(Boolean).join(' · ') : 'No active cycle'}</div>
         </div>
-        {!noWebGL && (
+        {podsTab && !noWebGL && (
           <SegmentedControl<View>
             ariaLabel="Pod view"
             value={shown}
@@ -167,6 +194,7 @@ export function GrowPage() {
         )}
         {cycle && <Button onClick={() => end.mutate()}>End cycle</Button>}
       </div>
+      <SegmentedControl<GrowTab> ariaLabel="Grow section" value={tab} options={TABS} onChange={chooseTab} className="self-start" />
 
       <section aria-label="Cycle" className="flex flex-wrap items-center gap-7 rounded-[14px] border border-line bg-surface px-5 py-[18px]">
         {cycle
@@ -177,14 +205,16 @@ export function GrowPage() {
                   {length > 0 && <div className="font-mono text-xs text-fg-3">{`of ~${length}`}</div>}
                 </div>
                 {cycle.stage !== 'ended' && <StageBar stage={cycle.stage} onChange={stage => setStage.mutate({ stage })} />}
-                <div data-testid="pod-counts" className="flex flex-wrap gap-4 font-mono text-xs text-fg-2">
-                  {counts.map(c => (
-                    <span key={c.label} className="flex items-center gap-1.5">
-                      <span className="size-[7px] rounded-full" style={{ background: c.token }} />
-                      {`${c.n} ${c.label}`}
-                    </span>
-                  ))}
-                </div>
+                {podsTab && (
+                  <div data-testid="pod-counts" className="flex flex-wrap gap-4 font-mono text-xs text-fg-2">
+                    {counts.map(c => (
+                      <span key={c.label} className="flex items-center gap-1.5">
+                        <span className="size-[7px] rounded-full" style={{ background: c.token }} />
+                        {`${c.n} ${c.label}`}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </>
             )
           : (
@@ -199,105 +229,107 @@ export function GrowPage() {
             )}
       </section>
 
-      <ProtocolCard />
+      {tab === 'protocol' && <div role="tabpanel" aria-label="Protocol"><ProtocolCard /></div>}
 
-      <div className="flex flex-wrap items-start gap-5">
-        <div className="min-w-0 flex-1 basis-[480px]">
-          {swapping !== null && (
-            <div data-testid="swap-banner" className="mb-2.5 flex flex-wrap items-center gap-2 rounded-[10px] border border-line-2 bg-active/60 px-3 py-2 text-[13px]">
-              <ArrowLeftRight size={16} className="shrink-0 text-fg-2" />
-              <span className="flex-1">{`Pick the pod to swap pod ${swapping}${all.find(p => p.slot === swapping)?.plant ? ` (${all.find(p => p.slot === swapping)?.plant})` : ''} with.`}</span>
-              <Button className="px-3 py-[5px] text-[13px]" onClick={() => setSwapping(null)}>Cancel</Button>
-            </div>
-          )}
-          {swapPods.error && <InlineError>{swapPods.error.message}</InlineError>}
-          {shown === 'tower' && (
-            <TowerView
-              pods={towerPods}
-              waterPct={sensors.data?.water_level_pct?.value ?? null}
-              lightLevel={light.data?.on ? light.data.level : 0}
-              selected={selected}
-              onSelect={select}
-              onUnavailable={() => setNoWebGL(true)}
-            />
-          )}
-          {noWebGL && <p className="mb-2 text-xs text-fg-3">The 3D tower needs WebGL, which this browser doesn&apos;t offer, so the pods are shown as a list.</p>}
-          {shown === 'pods' && (
-            <div className="flex flex-col gap-2.5 min-[640px]:flex-row" aria-label="Pods">
-              {towers.map((tower, i) => (
-                <div key={towerName(i)} className="flex min-w-0 flex-1 flex-col gap-1.5">
-                  <div className="mb-1 px-0.5 font-mono text-[10px] font-medium tracking-[0.1em] text-fg-3">
-                    {`TOWER ${towerName(i)} · PODS ${tower[0]?.slot}–${tower.at(-1)?.slot}`}
+      {podsTab && (
+        <div role="tabpanel" aria-label="Pod editor" className="flex flex-wrap items-start gap-5">
+          <div className="min-w-0 flex-1 basis-[480px]">
+            {swapping !== null && (
+              <div data-testid="swap-banner" className="mb-2.5 flex flex-wrap items-center gap-2 rounded-[10px] border border-line-2 bg-active/60 px-3 py-2 text-[13px]">
+                <ArrowLeftRight size={16} className="shrink-0 text-fg-2" />
+                <span className="flex-1">{`Pick the pod to swap pod ${swapping}${all.find(p => p.slot === swapping)?.plant ? ` (${all.find(p => p.slot === swapping)?.plant})` : ''} with.`}</span>
+                <Button className="px-3 py-[5px] text-[13px]" onClick={() => setSwapping(null)}>Cancel</Button>
+              </div>
+            )}
+            {swapPods.error && <InlineError>{swapPods.error.message}</InlineError>}
+            {shown === 'tower' && (
+              <TowerView
+                pods={towerPods}
+                waterPct={sensors.data?.water_level_pct?.value ?? null}
+                lightLevel={light.data?.on ? light.data.level : 0}
+                selected={selected}
+                onSelect={select}
+                onUnavailable={() => setNoWebGL(true)}
+              />
+            )}
+            {noWebGL && <p className="mb-2 text-xs text-fg-3">The 3D tower needs WebGL, which this browser doesn&apos;t offer, so the pods are shown as a list.</p>}
+            {shown === 'pods' && (
+              <div className="flex flex-col gap-2.5 min-[640px]:flex-row" aria-label="Pods">
+                {towers.map((tower, i) => (
+                  <div key={towerName(i)} className="flex min-w-0 flex-1 flex-col gap-1.5">
+                    <div className="mb-1 px-0.5 font-mono text-[10px] font-medium tracking-[0.1em] text-fg-3">
+                      {`TOWER ${towerName(i)} · PODS ${tower[0]?.slot}–${tower.at(-1)?.slot}`}
+                    </div>
+                    {tower.map((p) => {
+                      const s = shownOf.get(p.slot) ?? 'empty'
+                      const cover = p.harvest?.cover ?? p.green ?? null
+                      const picked = selected === p.slot
+                      return (
+                        <button
+                          key={p.slot}
+                          type="button"
+                          draggable
+                          onDragStart={e => e.dataTransfer.setData('text/plain', String(p.slot))}
+                          onDragOver={e => e.preventDefault()}
+                          onDrop={(e) => {
+                            e.preventDefault()
+                            swap(Number(e.dataTransfer.getData('text/plain')), p.slot)
+                          }}
+                          onClick={() => select(p.slot)}
+                          aria-pressed={picked}
+                          aria-label={`${p.slot} ${p.plant ?? 'empty'}`}
+                          className={cn('flex min-h-[44px] select-none items-center gap-2.5 rounded-[9px] border px-2.5 py-[9px] text-left transition-colors hover:border-pod-empty', picked ? 'border-fg-2 bg-active' : ROW_CLASS[s])}
+                        >
+                          <span className="w-4 font-mono text-[10px] text-fg-3">{p.slot}</span>
+                          <span className="size-[7px] shrink-0 rounded-full" style={{ background: s === 'empty' ? 'var(--border-2)' : SHOWN_TOKEN[s] }} />
+                          <PlantThumb plant={p.plant} stage={podForm(p)} size={32} />
+                          <span className={cn('min-w-0 flex-1 truncate text-[13px]', s === 'empty' ? 'text-pod-empty' : 'text-fg')}>{p.plant ?? (s === 'empty' ? 'Empty · plant' : '')}</span>
+                          {s !== 'empty' && cover !== null && <span className="font-mono text-[11px] text-fg-3">{pct(cover)}</span>}
+                        </button>
+                      )
+                    })}
                   </div>
-                  {tower.map((p) => {
-                    const s = shownOf.get(p.slot) ?? 'empty'
-                    const cover = p.harvest?.cover ?? p.green ?? null
-                    const picked = selected === p.slot
-                    return (
-                      <button
-                        key={p.slot}
-                        type="button"
-                        draggable
-                        onDragStart={e => e.dataTransfer.setData('text/plain', String(p.slot))}
-                        onDragOver={e => e.preventDefault()}
-                        onDrop={(e) => {
-                          e.preventDefault()
-                          swap(Number(e.dataTransfer.getData('text/plain')), p.slot)
-                        }}
-                        onClick={() => select(p.slot)}
-                        aria-pressed={picked}
-                        aria-label={`${p.slot} ${p.plant ?? 'empty'}`}
-                        className={cn('flex min-h-[44px] items-center gap-2.5 rounded-[9px] border px-2.5 py-[9px] text-left transition-colors hover:border-pod-empty', picked ? 'border-fg-2 bg-active' : ROW_CLASS[s])}
-                      >
-                        <span className="w-4 font-mono text-[10px] text-fg-3">{p.slot}</span>
-                        <span className="size-[7px] shrink-0 rounded-full" style={{ background: s === 'empty' ? 'var(--border-2)' : SHOWN_TOKEN[s] }} />
-                        <PlantThumb plant={p.plant} stage={podForm(p)} size={32} />
-                        <span className={cn('min-w-0 flex-1 truncate text-[13px]', s === 'empty' ? 'text-pod-empty' : 'text-fg')}>{p.plant ?? (s === 'empty' ? 'Empty · plant' : '')}</span>
-                        {s !== 'empty' && cover !== null && <span className="font-mono text-[11px] text-fg-3">{pct(cover)}</span>}
-                      </button>
-                    )
-                  })}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+                ))}
+              </div>
+            )}
+          </div>
 
-        <aside
-          aria-label={draft ? `Pod ${draft.slot}` : 'Selected pod'}
-          className="flex w-full shrink-0 flex-col gap-4 rounded-[14px] border border-line bg-surface p-[18px] min-[900px]:sticky min-[900px]:top-7 min-[900px]:w-[300px]"
-        >
-          {draft && saved
-            ? (
-                <PodPanel
-                  pod={towerPods.find(p => p.slot === draft.slot) ?? { slot: draft.slot, status: saved.status, plant: saved.plant }}
-                  tower={towerName(Math.max(0, towers.findIndex(t => t.some(p => p.slot === draft.slot))))}
-                  coverPerDay={outlook.get(draft.slot)?.coverPerDay ?? null}
-                  light={podLight(towerPods, draft.slot, draft.plant.trim() || null)}
-                  plantedAt={saved.plantedAt}
-                  draft={draft}
-                  dirty={dirty}
-                  saving={updatePod.isPending}
-                  onChange={setDraft}
-                  onClose={() => {
-                    setSelected(null)
-                    setDraft(null)
-                  }}
-                  onSave={() => updatePod.mutate({ slot: draft.slot, plant: draft.plant.trim() || null, status: draft.status, notes: draft.notes, plantedAt: draft.status === 'seeded' && saved.status !== 'seeded' ? new Date().toISOString().slice(0, 10) : undefined }, { onSuccess: () => setDraft(null) })}
-                  onRevert={() => setDraft(null)}
-                  onHarvested={() => markHarvested.mutate({ slot: draft.slot })}
-                  onDismiss={() => updatePod.mutate({ slot: draft.slot, status: 'growing' }, { onSuccess: () => setDraft(null) })}
-                  onSwap={() => setSwapping(draft.slot)}
-                />
-              )
-            : (
-                <div className="flex flex-col gap-1">
-                  <div className="text-[15px] font-medium">Pods</div>
-                  <p className="text-[13px] text-fg-2">{`Click a pod ${shown === 'tower' ? 'on the tower' : 'in the list'} to see and edit it.${shown === 'pods' ? ' Drag one onto another to swap them after moving their yCubes.' : ''}`}</p>
-                </div>
-              )}
-        </aside>
-      </div>
+          <aside
+            aria-label={draft ? `Pod ${draft.slot}` : 'Selected pod'}
+            className="flex w-full shrink-0 flex-col gap-4 rounded-[14px] border border-line bg-surface p-[18px] min-[900px]:sticky min-[900px]:top-7 min-[900px]:w-[300px]"
+          >
+            {draft && saved
+              ? (
+                  <PodPanel
+                    pod={towerPods.find(p => p.slot === draft.slot) ?? { slot: draft.slot, status: saved.status, plant: saved.plant }}
+                    tower={towerName(Math.max(0, towers.findIndex(t => t.some(p => p.slot === draft.slot))))}
+                    coverPerDay={outlook.get(draft.slot)?.coverPerDay ?? null}
+                    light={podLight(towerPods, draft.slot, draft.plant.trim() || null)}
+                    plantedAt={saved.plantedAt}
+                    draft={draft}
+                    dirty={dirty}
+                    saving={updatePod.isPending}
+                    onChange={setDraft}
+                    onClose={() => {
+                      setSelected(null)
+                      setDraft(null)
+                    }}
+                    onSave={() => updatePod.mutate({ slot: draft.slot, plant: draft.plant.trim() || null, status: draft.status, notes: draft.notes, plantedAt: draft.status === 'seeded' && saved.status !== 'seeded' ? new Date().toISOString().slice(0, 10) : undefined }, { onSuccess: () => setDraft(null) })}
+                    onRevert={() => setDraft(null)}
+                    onHarvested={() => markHarvested.mutate({ slot: draft.slot })}
+                    onDismiss={() => updatePod.mutate({ slot: draft.slot, status: 'growing' }, { onSuccess: () => setDraft(null) })}
+                    onSwap={() => setSwapping(draft.slot)}
+                  />
+                )
+              : (
+                  <div className="flex flex-col gap-1">
+                    <div className="text-[15px] font-medium">Pods</div>
+                    <p className="text-[13px] text-fg-2">{`Click a pod ${shown === 'tower' ? 'on the tower' : 'in the list'} to see and edit it.${shown === 'pods' ? ' Drag one onto another to swap them after moving their yCubes.' : ''}`}</p>
+                  </div>
+                )}
+          </aside>
+        </div>
+      )}
     </div>
   )
 }
@@ -475,6 +507,8 @@ function PodPanel({ pod, tower, coverPerDay, light, plantedAt, draft, dirty, sav
         <Row label="Seeded"><span className="font-mono">{plantedAt ? shortDate(plantedAt) : '—'}</span></Row>
         <Row label="Harvest window" last><span className="font-mono">{harvestWindow}</span></Row>
       </div>
+
+      {pod.plant && pod.status !== 'empty' && <PlantCare plant={pod.plant} />}
 
       {dirty
         ? (

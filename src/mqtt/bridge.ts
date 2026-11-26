@@ -13,6 +13,7 @@ import type { Capture, DeviceSettings } from '../store/types'
 import type { CoreEvent, EventBus } from '../lib/eventBus'
 import type { HalClient } from '../hardware/types'
 import type { Store } from '../store/types'
+import { currentFeedAlert, FEED_ALERT, LEGACY_FEED_ALERT } from '../care/feedAlerts'
 import { cycleDay } from '../grow/grow'
 import { LIGHT_HOURS_KEY } from '../telemetry/recorder'
 
@@ -35,7 +36,7 @@ const REMINDERS = [
   ['reminder_thinning', 'Thin seedlings', 'mdi:content-cut'],
   ['reminder_root_check', 'Check roots', 'mdi:source-branch'],
   ['reminder_harvest', 'Harvest window', 'mdi:basket'],
-  ['reminder_nutrients', 'Add nutrients', 'mdi:flask'],
+  [LEGACY_FEED_ALERT, 'Add nutrients', 'mdi:flask'],
   ['reminder_sow', 'Start new yCubes', 'mdi:seed'],
 ] as const
 
@@ -166,7 +167,7 @@ export class HaBridge {
     const active = new Set(this.o.store.alerts.list({ activeOnly: true }).map(a => a.kind))
     const state = {
       grow: { day: cycle ? cycleDay(cycle, this.now()) : null, stage: cycle?.stage ?? null },
-      reminders: Object.fromEntries(REMINDERS.map(([k]) => [k, active.has(k)])),
+      reminders: Object.fromEntries(REMINDERS.map(([k]) => [k, active.has(currentFeedAlert(k))])),
       backupStale: active.has('backup_stale'),
       lightHours: Math.round(this.o.store.counters.get(LIGHT_HOURS_KEY) * 10) / 10,
       ts: this.now().toISOString(),
@@ -188,12 +189,14 @@ export class HaBridge {
       return
     }
     if (topic.startsWith(`${this.p}/done/`)) {
-      const kind = topic.slice(`${this.p}/done/`.length)
+      const kind = currentFeedAlert(topic.slice(`${this.p}/done/`.length))
       const now = this.now().toISOString()
       const a = this.o.store.alerts.list({ activeOnly: true }).find(x => x.kind === kind)
       if (a) {
+        if (kind === FEED_ALERT) this.o.store.tankActions.add({ ts: now, kind: 'feed', amount: null, unit: null, product: null, note: 'Marked done in Home Assistant', source: 'user' }, now)
         this.o.store.alerts.acknowledge(a.id, now)
         this.o.store.alerts.clear(kind, now)
+        if (kind === FEED_ALERT) this.o.events.emit({ kind: 'mutation', path: 'tank' })
         this.o.events.emit({ kind: 'mutation', path: `alerts.${kind}` })
       }
     }

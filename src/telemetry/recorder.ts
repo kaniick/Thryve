@@ -14,8 +14,17 @@ export interface RecorderOptions {
   events: EventBus
   /** Minimum seconds between stored samples per sensor. */
   sampleIntervalS?: number
+  /**
+   * How long hald must stay unreachable before `hal_offline` is raised.
+   * Brief MQTT drops and a watchdog restart (hald is back in a few seconds)
+   * should not spam the Alerts page.
+   */
+  halOfflineGraceMs?: number
   now?: () => Date
 }
+
+/** Default grace for `hal_offline`. Brief reconnects sit well under this. */
+export const HAL_OFFLINE_GRACE_MS = 45_000
 
 export const LIGHT_HOURS_KEY = 'light_hours'
 
@@ -26,10 +35,14 @@ export class Recorder {
   private flushTimer: ReturnType<typeof setInterval> | null = null
   private readonly now: () => Date
   private readonly intervalMs: number
+  private readonly halOfflineGraceMs: number
+  private halOfflineSince: number | null = null
+  private halOfflineTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(private readonly opts: RecorderOptions) {
     this.now = opts.now ?? (() => new Date())
     this.intervalMs = (opts.sampleIntervalS ?? 60) * 1000
+    this.halOfflineGraceMs = opts.halOfflineGraceMs ?? HAL_OFFLINE_GRACE_MS
   }
 
   start(): void {
@@ -43,6 +56,7 @@ export class Recorder {
     this.unsub = null
     if (this.flushTimer) clearInterval(this.flushTimer)
     this.flushTimer = null
+    this.clearHalOfflineTimer()
   }
 
   handle(e: CoreEvent): void {
@@ -98,13 +112,37 @@ export class Recorder {
         break
       }
       case 'availability': {
-        if (event.online) store.alerts.clear('hal_offline', now.toISOString())
-        else store.alerts.raise('hal_offline', 'hardware daemon unreachable', now.toISOString())
+        if (event.online) this.clearHalOffline()
+        else this.noteHalOffline(now)
         break
       }
       default:
         break
     }
+  }
+
+  private clearHalOfflineTimer(): void {
+    if (this.halOfflineTimer) clearTimeout(this.halOfflineTimer)
+    this.halOfflineTimer = null
+  }
+
+  private clearHalOffline(): void {
+    this.clearHalOfflineTimer()
+    this.halOfflineSince = null
+    this.opts.store.alerts.clear('hal_offline', this.now().toISOString())
+  }
+
+  /** Raise `hal_offline` only once hald has been unreachable for the grace period. */
+  private noteHalOffline(now: Date): void {
+    if (this.halOfflineSince === null) this.halOfflineSince = now.getTime()
+    const wait = this.halOfflineGraceMs - (now.getTime() - this.halOfflineSince)
+    if (wait <= 0) {
+      this.clearHalOfflineTimer()
+      this.opts.store.alerts.raise('hal_offline', 'hardware daemon unreachable', now.toISOString())
+      return
+    }
+    this.clearHalOfflineTimer()
+    this.halOfflineTimer = setTimeout(() => this.noteHalOffline(this.now()), wait)
   }
 
   /** Accumulate on-time into the counter (called on off, on stop, and may be called periodically). */

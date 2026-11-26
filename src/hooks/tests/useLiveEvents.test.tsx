@@ -12,7 +12,7 @@ const { live, invalidated, cache } = vi.hoisted(() => ({
 
 vi.mock('@/src/utils/trpc', () => ({
   trpc: {
-    useUtils: () => new Proxy({ invalidate: () => invalidated.push('all') }, {
+    useUtils: () => new Proxy({ invalidate: (_: undefined, filters?: { refetchType?: string }) => invalidated.push(filters?.refetchType ?? 'all') }, {
       get: (t, k: string) => (k === 'invalidate'
         ? t.invalidate
         : {
@@ -183,7 +183,7 @@ describe('useLiveEvents', () => {
     expect(invalidated).toEqual([])
   })
 
-  it('refetches the sensors when the first connect only succeeds on a retry', () => {
+  it('refreshes active queries when the first connect only succeeds on a retry', () => {
     const hook = renderHook(() => useLiveEvents())
     live.error = new Error('stream refused')
     hook.rerender()
@@ -191,20 +191,22 @@ describe('useLiveEvents', () => {
     hook.rerender()
     act(() => live.onStarted())
     vi.advanceTimersByTime(BURST_MS)
-    expect(invalidated).toEqual(['sensors'])
+    expect(invalidated).toEqual(['active'])
     invalidated.length = 0
     act(() => live.onData(mutation('plans')))
     vi.advanceTimersByTime(BURST_MS)
     expect(invalidated).toEqual(['planner', 'vision'])
   })
 
-  it('refetches the sensors on a reconnect, not on the first connect', () => {
+  it('coalesces reconnects and events into one active refresh, not on the first connect', () => {
     renderHook(() => useLiveEvents())
     act(() => live.onStarted())
     vi.advanceTimersByTime(BURST_MS)
     expect(invalidated).toEqual([])
     act(() => live.onStarted())
+    send(mutation('pods'))
+    act(() => live.onStarted())
     vi.advanceTimersByTime(BURST_MS)
-    expect(invalidated).toEqual(['sensors'])
+    expect(invalidated).toEqual(['active'])
   })
 })

@@ -3,6 +3,7 @@ import { useMemo, useState, type ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 import { ZONE_COLOR } from '@/src/components/Grow/lightZones'
 import { PlantThumb, podForm } from '@/src/components/Grow/PlantThumb'
+import { thinText } from '@/src/components/Grow/PlantCare'
 import { PLANNED_FORM, type PodStatus } from '@/src/components/Grow/towerLayout'
 import type { PodState } from '@/src/components/Grow/towerScene'
 import { TowerView } from '@/src/components/Grow/TowerView'
@@ -13,12 +14,15 @@ import { trpc } from '@/src/utils/trpc'
 import { CustomPlantDialog, type EditablePlant } from '@/src/components/Plan/CustomPlantDialog'
 import { SavedPlans } from '@/src/components/Plan/SavedPlans'
 import { Unplaced } from '@/src/components/Plan/Unplaced'
+import { PodReview, type MovePair } from '@/src/components/Plan/PodReview'
 
+import { plantFacts } from '@/src/plants/catalog'
 import type { PlanOverrides } from '@/src/plants/planner'
 
 type Model = 'home' | 'studio'
 type Overrides = PlanOverrides
 const DEFAULT_OVERRIDES: Overrides = { allowLightMismatch: true }
+const NO_MOVE: MovePair = { from: 0, to: 0 }
 type Zone = 'high' | 'medium' | 'low'
 type Category = 'fruiting' | 'vegetable' | 'legume' | 'flower' | 'herb' | 'green' | 'lettuce'
 
@@ -89,7 +93,17 @@ export function swapPins(assignments: readonly Assignment[], from: number, to: n
  * The flat grid of slots, tinted by zone: each planned or planted plant pictured and named (planted ones italic), pods away from their ideal zone outlined.
  * A planned plant drags onto another pod, or is tapped and then the other pod, to swap them; a planted pod stays put.
  */
-function PlanGrid({ cols, slots, bySlot, planted, onSwap }: { cols: number, slots: Slot[], bySlot: Map<number, Assignment>, planted: Map<number, Planted>, onSwap: (from: number, to: number) => void }) {
+function PlanGrid({ cols, slots, bySlot, planted, onSwap, inspect, source, picking, canDestination }: {
+  cols: number
+  slots: Slot[]
+  bySlot: Map<number, Assignment>
+  planted: Map<number, Planted>
+  onSwap: (from: number, to: number) => void
+  inspect: (slot: number) => void
+  source: number
+  picking: boolean
+  canDestination: (slot: number) => boolean
+}) {
   const [picked, setPicked] = useState<number | null>(null)
   const open = (slot: number) => !planted.has(slot)
   const swap = (from: number, to: number) => {
@@ -103,31 +117,47 @@ function PlanGrid({ cols, slots, bySlot, planted, onSwap }: { cols: number, slot
         const ex = planted.get(s.slot)
         const z = (s.zone ?? 'medium') as Zone
         const plant = a?.plantName ?? ex?.plant ?? null
+        const enabled = picking ? canDestination(s.slot) : picked === null ? !!(a || ex) : s.slot === picked || open(s.slot)
         return (
           <div
             key={s.slot}
             data-slot={s.slot}
             role="button"
-            tabIndex={a || picked !== null ? 0 : -1}
-            aria-pressed={picked === s.slot}
+            tabIndex={enabled ? 0 : -1}
+            aria-disabled={!enabled || undefined}
+            aria-pressed={(picking ? source : picked) === s.slot}
             aria-label={`Pod ${s.slot}${plant ? `, ${plant}` : ''}`}
-            draggable={!!a}
-            onDragStart={e => e.dataTransfer.setData('text/plain', String(s.slot))}
+            draggable={!picking && !!a}
+            onDragStart={(e) => {
+              if (!picking && a) e.dataTransfer.setData('text/plain', String(s.slot))
+              else e.preventDefault()
+            }}
             onDragOver={(e) => {
-              if (open(s.slot)) e.preventDefault()
+              if (!picking && open(s.slot)) e.preventDefault()
             }}
             onDrop={(e) => {
               e.preventDefault()
-              swap(Number(e.dataTransfer.getData('text/plain')), s.slot)
+              if (!picking) swap(Number(e.dataTransfer.getData('text/plain')), s.slot)
             }}
-            onClick={() => (picked === null ? a && setPicked(s.slot) : swap(picked, s.slot))}
+            onClick={() => {
+              if (!enabled) return
+              if (picking) inspect(s.slot)
+              else if (picked !== null) swap(picked, s.slot)
+              else if (a) setPicked(s.slot)
+              else inspect(s.slot)
+            }}
             onKeyDown={(e) => {
               if (e.key === 'Enter' || e.key === ' ') {
                 e.preventDefault()
                 e.currentTarget.click()
               }
             }}
-            className={cn('flex min-h-[58px] flex-col justify-center gap-0.5 rounded-[var(--radius-ctl)] border px-2 py-1', a?.shift ? SHIFT_OUTLINE[a.shift] : '', a && 'cursor-grab', picked === s.slot && 'ring-2 ring-fg')}
+            className={cn(
+              'flex min-h-[58px] flex-col justify-center gap-0.5 rounded-[var(--radius-ctl)] border px-2 py-1',
+              a?.shift ? SHIFT_OUTLINE[a.shift] : '',
+              enabled && (a && !picking ? 'cursor-grab select-none' : 'cursor-pointer'),
+              (picking ? source : picked) === s.slot && 'ring-2 ring-fg',
+            )}
             style={zoneStyle(z)}
             title={a?.reason ?? ex?.plant ?? `${ZONE_LABEL[z]} light`}
           >
@@ -161,11 +191,15 @@ export function planPods(slots: Slot[], bySlot: Map<number, Assignment>, planted
   })
 }
 
-export function PlanPage() {
+export function PlanPage({ catalogPlant }: { catalogPlant?: string } = {}) {
   const utils = trpc.useUtils()
   const [model, setModel] = useState<Model>('home')
-  const [q, setQ] = useState('')
-  const [cat, setCat] = useState<Category | 'all'>('all')
+  const [savedFilter, setFilter] = useState<{ plant: string | undefined, q: string, cat: Category | 'all' }>({ plant: catalogPlant, q: catalogPlant ?? '', cat: 'all' })
+  // A new deep link changes the catalog filter without remounting a draft plan.
+  const filter = savedFilter.plant === catalogPlant ? savedFilter : { plant: catalogPlant, q: catalogPlant ?? '', cat: 'all' as const }
+  const { q, cat } = filter
+  const setQ = (q: string) => setFilter({ ...filter, q })
+  const setCat = (cat: Category | 'all') => setFilter({ ...filter, cat })
   const [picks, setPicks] = useState<Record<string, number>>({})
   const [name, setName] = useState('My plan')
   const [mode, setMode] = useState<'staggered' | 'batch'>('staggered')
@@ -175,6 +209,8 @@ export function PlanPage() {
   const [view, setView] = useState<View>(savedView)
   const [noWebGL, setNoWebGL] = useState(false)
   const [selected, setSelected] = useState<number | null>(null)
+  const [movePair, setMovePair] = useState(NO_MOVE)
+  const [pickingDestination, setPickingDestination] = useState(false)
   const chooseView = (v: View) => {
     setView(v)
     try {
@@ -188,7 +224,10 @@ export function PlanPage() {
   const zones = trpc.planner.zones.useQuery({ model })
   // Every plant, custom ones included, so saved plans can name theirs.
   const everything = trpc.planner.catalog.useQuery({})
-  const catalog = trpc.planner.catalog.useQuery({ q: q || undefined, category: cat === 'all' ? undefined : cat })
+  const term = q.trim().toLowerCase()
+  const filteredPlants = (everything.data?.plants ?? []).filter(p =>
+    (cat === 'all' || p.category === cat) && (!term || p.name.toLowerCase().includes(term) || p.id.includes(term)),
+  )
   const request = useMemo(() => Object.entries(picks).filter(([, n]) => n > 0).map(([plantId, count]) => ({ plantId, count })), [picks])
   // Swaps on the grid pin pods; until a plan is saved or another opened they live here.
   const [edited, setEdited] = useState<Overrides | undefined>(undefined)
@@ -214,6 +253,34 @@ export function PlanPage() {
   const bySlot = new Map((layout.data?.assignments ?? []).map(a => [a.slot, a]))
   // A replant lays out the whole tower, so nothing planted now holds a pod.
   const planted = new Map(overrides?.replant ? [] : (pods.data ?? []).filter(p => p.status !== 'empty').map(p => [p.slot, { slot: p.slot, status: p.status, plant: p.plant }]))
+  const normalizePlant = (name: string) => name.toLowerCase().replace(/[^a-z0-9]+/g, '')
+  const thinning = (slot: number) => {
+    const plannedId = bySlot.get(slot)?.plantId
+    const name = planted.get(slot)?.plant
+    const match = plannedId
+      ? everything.data?.plants.find(p => p.id === plannedId)
+      : name && everything.data?.plants.find(p => normalizePlant(p.name) === normalizePlant(name) || p.id === name)
+    return match ? thinText(plantFacts(match)) : undefined
+  }
+  const readyForMoves = !!pods.data && (request.length === 0 || !!layout.data)
+  const picking = pickingDestination && !overrides.replant && planted.has(movePair.from)
+  const canDestination = (slot: number) => readyForMoves && slot !== movePair.from && !bySlot.has(slot) && !!pods.data?.some(p => p.slot === slot)
+  const choosePair = (pair: MovePair) => {
+    setMovePair(pair)
+    setPickingDestination(false)
+  }
+  const inspectSlot = (slot: number) => {
+    if (picking) {
+      if (canDestination(slot)) {
+        choosePair({ from: movePair.from, to: slot })
+        document.getElementById('planted-pods')?.scrollIntoView?.({ block: 'nearest' })
+      }
+    }
+    else {
+      setSelected(slot)
+      if (planted.has(slot)) choosePair({ from: slot, to: 0 })
+    }
+  }
   const swap = (from: number, to: number) => setEdited({ ...overrides, pins: swapPins(layout.data?.assignments ?? [], from, to) })
   const bump = (id: string, d: number) => {
     const count = Math.max(0, (picks[id] ?? 0) + d)
@@ -239,6 +306,7 @@ export function PlanPage() {
               onChange={(m) => {
                 setModel(m)
                 setSelected(null)
+                choosePair(NO_MOVE)
                 setEdited(undefined)
               }}
               options={[{ value: 'home', label: 'Home · 30' }, { value: 'studio', label: 'Studio · 16' }]}
@@ -265,7 +333,15 @@ export function PlanPage() {
               </div>
             )}
           />
-          {zones.data && shown === '2d' && <PlanGrid cols={zones.data.cols} slots={zones.data.slots} bySlot={bySlot} planted={planted} onSwap={swap} />}
+          {picking && (
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-fg-2">
+              <p role="status">{`Choose a destination for pod ${movePair.from}. Planned slots are reserved.`}</p>
+              <Button size="sm" onClick={() => setPickingDestination(false)}>Cancel picking</Button>
+            </div>
+          )}
+          {zones.data && shown === '2d' && (
+            <PlanGrid key={`${model}:${picking}`} cols={zones.data.cols} slots={zones.data.slots} bySlot={bySlot} planted={planted} onSwap={swap} inspect={inspectSlot} picking={picking} source={movePair.from} canDestination={canDestination} />
+          )}
           {zones.data && shown === '3d' && (
             <div className="mt-3">
               <TowerView
@@ -274,8 +350,9 @@ export function PlanPage() {
                 // Lit, so the zones read, whatever the light is doing now.
                 lightLevel={100}
                 zones
+                thinning={thinning}
                 selected={selected}
-                onSelect={setSelected}
+                onSelect={inspectSlot}
                 onClose={() => setSelected(null)}
                 onUnavailable={() => setNoWebGL(true)}
               />
@@ -301,16 +378,23 @@ export function PlanPage() {
               ? `Drag a plant onto another pod, or tap one then the other, to swap them. Italic = already planted.${shiftNotes(layout.data?.assignments ?? [], '2d')}`
               : `Planned pods show their plant grown, ringed by light zone; click one for why it sits there.${shiftNotes(layout.data?.assignments ?? [], '3d')}`}
           </p>
+          {!picking && planted.size > 0 && (
+            <p className="text-xs text-fg-3">
+              {planted.has(movePair.from)
+                ? <a className="text-fg underline" href="#planted-pods">{`Review move for pod ${movePair.from}`}</a>
+                : 'Select a planted pod to review a physical move. Moving a planned plant only changes the draft.'}
+            </p>
+          )}
         </Card>
 
-        <Card>
+        <Card id="plant-catalog" className="scroll-mt-4">
           <CardHeader title="Plants" subtitle="Gardyn catalog and yours · zone, first harvest" icon={Sprout} right={<Button size="sm" icon={Plus} onClick={() => setEditing('new')}>Add plant</Button>} />
           <TextField className="mt-3" mono={false} value={q} onChange={setQ} placeholder="Search basil, kale, pepper…" aria-label="Search plants" />
           <div className="mt-2 flex flex-wrap gap-1">
             {CATS.map(c => <button key={c.value} type="button" onClick={() => setCat(c.value)} className={cn('rounded-full border px-2 py-0.5 text-[11px]', cat === c.value ? 'border-fg-2 text-fg' : 'border-line text-fg-3')}>{c.label}</button>)}
           </div>
           <div className="mt-2 max-h-[420px] overflow-y-auto">
-            {(catalog.data?.plants ?? []).map(p => (
+            {filteredPlants.map(p => (
               <div key={p.id} className="flex items-center gap-2 border-b border-line py-1.5 last:border-0">
                 <span className="h-2.5 w-2.5 shrink-0 rounded-full border" style={{ background: ZONE_COLOR[p.zone], borderColor: ZONE_COLOR[p.zone] }} title={`${ZONE_LABEL[p.zone]} light`} />
                 <div className="min-w-0 flex-1">
@@ -327,9 +411,34 @@ export function PlanPage() {
               </div>
             ))}
           </div>
+          {everything.data && filteredPlants.length === 0 && <p className="mt-2 text-[13px] text-fg-3">No plants match those filters.</p>}
           <p className="mt-2 text-[11px] text-fg-3">* harvest window estimated from the category; Gardyn doesn’t list one.</p>
         </Card>
       </div>
+
+      {zones.data && (
+        <PodReview
+          key={`${model}:${opened?.id ?? 'draft'}`}
+          pods={pods.data ?? []}
+          slots={zones.data.slots}
+          plants={everything.data?.plants ?? []}
+          reserved={new Set(bySlot.keys())}
+          overrides={overrides}
+          pair={movePair}
+          picking={picking}
+          ready={readyForMoves}
+          onPair={choosePair}
+          onPick={overrides.replant
+            ? undefined
+            : () => {
+                setPickingDestination(!picking)
+                if (!picking) {
+                  setSelected(null)
+                  document.getElementById('plan-layout')?.scrollIntoView?.({ block: 'start' })
+                }
+              }}
+        />
+      )}
 
       {request.length > 0 && (
         <>
@@ -353,6 +462,7 @@ export function PlanPage() {
             <Button
               onClick={() => {
                 setPicks({})
+                choosePair(NO_MOVE)
                 setOpened(null)
                 setEdited(undefined)
               }}
@@ -376,6 +486,7 @@ export function PlanPage() {
           setOpened({ id: p.id, start: p.start, overrides: { ...DEFAULT_OVERRIDES, ...p.layout.overrides } })
           setEdited(undefined)
           setSelected(null)
+          choosePair(NO_MOVE)
           document.getElementById('plan-layout')?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
         }}
         onApply={id => apply.mutate({ id })}

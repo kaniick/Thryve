@@ -1,5 +1,12 @@
 # Knowledge update log
 
+## 2026-11-20
+
+- **Creation**: [Thinning](plants/thinning.md), Gardyn's per-plant count of sprouts to keep, behind the thin chore and the catalog's `thinTo`, with the four plants whose pages disagree.
+- **Creation**: [Plant pages](plants/plant-pages.md), the facts and care and harvest notes taken from all 140 plant pages in Gardyn's help centre.
+- **Update**: [Catalog provenance](plants/catalog-provenance.md) lists the new fields and the sprout-days precedence.
+
+
 ## 2026-11-14
 
 - **Update**: [Pump safety limits](operations/pump-safety-limits.md) and the [Gardyn hardware map](hardware/gardyn-hardware-map.md): the pump still starts at 30 %, but its cap is 100 % so an owner can choose the stock firmware's level (plain on), with a 1.5 s soft start that can be turned off; 30 % didn't lift water to the top of a Gardyn 3.0's tower.

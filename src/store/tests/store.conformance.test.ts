@@ -248,6 +248,21 @@ for (const [name, make] of impls) {
       expect(store.analyses.forCapture('b')).toHaveLength(1)
     })
 
+    it('knows each analyser\'s newest version, through new rows and removed ones', () => {
+      store = make()
+      const row = (o: Partial<AnalysisRow>): AnalysisRow => ({ captureId: 'a', ts: '2026-01-01T00:00:00Z', camera: 'upper', analyzer: 'pod-state', version: 1, source: 'device', slot: 1, metric: 'pod_state', value: 1, detail: null, artifact: null, ...o })
+      expect(store.analyses.latestVersion('pod-state')).toBeNull()
+      store.analyses.add([row({})])
+      expect(store.analyses.latestVersion('pod-state')).toBe(1)
+      // Asked once, then kept up as rows arrive: an older version doesn't lower it.
+      store.analyses.add([row({ captureId: 'b', version: 3 }), row({ captureId: 'c', version: 2 })])
+      expect(store.analyses.latestVersion('pod-state')).toBe(3)
+      expect(store.analyses.series({ analyzer: 'pod-state', slot: 1, metric: 'pod_state' }).map(p => p.captureId)).toEqual(['b'])
+      store.analyses.removeDevice('b')
+      expect(store.analyses.latestVersion('pod-state')).toBe(2)
+      expect(store.analyses.latestVersion('green-threshold')).toBeNull()
+    })
+
     it('analysis rows upsert, version per series and stats per analyser', () => {
       store = make()
       const row = (o: Partial<AnalysisRow>): AnalysisRow => ({ captureId: 'a', ts: '2026-01-01T00:00:00Z', camera: 'upper', analyzer: 'green-threshold', version: 1, source: 'device', slot: 1, metric: 'green_fraction', value: 0.1, detail: null, artifact: null, ...o })
@@ -276,6 +291,48 @@ for (const [name, make] of impls) {
         ['leaf-unet', 1, 'remote', 1, 1],
       ])
       expect(store.analyses.stats().find(s => s.analyzer === 'green-threshold')).toMatchObject({ firstTs: '2026-01-01T00:00:00Z', lastTs: '2026-01-02T00:00:00Z' })
+    })
+
+    it('drops removed-box scores only for the device version just scored, and joins labels on frame and slot', () => {
+      store = make()
+      const base: AnalysisRow = { captureId: 'a', ts: '2026-01-01T00:00:00Z', camera: 'upper', analyzer: 'green-threshold', version: 2, source: 'device', slot: 1, metric: 'green_fraction', value: 0.1, detail: null, artifact: null }
+      store.analyses.add([base, { ...base, version: 1 }, { ...base, slot: 2 }, { ...base, captureId: 'b' }, { ...base, analyzer: 'remote', source: 'remote' }, { ...base, metric: 'leaf_count' }])
+      store.podLabels.set({ captureId: base.captureId, camera: base.camera, ts: base.ts, labelledAt: base.ts, slot: 1, label: 'growing', plant: null, plantedAt: null })
+      expect(store.analyses.agreementReadings().map(r => [r.analyzer, r.version]).sort()).toEqual([['green-threshold', 1], ['green-threshold', 2], ['remote', 2]])
+      store.analyses.add([], { captureId: 'a', runs: [{ analyzer: 'green-threshold', version: 2 }], slots: [1] })
+      expect(store.analyses.agreementReadings().map(r => [r.analyzer, r.version]).sort()).toEqual([['green-threshold', 1], ['remote', 2]])
+      expect(store.analyses.forCapture('a').map(r => [r.analyzer, r.version, r.slot])).toEqual([['green-threshold', 1, 1], ['green-threshold', 2, 2], ['remote', 2, 1]])
+      expect(store.analyses.forCapture('b')).toHaveLength(1)
+    })
+
+    it('gets one recent row per requested slot from the latest analyser version', () => {
+      store = make()
+      const fromTs = '2026-11-20T00:00:00.000Z'
+      const row = (patch: Partial<AnalysisRow>): AnalysisRow => ({
+        captureId: 'a', ts: fromTs, camera: 'upper', analyzer: 'pod-state', version: 2, source: 'device',
+        slot: 1, metric: 'pod_state', value: 0, detail: { state: 'empty' }, artifact: null, ...patch,
+      })
+      const q = { analyzer: 'pod-state', metric: 'pod_state', slots: [6, 1, 2, 1, 3, 4], fromTs }
+      expect(store.analyses.latestBySlot(q)).toEqual([])
+      store.analyses.add([
+        row({ version: 1, slot: 2, ts: '2026-11-24T00:00:00.000Z' }),
+        row({ slot: 1 }),
+        row({ slot: 4, ts: '2026-11-19T23:59:59.999Z' }),
+        row({ slot: 3, source: 'remote', detail: { state: 'growing', confidence: 0.9 } }),
+        row({ slot: 6, metric: 'green_fraction' }),
+        row({ analyzer: 'other', version: 10 }),
+        // Equal timestamps still choose one deterministic row.
+        row({ slot: 1, captureId: 'second', detail: { state: 'sprouted' } }),
+      ])
+      expect(store.analyses.latestBySlot(q)).toMatchObject([
+        { slot: 1, captureId: 'second', version: 2, detail: { state: 'sprouted' } },
+        { slot: 3, captureId: 'a', version: 2, source: 'remote', detail: { state: 'growing', confidence: 0.9 } },
+      ])
+      // Newer versions, even those without this metric yet, replace the previous version.
+      store.analyses.add([row({ metric: 'green_fraction', version: 3 })])
+      expect(store.analyses.latestBySlot(q)).toEqual([])
+      expect(store.analyses.latestBySlot({ ...q, metric: 'green_fraction' })).toMatchObject([{ slot: 1, version: 3 }])
+      expect(store.analyses.latestBySlot({ ...q, slots: [] })).toEqual([])
     })
 
     it('automations round-trip their AST, update in place and keep a pruned run log', () => {
@@ -422,6 +479,28 @@ for (const [name, make] of impls) {
       expect(store.tankActions.list()).toHaveLength(2)
     })
 
+    it('aggregates dataset metadata inside inclusive bounds, including retained rows of pruned captures', () => {
+      store = make()
+      const before = '2026-11-01T00:00:00.000Z'
+      const from = '2026-11-02T00:00:00.000Z'
+      const to = '2026-11-03T00:00:00.000Z'
+      store.captures.add({ id: 'before', camera: 'upper', ts: before, path: 'before.jpg', bytes: 500 })
+      store.captures.add({ id: 'first', camera: 'lower', ts: from, path: 'first.jpg', bytes: 250 })
+      store.captures.add({ id: 'last', camera: 'upper', ts: to, path: 'last.jpg', bytes: 470 })
+      const row = { captureId: 'pruned', camera: 'upper' as const, ts: to, analyzer: 'green-threshold', version: 1, source: 'device' as const, slot: 1, metric: 'green_fraction', value: 0.35, artifact: null, detail: null }
+      store.analyses.add([row, { ...row, version: 2, source: 'remote' }, { ...row, captureId: 'before', ts: before }])
+      const label = { captureId: 'pruned', camera: 'upper' as const, ts: to, slot: 1, label: 'growing' as const, labelledAt: to, plant: null, plantedAt: null }
+      store.podLabels.set(label)
+      store.podLabels.set({ ...label, label: 'ready' })
+      expect(store.captures.totals(from, to)).toEqual({ count: 2, bytes: 720 })
+      expect(store.captures.totals(to, to)).toEqual({ count: 1, bytes: 470 })
+      expect(store.analyses.count(from, to)).toBe(2)
+      expect(store.podLabels.count(from, to)).toBe(1)
+      expect(store.captures.totals(to, from)).toEqual({ count: 0, bytes: 0 })
+      expect(store.analyses.count(from, from)).toBe(0)
+      expect(store.podLabels.count(from, from)).toBe(0)
+    })
+
     it('pod labels upsert per capture and pod, clear, range by capture time and count', () => {
       store = make()
       const at = (captureId: string, ts: string, slot: number, label: PodLabelValue) =>
@@ -444,6 +523,26 @@ for (const [name, make] of impls) {
       expect(store.podLabels.remove('upper-b', 2)).toBe(true)
       expect(store.podLabels.remove('upper-b', 2)).toBe(false)
       expect(store.podLabels.forCapture('upper-b')).toEqual([{ captureId: 'upper-b', ts: '2026-11-02T00:00:00.000Z', camera: 'upper', slot: 4, label: 'unhealthy', labelledAt: '2026-11-09T00:00:00.000Z', plant: null, plantedAt: null, source: 'picked', suggested: null, suggestedBy: null, suggestedConfidence: null }])
+    })
+
+    it('pod labels list one pod\'s newest within a window, oldest first', () => {
+      store = make()
+      const at = (captureId: string, ts: string, slot: number, label: PodLabelValue) =>
+        store.podLabels.set({ captureId, ts, camera: 'upper', slot, label, labelledAt: '2026-11-09T00:00:00.000Z', plant: null, plantedAt: null })
+      expect(store.podLabels.forSlot(3, { limit: 10 })).toEqual([])
+      at('upper-c', '2026-11-03T00:00:00.000Z', 3, 'sprouted')
+      at('upper-a', '2026-11-01T00:00:00.000Z', 3, 'seeded')
+      at('upper-b', '2026-11-02T00:00:00.000Z', 3, 'seeded')
+      at('upper-b2', '2026-11-02T00:00:00.000Z', 3, 'seeded')
+      at('upper-b', '2026-11-02T00:00:00.000Z', 4, 'growing')
+      const ids = (q: { from?: string, to?: string, limit: number }) => store.podLabels.forSlot(3, q).map(l => l.captureId)
+      expect(ids({ limit: 10 })).toEqual(['upper-a', 'upper-b', 'upper-b2', 'upper-c'])
+      expect(ids({ from: '2026-11-02T00:00:00.000Z', limit: 10 })).toEqual(['upper-b', 'upper-b2', 'upper-c'])
+      expect(ids({ to: '2026-11-02T00:00:00.000Z', limit: 10 })).toEqual(['upper-a', 'upper-b', 'upper-b2'])
+      expect(ids({ from: '2026-11-02T00:00:00.000Z', to: '2026-11-02T00:00:00.000Z', limit: 10 })).toEqual(['upper-b', 'upper-b2'])
+      // The newest of them, still oldest first.
+      expect(ids({ limit: 2 })).toEqual(['upper-b2', 'upper-c'])
+      expect(store.podLabels.forSlot(4, { limit: 10 }).map(l => [l.captureId, l.label, l.source])).toEqual([['upper-b', 'growing', 'picked']])
     })
 
     it('pod labels keep how they were saved, count by source and find each pod\'s last label (#261)', () => {
@@ -918,6 +1017,19 @@ describe('SqliteStore on disk', () => {
       const full = store.telemetry.range('air_temp', from, to, -1)
       expect(store.telemetry.count('air_temp', from, to)).toBe(full.length)
       for (const limit of [0, 1, 2, 3, 7, 150, 500]) expect(store.telemetry.range('air_temp', from, to, limit)).toEqual(downsample(full, limit))
+      store.close()
+    }))
+
+    it('samples an appended buffer without changing the stride, even at the last stored timestamp', onDisk(({ store, card }) => {
+      store.telemetry.add([point(1), point(3), { ...point(3), value: 30 }])
+      store.telemetry.flush()
+      store.telemetry.add([point(9), { ...point(3), value: -1 }, { ...point(3), value: -2 }, point(5), { ...point(2), sensor: 'humidity', value: -3 }])
+      const full = store.telemetry.range('air_temp', from, to, -1)
+      expect(full.map(p => p.value)).toEqual([1, 3, 30, -1, -2, 5, 9])
+      for (const limit of [1, 2, 3, 4, 5, 6]) expect(store.telemetry.range('air_temp', from, to, limit)).toEqual(downsample(full, limit))
+      const held = [point(5), point(9)]
+      expect(store.telemetry.range('air_temp', point(4).ts, to, 1)).toEqual(downsample(held, 1))
+      expect(stored(card)).toBe(3)
       store.close()
     }))
 

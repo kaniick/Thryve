@@ -36,6 +36,27 @@ describe('grow.swapPods', () => {
     await expect(c.grow.swapPods({ a: 44, b: 3 })).rejects.toThrow(/no pod 44/)
   })
 
+  it('refuses stale reviewed records before writing either pod or emitting a mutation', async () => {
+    const { store, core, c } = rig()
+    store.pods.update(1, { plant: 'Mint', status: 'growing' }, '2026-11-09T00:00:00Z')
+    const before = store.pods.list()
+    const expected = { aUpdatedAt: before.find(p => p.slot === 1)?.updatedAt ?? '', bUpdatedAt: before.find(p => p.slot === 2)?.updatedAt ?? '' }
+    store.pods.update(2, { plant: 'Basil', status: 'seeded' }, '2026-11-10T00:00:00Z')
+    const latest = store.pods.list()
+    let emitted = 0
+    const unsub = core.ctx.events.subscribe((e) => {
+      if (e.kind === 'mutation' && e.path === 'pods') emitted++
+    })
+    await expect(c.grow.swapPods({ a: 1, b: 2, expected })).rejects.toMatchObject({ code: 'CONFLICT' })
+    expect(store.pods.list()).toEqual(latest)
+    expect(emitted).toBe(0)
+    const bUpdatedAt = latest.find(p => p.slot === 2)?.updatedAt ?? ''
+    const out = await c.grow.swapPods({ a: 1, b: 2, expected: { ...expected, bUpdatedAt } })
+    expect(out.map(p => p.plant)).toEqual(['Basil', 'Mint'])
+    expect(emitted).toBe(1)
+    unsub()
+  })
+
   it('swaps over MCP', async () => {
     const { core, store } = rig()
     store.pods.update(4, { plant: 'Oregano', status: 'seeded' }, '2026-11-09T00:00:00Z')

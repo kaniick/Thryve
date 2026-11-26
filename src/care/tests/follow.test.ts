@@ -147,11 +147,18 @@ describe('watering follows the grow cycle', () => {
     events.subscribe((e) => {
       if (e.kind === 'schedule') seen.push(e.id)
     })
-    const care = new CareEngine({ store, hal: new SimHal({ tickMs: 0, now: () => day(9) }), events, now: () => day(9) })
+    let now = day(9)
+    const care = new CareEngine({ store, hal: new SimHal({ tickMs: 0, now: () => now }), events, now: () => now })
     expect(care.tick().followed).toMatchObject({ to: 'seedlings' })
     expect(store.alerts.list({ activeOnly: true }).find(a => a.kind === FOLLOW_ALERT)?.detail).toMatch(/Watering moved to/)
     expect(seen).toContain('follow:seedlings')
     expect(care.tick().followed).toBeNull()
+    now = day(16)
+    expect(care.tick().followed).toMatchObject({ to: 'young' })
+    expect(store.alerts.list({ kind: FOLLOW_ALERT })).toMatchObject([
+      { active: true, raisedAt: day(16).toISOString(), detail: expect.stringMatching(/Young plants/) },
+      { active: false, raisedAt: day(9).toISOString(), dismissedAt: day(16).toISOString(), detail: expect.stringMatching(/Seedlings/) },
+    ])
   })
 
   it('runs one tick at a time when its own schedule change asks for another', () => {
@@ -264,9 +271,9 @@ describe('grow cycle start date', () => {
     await c.grow.start({ notes: '', startedAt: '2026-08-01' })
     for (const k of ['reminder_thinning', 'reminder_root_check', 'reminder_nutrients:1', 'reminder_nutrients:2', 'reminder_nutrients:3', 'custom']) store.grow.markIssued(k)
     await c.grow.setStage({ stage: 'harvest' })
-    // Day 15: thinning (14) and the first two nutrient top-ups (7, 14) were due; root check (21) and the third (21) wait again.
+    // Day 15: thinning (14) was due; root check (21) waits again. The fixed nutrient timer is retired.
     const moved = await c.grow.setStart({ startedAt: '2026-10-26' })
-    expect(moved.issued).toEqual(['reminder_thinning', 'reminder_nutrients:1', 'reminder_nutrients:2', 'custom'])
+    expect(moved.issued).toEqual(['reminder_thinning', 'custom'])
     // Past the seedling days a harvest stays called.
     expect(moved.stage).toBe('harvest')
     // Back to the first days: germination, with nothing issued.

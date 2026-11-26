@@ -9,7 +9,7 @@ import type { EventBus } from '../lib/eventBus'
 import type { AnalysisRow, Capture, Store } from '../store/types'
 import { deviceAnalyzers, info, type AnalyzerInfo } from './analyzer'
 import { DAMAGED, inlineExecutor, type Executor, type JobOutput } from './execute'
-import { podRegions } from './regions'
+import { cameraSlots, podRegions } from './regions'
 
 export interface AnalysisServiceOptions {
   store: Store
@@ -147,7 +147,9 @@ export class AnalysisService {
         await this.forget(capture)
       }
       else if (out) {
-        this.o.store.analyses.add(await this.toRows(capture, out))
+        const slots = cameraSlots(capture.camera).filter(slot => !regions[slot])
+        const omitted = slots.length ? { captureId: capture.id, slots, runs: out.map(({ analyzer, version }) => ({ analyzer, version })) } : undefined
+        this.o.store.analyses.add(await this.toRows(capture, out), omitted)
         this.o.events?.emit({ kind: 'mutation', path: 'analyses' })
       }
     }

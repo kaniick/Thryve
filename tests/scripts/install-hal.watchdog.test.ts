@@ -59,7 +59,7 @@ describe('write_hald_unit', () => {
     expect(r.status).toBe(0)
     const text = unit()
     expect(text).toMatch(/^Type=notify$/m)
-    expect(text).toMatch(/^WatchdogSec=10$/m)
+    expect(text).toMatch(/^WatchdogSec=20$/m)
     expect(text).toMatch(/^TimeoutStartSec=120$/m)
     expect(text).toMatch(/^ExecStopPost=-\/usr\/local\/lib\/thryve\/pump-off$/m)
     expect(text).toContain(`ExecStart=${join(dir, 'hald')} --config /etc/thryve/hal.toml`)

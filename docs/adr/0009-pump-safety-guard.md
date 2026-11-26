@@ -194,7 +194,9 @@ Settings → Tank, without SSH. hald still decides every start and stop.
    is not refused as "sensor unavailable", for `pump_dry_level_absent_ms`
    (default 30 s, bounds 3–60 s) without a new trusted reading. A short
    outlier or a dropped ping must not raise `water_low`, trip a dry-run, or
-   show "Pump off: water low".
+   show "Pump off: water low". A new start with no trusted reading is refused
+   once the last trusted wet sample reaches that age. A missing, suspect or
+   reused sample cannot renew it.
 4. **Ranger sampling is live.** Core sends `tank/sensor/set` with any of
    `distanceSamples`, `distanceGapMs`, `distanceTimeoutMs`. hald clamps them
    into toml bounds (samples 3–15, gap and timeout 30–250 ms by default),

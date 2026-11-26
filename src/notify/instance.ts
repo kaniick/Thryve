@@ -36,7 +36,7 @@ export function createNotifier(o: {
       const lt = localTime(now(), o.store.settings.get().timezone)
       return { nowMinutes: lt.minute, dayOfWeek: DAYS[lt.weekday] ?? 'monday', dateKey: lt.date }
     },
-    signals: () => liveSignals(o.hal.snapshot(), o.store, now(), o.store.pods.list().map(p => p.slot)),
+    signals: slots => liveSignals(o.hal.snapshot(), o.store, now(), slots),
     snapshot: () => eventSnapshot(o.hal, o.store, o.update ?? null),
     loadRules: () => o.store.notifications.rules.list(),
     loadChannels: () => o.store.notifications.channels.list(),
@@ -72,8 +72,8 @@ export function createNotifier(o: {
 
 export function eventSnapshot(hal: HalClient, store: Store, update: UpdateClient | null): EventSnapshot {
   const snap = hal.snapshot()
-  const alerts = new Map<string, { detail: string, active: boolean }>()
-  for (const a of store.alerts.list({ activeOnly: true })) alerts.set(a.kind, { detail: a.detail, active: true })
+  const alerts: EventSnapshot['alerts'] = new Map()
+  for (const a of store.alerts.list({ activeOnly: true })) alerts.set(a.kind, { id: a.id, detail: a.detail, active: true })
   const light = snap.actuators.light
   const pods = store.pods.list().map(p => ({ slot: p.slot, plant: p.plant, status: p.status }))
   const unhealthy = labelsUnhealthy(store).map((slot) => {

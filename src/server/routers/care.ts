@@ -43,7 +43,7 @@ export const careRouter = router({
   setup: publicProcedure
     .meta({ openapi: { method: 'GET', path: '/care/setup', tags: ['care'], summary: 'Setup check (ADR-0029): pods planted with no light or pump schedule on, and a tank level sensor that is absent or suspect' } })
     .output(z.object({ planted: z.number(), issues: z.array(SetupIssue), summary: z.string() }))
-    .query(({ ctx }) => setupReport(ctx.store, ctx.hal.snapshot())),
+    .query(({ ctx }) => setupReport(ctx.store, ctx.hal.snapshot(), ctx.now?.() ?? new Date())),
   chores: publicProcedure
     .meta({ openapi: { method: 'GET', path: '/care/chores', tags: ['care'], summary: 'Chores (ADR-0029): thin, trim roots, top off, refresh, feed, clean; each due, soon, ok or unknown, from a trusted reading or a stated calendar guess, with the knowledge notes behind every dose and target' } })
     .output(z.array(Chore))

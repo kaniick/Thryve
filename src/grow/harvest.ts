@@ -153,8 +153,10 @@ export function outlookFor(pod: Pod, series: { ts: string, value: number }[], pr
 export function harvestOutlook(store: Store, now: Date): HarvestOutlook[] {
   const analyzer = store.settings.get().primaryAnalyzer
   const profiles = store.plants.list()
-  return store.pods.list().filter(p => p.status !== 'empty').map((pod) => {
-    const series = store.analyses.series({ analyzer, slot: pod.slot, metric: 'green_fraction', limit: 96 }).map(p => ({ ts: p.ts, value: p.value }))
+  const planted = store.pods.list().filter(p => p.status !== 'empty')
+  const version = planted.length > 0 ? store.analyses.latestVersion(analyzer) : null
+  return planted.map((pod) => {
+    const series = version === null ? [] : store.analyses.series({ analyzer, version, slot: pod.slot, metric: 'green_fraction', limit: 96 })
     return outlookFor(pod, series, matchProfile(pod.plant, profiles), now)
   })
 }

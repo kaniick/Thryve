@@ -102,13 +102,14 @@ describe('TowerView', () => {
 
   it('names a planned pod as planned, with why it sits there', async () => {
     const planned = [{ slot: 1, status: 'seeded' as const, plant: 'Basil', planned: true, harvest: { state: 'unknown' as const, window: null, cover: null, targetCover: 0, daysToReady: null, daysLeft: null, reason: 'Planned: medium light, its ideal zone.' } }]
-    render(<TowerView pods={planned} waterPct={null} lightLevel={100} zones selected={1} onSelect={vi.fn()} onUnavailable={vi.fn()} />)
+    render(<TowerView pods={planned} waterPct={null} lightLevel={100} zones selected={1} thinning={slot => slot === 1 ? 'Keep 3 sprouts' : undefined} onSelect={vi.fn()} onUnavailable={vi.fn()} />)
     await waitFor(() => expect(screen.queryByText('Loading the tower…')).toBeNull())
     mounted.at = { x: 120, y: 300 }
     act(() => mounted.opts?.onRender?.())
     const callout = screen.getByRole('group', { name: 'Pod 1' })
     expect(callout.textContent).toContain('BasilPlanned')
     expect(callout.textContent).toContain('Planned: medium light, its ideal zone.')
+    expect(callout.textContent).toContain('Keep 3 sprouts')
     expect(callout.textContent).not.toContain('Seeded')
   })
 

@@ -1,3 +1,4 @@
+import { X } from 'lucide-react'
 import { useRef, type KeyboardEvent, type PointerEvent } from 'react'
 import { cn } from '@/lib/utils'
 import { CORE_SIZE, coreOffset, type PodRect } from '@/src/vision/greenArea'
@@ -21,9 +22,9 @@ interface Drag { slot: number, mode: 'move' | 'size' | 'core', x0: number, y0: n
  * The scoring box and dashed cup area, drawn over a still as the analysers use them. With `onChange`
  * the boxes can be calibrated (#143): drag one to move it, its corner to resize
  * it, or drag the dashed cup area independently. Arrows move the focused box,
- * Shift resizes it and Alt moves the cup area.
+ * Shift resizes it and Alt moves the cup area. Remove an off-camera box with × or Delete.
  */
-export function PodBounds({ boxes, label, onChange }: { boxes: PodRegions, label?: (slot: number) => string | undefined, onChange?: (slot: number, r: PodRect) => void }) {
+export function PodBounds({ boxes, label, onChange, onRemove }: { boxes: PodRegions, label?: (slot: number) => string | undefined, onChange?: (slot: number, r: PodRect) => void, onRemove?: (slot: number) => void }) {
   const ref = useRef<HTMLDivElement>(null)
   const drag = useRef<Drag | null>(null)
   const editing = !!onChange
@@ -46,6 +47,11 @@ export function PodBounds({ boxes, label, onChange }: { boxes: PodRegions, label
     drag.current = null
   }
   const key = (slot: number) => (e: KeyboardEvent<HTMLElement>) => {
+    if (onRemove && (e.key === 'Delete' || e.key === 'Backspace')) {
+      e.preventDefault()
+      onRemove(slot)
+      return
+    }
     const arrow = ARROWS[e.key]
     const box = boxes[slot]
     if (!arrow || !box) return
@@ -85,6 +91,17 @@ export function PodBounds({ boxes, label, onChange }: { boxes: PodRegions, label
                 {core}
                 {tag}
                 <span data-handle={slot} aria-hidden className="absolute -bottom-2 -right-2 size-4 cursor-nwse-resize rounded-[3px] border border-inverse bg-pod-ready" onPointerDown={start(s, 'size')} />
+                {onRemove && (
+                  <button
+                    type="button"
+                    aria-label={`Remove pod ${slot} box`}
+                    className="absolute -right-2 -top-2 flex size-4 cursor-pointer items-center justify-center rounded-[3px] border border-inverse bg-pod-ready p-0 text-inverse"
+                    onPointerDown={e => e.stopPropagation()}
+                    onClick={() => onRemove(s)}
+                  >
+                    <X size={10} strokeWidth={3} />
+                  </button>
+                )}
               </div>
             )
           : (

@@ -95,9 +95,9 @@ describe('setupReport', () => {
     const suspect = (s: HalSnapshot) => ({ ...s, sensors: { ...s.sensors, water_level_pct: level('suspect') } })
     const { store, hal, reshape } = rig(suspect)
     // A single suspect reading must not raise; a 10-minute majority does.
-    expect(setupReport(store, hal.snapshot()).issues).toEqual([])
+    expect(setupReport(store, hal.snapshot(), NOW).issues).toEqual([])
     seedQuality(store, 'suspect')
-    expect(setupReport(store, hal.snapshot()).issues).toMatchObject([{ id: 'water_sensor_suspect', title: 'Tank level suspect' }])
+    expect(setupReport(store, hal.snapshot(), NOW).issues).toMatchObject([{ id: 'water_sensor_suspect', title: 'Tank level suspect' }])
     reshape(s => ({ ...suspect(s), online: false }))
     expect(setupReport(store, hal.snapshot()).issues).toEqual([])
     reshape(s => ({ ...suspect(s), system: null }))
@@ -161,6 +161,8 @@ describe('CareEngine', () => {
     expect(active(store)).toEqual([])
     store.pods.update(3, { plant: 'Basil', status: 'seeded' }, T)
     events.emit({ kind: 'mutation', path: 'pods' })
+    expect(active(store)).toEqual([])
+    vi.advanceTimersByTime(0)
     expect(active(store)).toEqual(['setup_light_schedule', 'setup_pump_schedule'])
     store.schedules.upsert(light)
     events.emit({ kind: 'schedule', action: 'changed', id: 'day' })
@@ -195,7 +197,27 @@ describe('CareEngine', () => {
     expect(active(store)).toEqual([])
   })
 
-  it('cancels a pending HAL batch on stop', () => {
+  it('coalesces pod edits and lets a synchronous change satisfy their pending check', () => {
+    vi.useFakeTimers()
+    const { care, events } = rig()
+    const tick = vi.spyOn(care, 'tick')
+    care.start()
+    stop = () => {
+      care.stop()
+      vi.useRealTimers()
+    }
+    for (let i = 0; i < 5; i++) events.emit({ kind: 'mutation', path: 'pods' })
+    expect(tick).toHaveBeenCalledTimes(1)
+    vi.advanceTimersByTime(0)
+    expect(tick).toHaveBeenCalledTimes(2)
+    events.emit({ kind: 'mutation', path: 'pods' })
+    events.emit({ kind: 'mutation', path: 'grow' })
+    expect(tick).toHaveBeenCalledTimes(3)
+    vi.advanceTimersByTime(0)
+    expect(tick).toHaveBeenCalledTimes(3)
+  })
+
+  it('cancels pending HAL and pod checks on stop', () => {
     vi.useFakeTimers()
     const { care, events } = rig()
     const tick = vi.spyOn(care, 'tick')
@@ -206,9 +228,36 @@ describe('CareEngine', () => {
       tick.mockRestore()
     }
     events.emit({ kind: 'hal', event: { type: 'sensor', id: 'water_level_pct', reading: level('good') } })
+    events.emit({ kind: 'mutation', path: 'pods' })
     care.stop()
     vi.advanceTimersByTime(CARE_HAL_BATCH_MS)
     expect(tick).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not close a persisted tank warning on restart, reconnect, or a lone fresh ping', () => {
+    const suspect = (s: HalSnapshot) => ({ ...s, sensors: { ...s.sensors, water_level_pct: level('suspect') } })
+    const { hal, store, events, care, reshape, seen } = rig(suspect)
+    seedQuality(store, 'suspect')
+    care.tick()
+    const [original] = store.alerts.list({ kind: 'setup_water_sensor', activeOnly: true })
+    expect(original).toBeDefined()
+    const next = new Date(NOW.getTime() + 20 * 60_000)
+    const resumed = new CareEngine({ store, hal, events, now: () => next })
+    reshape(s => ({ ...s, system: null, online: false }))
+    resumed.tick()
+    reshape(s => ({ ...s, sensors: { ...s.sensors, water_level_pct: level('good') } }))
+    resumed.tick() // the saved sample is outside the window
+    const fresh = next.toISOString()
+    reshape(s => ({ ...s, sensors: { ...s.sensors, water_level_pct: { ...level('good'), ts: fresh } } }))
+    seedQuality(store, 'good', 1, fresh)
+    seedQuality(store, 'stale', 6, fresh, 20_000)
+    resumed.tick()
+    expect(store.alerts.list({ kind: 'setup_water_sensor', activeOnly: true })[0]?.id).toBe(original?.id)
+    expect(seen.filter(s => s === 'alerts.setup_water_sensor')).toHaveLength(1)
+    seedQuality(store, 'good', 3, fresh, 20_000)
+    resumed.tick()
+    expect(active(store)).toEqual([])
+    expect(store.alerts.list({ kind: 'setup_water_sensor' })).toMatchObject([{ id: original?.id, clearedAt: fresh }])
   })
 
   it('logs and carries on when a check throws', () => {

@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3'
-import { and, asc, desc, eq, gt, gte, isNull, lt, lte, notInArray, or, sql } from 'drizzle-orm'
+import { and, asc, between, count, desc, eq, gt, gte, inArray, isNull, lt, lte, notInArray, or, sql } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { existsSync, mkdirSync } from 'node:fs'
@@ -12,6 +12,7 @@ import type { ActivityToken, ApnsEnvironment, FeedItem, FeedLevel, IosDevice } f
 import * as t from '../db/schema'
 import { qualityCounts, trustedShareOf } from './memory'
 import { SqliteTelemetryReader } from './sqliteTelemetry'
+import type { AgreementReading, LatestAnalysisQuery, OmittedAnalysisSlots } from './types'
 import type { AlertQuery, AlertRow, Automation, AutomationRun, AnalysisPoint, AnalysisRow, AnalyzerStats, BackupRecord, Capture, CustomPlant, DeviceSettings, FlashSample, GrowCycle, GrowProtocolState, GrowStage, LightSpec, PlanRow, PlantProfile, Pod, PodCodePair, PodCodeRead, PodLabel, PodLabelCursor, PodLabelInput, PodLabelSource, PodLabelValue, PumpSpec, SavedCycle, SavedSchedule, Schedule, ScheduleRun, Store, SuggestionDismissal, TankAction, TankActionKind, TelemetryPoint, QualityCounts, QualitySample, PumpRun } from './types'
 import { DEFAULT_SETTINGS, POD_LABELS, profileKey } from './types'
 
@@ -54,6 +55,7 @@ export class SqliteStore implements Store {
   private readonly db
   private readonly telemetryReader
   private readonly countQuality
+  private readonly latestAnalysisBySlot
   private readonly selectSettings
   private cachedSettings: DeviceSettings | null = null
   /** Rows waiting for the next flush (ADR-0021). */
@@ -80,6 +82,23 @@ export class SqliteStore implements Store {
         count(CASE WHEN quality = 'good' THEN 1 END) AS good,
         count(CASE WHEN quality = 'suspect' THEN 1 END) AS suspect
       FROM sensor_quality WHERE sensor = ? AND ts BETWEEN ? AND ?
+    `)
+    // One indexed seek for the newest version, then one bounded seek per requested slot.
+    // Fetch just the winning rows by primary key; no frame-wide decode or historical GROUP BY.
+    this.latestAnalysisBySlot = this.sqlite.prepare<{ slots: string, analyzer: string, metric: string, fromTs: string }, typeof t.analysisResults.$inferSelect>(`
+      WITH latest(version) AS (
+        SELECT max(version) FROM analysis_results WHERE analyzer = @analyzer
+      )
+      SELECT result.* FROM json_each(@slots) AS wanted
+      CROSS JOIN latest
+      JOIN analysis_results AS result ON result.id = (
+        SELECT reading.id FROM analysis_results AS reading
+        WHERE reading.analyzer = @analyzer AND reading.metric = @metric
+          AND reading.version = latest.version AND reading.slot = wanted.value
+          AND reading.ts >= @fromTs
+        ORDER BY reading.ts DESC, reading.id DESC LIMIT 1
+      )
+      ORDER BY result.slot
     `)
   }
 
@@ -276,6 +295,8 @@ export class SqliteStore implements Store {
       return rows
     },
     get: (id: string): Capture | null => this.db.select().from(t.captures).where(eq(t.captures.id, id)).get() ?? null,
+    totals: (from: string, to: string) => this.db.select({ count: count(), bytes: sql<number>`coalesce(sum(${t.captures.bytes}), 0)` })
+      .from(t.captures).where(between(t.captures.ts, from, to)).get() ?? { count: 0, bytes: 0 },
     prune: (camera: 'upper' | 'lower', keep: number): Capture[] => {
       const rows = this.db.select().from(t.captures).where(eq(t.captures.camera, camera)).orderBy(desc(t.captures.ts)).all()
       const drop = rows.slice(keep)
@@ -462,9 +483,16 @@ export class SqliteStore implements Store {
   }
 
   analyses = {
-    add: (rows: AnalysisRow[]): void => {
-      if (rows.length === 0) return
+    add: (rows: AnalysisRow[], omitted?: OmittedAnalysisSlots): void => {
+      if (rows.length === 0 && !omitted?.slots.length) return
+      const a = t.analysisResults
       this.sqlite.transaction(() => {
+        if (omitted?.slots.length && omitted.runs.length) {
+          for (const run of omitted.runs) {
+            this.db.delete(a).where(and(eq(a.captureId, omitted.captureId), eq(a.source, 'device'),
+              eq(a.analyzer, run.analyzer), eq(a.version, run.version), inArray(a.slot, omitted.slots))).run()
+          }
+        }
         for (const r of rows) {
           const values = { ...r, detail: r.detail ? JSON.stringify(r.detail) : null }
           this.db.insert(t.analysisResults).values(values).onConflictDoUpdate({
@@ -474,10 +502,14 @@ export class SqliteStore implements Store {
         }
       })()
     },
+    latestVersion: (analyzer: string): number | null => {
+      const a = t.analysisResults
+      return this.db.select({ version: a.version }).from(a).where(eq(a.analyzer, analyzer)).orderBy(desc(a.version)).limit(1).get()?.version ?? null
+    },
     series: (q: { analyzer: string, version?: number, slot: number, metric: string, limit?: number }): AnalysisPoint[] => {
       const a = t.analysisResults
-      const version = q.version ?? this.db.select({ v: sql<number | null>`max(${a.version})` }).from(a).where(eq(a.analyzer, q.analyzer)).get()?.v
-      if (version === null || version === undefined) return []
+      const version = q.version ?? this.analyses.latestVersion(q.analyzer)
+      if (version === null) return []
       return this.db.select({ ts: a.ts, value: a.value, captureId: a.captureId }).from(a)
         .where(and(eq(a.analyzer, q.analyzer), eq(a.version, version), eq(a.slot, q.slot), eq(a.metric, q.metric)))
         .orderBy(desc(a.ts)).limit(q.limit ?? 200).all().reverse()
@@ -485,12 +517,23 @@ export class SqliteStore implements Store {
     forCapture: (captureId: string): AnalysisRow[] =>
       this.db.select().from(t.analysisResults).where(eq(t.analysisResults.captureId, captureId))
         .orderBy(asc(t.analysisResults.analyzer), asc(t.analysisResults.version), asc(t.analysisResults.slot), asc(t.analysisResults.metric)).all().map(rowToAnalysis),
+    agreementReadings: (): AgreementReading[] => {
+      const a = t.analysisResults
+      const l = t.podLabels
+      return this.db.select({ captureId: a.captureId, slot: a.slot, analyzer: a.analyzer, version: a.version, metric: a.metric, value: a.value, detail: a.detail })
+        .from(l).innerJoin(a, and(eq(a.captureId, l.captureId), eq(a.slot, l.slot)))
+        .where(inArray(a.metric, ['green_fraction', 'pod_state'])).all()
+        .map(r => ({ ...r, detail: r.detail ? JSON.parse(r.detail) as Record<string, unknown> : null }))
+    },
+    latestBySlot: ({ analyzer, metric, slots, fromTs }: LatestAnalysisQuery): AnalysisRow[] =>
+      slots.length ? this.latestAnalysisBySlot.all({ analyzer, metric, slots: JSON.stringify([...new Set(slots)]), fromTs }).map(rowToAnalysis) : [],
     removeDevice: (captureId: string): void => {
       this.db.delete(t.analysisResults).where(and(eq(t.analysisResults.captureId, captureId), eq(t.analysisResults.source, 'device'))).run()
     },
     range: (fromTs: string, toTs: string): AnalysisRow[] =>
       this.db.select().from(t.analysisResults).where(and(gte(t.analysisResults.ts, fromTs), lte(t.analysisResults.ts, toTs)))
         .orderBy(asc(t.analysisResults.ts), asc(t.analysisResults.id)).all().map(rowToAnalysis),
+    count: (from: string, to: string): number => this.db.select({ n: count() }).from(t.analysisResults).where(between(t.analysisResults.ts, from, to)).get()?.n ?? 0,
     stats: (): AnalyzerStats[] =>
       this.db.all<AnalyzerStats>(sql`SELECT analyzer, version, source, count(*) AS rows, count(DISTINCT captureId) AS captures, min(ts) AS firstTs, max(ts) AS lastTs
         FROM analysis_results GROUP BY analyzer, version, source ORDER BY analyzer, version`),
@@ -523,6 +566,13 @@ export class SqliteStore implements Store {
     range: (fromTs: string, toTs: string): PodLabel[] =>
       this.db.select().from(t.podLabels).where(and(gte(t.podLabels.ts, fromTs), lte(t.podLabels.ts, toTs)))
         .orderBy(asc(t.podLabels.ts), asc(t.podLabels.captureId), asc(t.podLabels.slot)).all().map(rowToLabel),
+    forSlot: (slot: number, q: { from?: string, to?: string, limit: number }): PodLabel[] =>
+      this.db.select().from(t.podLabels).where(and(
+        eq(t.podLabels.slot, slot),
+        q.from === undefined ? undefined : gte(t.podLabels.ts, q.from),
+        q.to === undefined ? undefined : lte(t.podLabels.ts, q.to),
+      )).orderBy(desc(t.podLabels.ts), desc(t.podLabels.captureId)).limit(q.limit).all().reverse().map(rowToLabel),
+    count: (from: string, to: string): number => this.db.select({ n: count() }).from(t.podLabels).where(between(t.podLabels.ts, from, to)).get()?.n ?? 0,
     list: (q: { label?: PodLabelValue, camera?: 'upper' | 'lower', limit: number, before?: PodLabelCursor }): PodLabel[] => {
       const b = q.before
       return this.db.select().from(t.podLabels).where(and(
