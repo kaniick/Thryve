@@ -921,6 +921,19 @@ describe('SqliteStore on disk', () => {
       store.close()
     }))
 
+    it('samples an appended buffer without changing the stride, even at the last stored timestamp', onDisk(({ store, card }) => {
+      store.telemetry.add([point(1), point(3), { ...point(3), value: 30 }])
+      store.telemetry.flush()
+      store.telemetry.add([point(9), { ...point(3), value: -1 }, { ...point(3), value: -2 }, point(5), { ...point(2), sensor: 'humidity', value: -3 }])
+      const full = store.telemetry.range('air_temp', from, to, -1)
+      expect(full.map(p => p.value)).toEqual([1, 3, 30, -1, -2, 5, 9])
+      for (const limit of [1, 2, 3, 4, 5, 6]) expect(store.telemetry.range('air_temp', from, to, limit)).toEqual(downsample(full, limit))
+      const held = [point(5), point(9)]
+      expect(store.telemetry.range('air_temp', point(4).ts, to, 1)).toEqual(downsample(held, 1))
+      expect(stored(card)).toBe(3)
+      store.close()
+    }))
+
     it('pages duplicate timestamps, with no repeat when buffered points flush mid-export', onDisk(({ store }) => {
       store.telemetry.add(Array.from({ length: 600 }, (_, i) => ({ ...point(3), value: i })))
       store.telemetry.flush()
