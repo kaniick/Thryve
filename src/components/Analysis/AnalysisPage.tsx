@@ -161,11 +161,13 @@ export function AnalysisPage({ tab: asked }: { tab?: AnalysisTab } = {}) {
         </div>
         {tab === 'teach' && <Button icon={Download} className="px-3 py-[7px]" onClick={() => setExporting(true)}>Export dataset</Button>}
       </div>
-      {st && (st.backfill || st.running || st.failed > 0) && (
-        <p className="-mt-3 text-[13px] text-fg-2">
+      {st && (st.backfill || st.running || st.waiting.length || st.dropped > 0 || st.failed > 0) && (
+        <p role="status" className="-mt-3 text-[13px] text-fg-2">
           {[
             st.backfill && `Re-running ${st.backfill.analyzer}: ${st.backfill.done} of ${st.backfill.total} captures`,
-            st.running && !st.backfill && `Scoring ${st.running}`,
+            st.running && (!st.backfill || st.runningKind === 'live') && `Scoring ${st.running}`,
+            st.waiting.length > 0 && `${st.waiting.length} fresh frame${st.waiting.length === 1 ? '' : 's'} waiting`,
+            st.dropped > 0 && `${st.dropped} older frame${st.dropped === 1 ? '' : 's'} replaced`,
             st.failed > 0 && `${st.failed} capture${st.failed === 1 ? '' : 's'} could not be scored`,
           ].filter(Boolean).join(' · ')}
         </p>

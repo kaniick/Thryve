@@ -20,6 +20,7 @@ export interface AnalysisServiceOptions {
 
 export interface AnalysisStatus {
   running: string | null
+  runningKind: 'live' | 'backfill' | null
   waiting: string[]
   /** Stills skipped because a newer one from the same camera arrived first. */
   dropped: number
@@ -37,15 +38,16 @@ export interface AnalyzerListing extends AnalyzerInfo {
 }
 
 interface Job { capture: Capture, bytes: Uint8Array }
+interface Backfill { analyzer: string, captures: Capture[], done: number }
 
 export class AnalysisService {
   private readonly executor: Executor
   private readonly waiting = new Map<'upper' | 'lower', Job>()
-  private running: Capture | null = null
-  private chain: Promise<void> = Promise.resolve()
+  private running: { capture: Capture, kind: 'live' | 'backfill' } | null = null
+  private task: Promise<void> | null = null
   private dropped = 0
   private failed = 0
-  private backfill: AnalysisStatus['backfill'] = null
+  private backfill: Backfill | null = null
 
   constructor(private readonly o: AnalysisServiceOptions) {
     this.executor = o.executor ?? inlineExecutor
@@ -53,18 +55,25 @@ export class AnalysisService {
 
   /** Queue a fresh capture for every on-device analyser. Never throws. */
   enqueue(capture: Capture, bytes: Uint8Array): void {
-    if (this.waiting.has(capture.camera)) this.dropped++
+    // Reinsert a replaced job at the tail, so a busy camera can't monopolize
+    // the waiting slot ahead of a frame from the other camera.
+    if (this.waiting.delete(capture.camera)) this.dropped++
     this.waiting.set(capture.camera, { capture, bytes })
-    this.chain = this.chain.then(() => this.drain(capture.camera))
+    this.kick()
   }
 
   /** Resolves when everything queued so far has finished. */
-  idle(): Promise<void> {
-    return this.chain
+  async idle(): Promise<void> {
+    while (this.task) await this.task
   }
 
   status(): AnalysisStatus {
-    return { running: this.running?.id ?? null, waiting: [...this.waiting.values()].map(j => j.capture.id), dropped: this.dropped, failed: this.failed, backfill: this.backfill }
+    const b = this.backfill
+    return {
+      running: this.running?.capture.id ?? null, runningKind: this.running?.kind ?? null,
+      waiting: [...this.waiting.values()].map(j => j.capture.id), dropped: this.dropped, failed: this.failed,
+      backfill: b ? { analyzer: b.analyzer, done: b.done, total: b.captures.length } : null,
+    }
   }
 
   /**
@@ -77,18 +86,8 @@ export class AnalysisService {
     if (analyzer.disabled) throw new Error(`${analyzerId} is off: ${analyzer.disabled}`)
     if (this.backfill) throw new Error(`already re-running ${this.backfill.analyzer}`)
     const captures = this.o.store.captures.list(undefined, limit)
-    this.backfill = { analyzer: analyzerId, done: 0, total: captures.length }
-    for (const capture of captures) {
-      this.chain = this.chain.then(async () => {
-        const bytes = await this.o.sink.get(capture.path)
-        if (bytes) await this.analyse(capture, bytes, [analyzerId])
-        if (this.backfill) this.backfill.done++
-      })
-    }
-    this.chain = this.chain.then(() => {
-      this.backfill = null
-      this.o.events?.emit({ kind: 'mutation', path: 'analyses' })
-    })
+    this.backfill = { analyzer: analyzerId, captures, done: 0 }
+    this.kick()
     return captures.length
   }
 
@@ -129,15 +128,53 @@ export class AnalysisService {
     }
   }
 
-  private async drain(camera: 'upper' | 'lower'): Promise<void> {
-    const job = this.waiting.get(camera)
-    if (!job) return
-    this.waiting.delete(camera)
-    await this.analyse(job.capture, job.bytes, deviceAnalyzers().filter(a => !a.disabled).map(a => a.id))
+  private kick(): void {
+    if (this.task) return
+    this.task = Promise.resolve().then(() => this.drain()).finally(() => {
+      this.task = null
+      if (this.waiting.size || this.backfill) this.kick()
+    })
   }
 
-  private async analyse(capture: Capture, bytes: Uint8Array, analyzers: string[]): Promise<void> {
-    this.running = capture
+  private async drain(): Promise<void> {
+    for (;;) {
+      const next = this.waiting.entries().next().value
+      if (next) {
+        const [camera, job] = next
+        this.waiting.delete(camera)
+        await this.analyse(job.capture, job.bytes, deviceAnalyzers().filter(a => !a.disabled).map(a => a.id), 'live')
+        continue
+      }
+      const b = this.backfill
+      if (!b) return
+      const capture = b.captures[b.done]
+      if (!capture) {
+        this.backfill = null
+        this.o.events?.emit({ kind: 'mutation', path: 'analyses' })
+        continue
+      }
+      // Yield a turn between old frames, even when neither the sink nor the
+      // executor is doing I/O. This gives health checks/MQTT and captures time.
+      await new Promise<void>(resolve => setTimeout(resolve, 0))
+      if (this.waiting.size) continue
+      try {
+        const bytes = await this.o.sink.get(capture.path)
+        if (bytes) {
+          // If a live frame arrived while reading the file, put it first and
+          // revisit this stored frame next time. No second JPEG is retained.
+          if (this.waiting.size) continue
+          await this.analyse(capture, bytes, [b.analyzer], 'backfill')
+        }
+      }
+      catch {
+        this.failed++
+      }
+      b.done++
+    }
+  }
+
+  private async analyse(capture: Capture, bytes: Uint8Array, analyzers: string[], kind: 'live' | 'backfill'): Promise<void> {
+    this.running = { capture, kind }
     try {
       const settings = this.o.store.settings.get()
       const opts = { artifacts: settings.analysisArtifacts }

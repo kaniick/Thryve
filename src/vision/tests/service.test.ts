@@ -197,4 +197,55 @@ describe('AnalysisService', () => {
     await Promise.resolve()
     expect(svc.status().running).toBe('a')
   })
+
+  it('runs fresh frames before the next historical frame, with one executor in flight', async () => {
+    let release = () => {}
+    const gate = new Promise<void>(resolve => (release = resolve))
+    const order: number[] = []
+    const { store, sink, svc } = setup(async (job) => {
+      order.push(job.bytes[0] ?? 0)
+      if (job.bytes[0] === 2) await gate
+      return null
+    })
+    const older = cap('older', 'upper', '2026-01-01T00:00:00Z')
+    const recent = cap('recent', 'upper', '2026-01-02T00:00:00Z')
+    for (const [i, c] of [older, recent].entries()) {
+      store.captures.add(c)
+      await sink.put(c.path, new Uint8Array([i + 1]))
+    }
+    svc.rerun('green-threshold')
+    await vi.waitFor(() => expect(svc.status()).toMatchObject({ running: 'recent', runningKind: 'backfill' }))
+    svc.enqueue(cap('stale'), new Uint8Array([3]))
+    svc.enqueue(cap('lower', 'lower'), new Uint8Array([4]))
+    svc.enqueue(cap('fresh'), new Uint8Array([5]))
+    expect(svc.status()).toMatchObject({ waiting: ['lower', 'fresh'], dropped: 1 })
+    expect(order).toEqual([2])
+    release()
+    await svc.idle()
+    expect(order).toEqual([2, 4, 5, 1])
+    expect(svc.status()).toMatchObject({ waiting: [], runningKind: null, backfill: null })
+  })
+
+  it('continues the backfill and future live work after a stored image cannot be read', async () => {
+    const seen: number[] = []
+    const { store, sink, svc } = setup(async (job) => {
+      seen.push(job.bytes[0] ?? 0)
+      return null
+    })
+    const good = cap('good')
+    store.captures.add(good)
+    store.captures.add(cap('unreadable', 'upper', '2026-01-02T00:00:00Z'))
+    await sink.put(good.path, new Uint8Array([1]))
+    const get = sink.get.bind(sink)
+    vi.spyOn(sink, 'get').mockImplementation(async (key) => {
+      if (key === 'unreadable.jpg') throw new Error('storage unavailable')
+      return get(key)
+    })
+    svc.rerun('green-threshold')
+    await svc.idle()
+    svc.enqueue(cap('live'), new Uint8Array([2]))
+    await svc.idle()
+    expect(seen).toEqual([1, 2])
+    expect(svc.status()).toMatchObject({ failed: 1, backfill: null })
+  })
 })

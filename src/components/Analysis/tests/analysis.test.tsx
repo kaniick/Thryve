@@ -677,6 +677,12 @@ describe('AnalysisPage', () => {
     expect(calls.capture).toHaveBeenLastCalledWith({ captureId: '' }, { enabled: false })
   })
 
+  it('shows the live frame and waiting count while a historical rescore is still open', () => {
+    data.set('status', { running: 'upper-new', runningKind: 'live', waiting: ['lower-new'], dropped: 2, failed: 0, backfill: { analyzer: 'exg-otsu', done: 3, total: 10 } })
+    render(<AnalysisPage />)
+    expect(screen.getByText(/Re-running exg-otsu: 3 of 10 captures · Scoring upper-new · 1 fresh frame waiting · 2 older frames replaced/)).toBeTruthy()
+  })
+
   it('offers a dataset download for the chosen window, with or without photos', () => {
     data.set('summary', { from: '', to: '', images: true, captures: 12, analyses: 360, telemetry: 900, labels: 45, imageBytes: 2_400_000 })
     render(<AnalysisPage />)

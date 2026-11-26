@@ -113,8 +113,10 @@ number per pod in `pod_growth`. It works as a first signal, but:
    threshold, the PlantCV approach). A learned model is one more analyser
    that loads an ONNX file (superseded by the 2026-11-09 amendment: plain
    TypeScript with a weights file). Every enabled on-device analyser runs on each new
-   capture, on a worker thread, through a single queue that drops to the
-   newest capture when it falls behind.
+   capture, on a worker thread. The queue keeps at most one waiting frame per
+   camera and replaces it with the newest. Historical rescoring yields between
+   frames and waits behind live work. The Analysis page shows the live queue
+   alongside rescore progress.
 
 2. **One results table replaces `pod_growth`.** Each row is
    `(captureId, analyzer, version, slot, metric, value, detail?)`, where
