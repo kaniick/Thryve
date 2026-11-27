@@ -44,6 +44,12 @@ Both count only what can be a plant, in two steps (version 2, from
   and plants that have grown into each other still count for each pod they grow
   from. Specks too small to be a seedling count for no one.
 
+If the TypeScript worker takes more than three minutes to answer a job, Core
+logs `vision worker timed out`, stops that worker, and counts the job as
+failed. The next photo or re-score gets a fresh worker. The original photo
+and any prior scores are kept. This does not restart Core, USB cameras, or
+the hardware daemon.
+
 ### Pod boxes
 
 Each pod is scored on a box around its cup. The defaults were measured on a
