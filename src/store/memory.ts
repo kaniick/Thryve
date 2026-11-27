@@ -4,13 +4,15 @@ import type { NotificationChannel, NotificationRule, NotificationRun } from '../
 import type { ActivityToken, FeedItem, IosDevice } from '../notify/ios/types'
 import type { AutomationRule } from '../autopilot/types'
 import type { AgreementReading, FrameCheck, LatestAnalysisQuery, LightReceipt, OmittedAnalysisSlots, PumpAttempt } from './types'
-import { DEFAULT_SETTINGS, MAX_LIGHT_RECEIPTS, POD_LABELS, profileKey } from './types'
+import { DEFAULT_SETTINGS, MAX_CORE_STARTS, MAX_LIGHT_RECEIPTS, POD_LABELS, profileKey, type CoreStart, type PlantEvent, type PlantLife } from './types'
+import { applyPodChanges } from '../grow/plantJournal'
 
 /** In-memory Store for tests and the browser demo. Same semantics as SqliteStore. */
 export class MemoryStore implements Store {
   private readonly pumpAttempts = new Map<string, PumpAttempt>()
   private readonly lightReceipts: LightReceipt[] = []
   private readonly frameChecks = new Map<string, FrameCheck>()
+  private readonly coreStartRows: CoreStart[] = []
   diagnostics: Store['diagnostics'] = {
     recordAttempt: (a) => { this.pumpAttempts.set(JSON.stringify([a.runKey, a.attempt]), { ...a }) },
     attempts: keys => [...this.pumpAttempts.values()].filter(a => keys.includes(a.runKey)).sort((a, b) => a.attempt - b.attempt).map(a => ({ ...a })),
@@ -21,6 +23,15 @@ export class MemoryStore implements Store {
     lights: limit => this.lightReceipts.slice().reverse().slice(0, limit).map(l => ({ ...l })),
     markFrame: (id, check) => { if (this.captures.get(id)) this.frameChecks.set(id, check) },
     frame: id => this.frameChecks.get(id) ?? null,
+    frameProblems: (since, limit) => this.captureRows.filter(c => c.ts >= since).flatMap(({ id, camera, ts }) => {
+      const check = this.frameChecks.get(id)
+      return check && check !== 'scored' ? [{ captureId: id, camera, ts, check }] : []
+    }).sort((a, b) => b.ts.localeCompare(a.ts)).slice(0, limit),
+    recordCoreStart: (start) => {
+      this.coreStartRows.unshift({ ...start })
+      this.coreStartRows.length = Math.min(this.coreStartRows.length, MAX_CORE_STARTS)
+    },
+    coreStarts: limit => this.coreStartRows.slice(0, limit).map(start => ({ ...start })),
   }
 
   private settingsRow: DeviceSettings = { ...DEFAULT_SETTINGS, updatedAt: new Date(0).toISOString() }
@@ -31,6 +42,9 @@ export class MemoryStore implements Store {
   private nextAlertId = 1
   private readonly cycles: GrowCycle[] = []
   private readonly podRows = new Map<number, Pod>()
+  private readonly lives = new Map<number, PlantLife>()
+  private readonly plantEvents: PlantEvent[] = []
+  private nextLifeId = 1
   private readonly profileRows = new Map<string, PlantProfile>()
   private readonly customPlantRows = new Map<string, CustomPlant>()
   private readonly savedRows = new Map<string, SavedSchedule>()
@@ -190,16 +204,29 @@ export class MemoryStore implements Store {
     history: (): GrowCycle[] => [...this.cycles].reverse(),
   }
 
-  pods = {
+  pods: Store['pods'] = {
     list: (): Pod[] => [...this.podRows.values()].sort((a, b) => a.slot - b.slot),
-    update: (slot: number, patch: Partial<Omit<Pod, 'slot' | 'updatedAt' | 'statusSince'>>, ts: string): Pod => {
-      const prev = this.podRows.get(slot)
-      if (!prev) throw new Error(`no pod ${slot}`)
-      const moved = patch.status !== undefined && patch.status !== prev.status
-      const row = { ...prev, ...patch, updatedAt: ts, statusSince: moved ? ts : prev.statusSince }
-      this.podRows.set(slot, row)
-      return row
+    update: (slot, patch, ts) => this.pods.apply([{ slot, patch }], ts)[0] as Pod,
+    apply: (changes, ts) => {
+      const rows = applyPodChanges(this.pods.list(), [...this.lives.values()].filter(l => l.slot !== null), changes, ts, {
+        create: (life) => {
+          const row = { ...life, id: this.nextLifeId++ }
+          this.lives.set(row.id, row)
+          return row
+        },
+        save: (life) => { this.lives.set(life.id, life) },
+        append: (event) => { this.plantEvents.push({ ...event, id: this.plantEvents.length + 1 }) },
+      })
+      for (const row of rows) this.podRows.set(row.slot, row)
+      return rows
     },
+  }
+
+  plantJournal: Store['plantJournal'] = {
+    active: () => [...this.lives.values()].filter(l => l.slot !== null).map(l => ({ ...l })),
+    archive: (limit, before) => [...this.lives.values()].filter(l => l.slot === null && (before === undefined || l.id < before)).reverse().slice(0, limit).map(l => ({ ...l })),
+    get: id => this.lives.has(id) ? { ...this.lives.get(id) as PlantLife } : null,
+    events: id => this.plantEvents.filter(e => e.lifeId === id).map(e => ({ ...e })),
   }
 
   plants = {
@@ -251,6 +278,9 @@ export class MemoryStore implements Store {
     },
     list: (camera?: 'upper' | 'lower', limit = 100): Capture[] =>
       this.captureRows.filter(c => !camera || c.camera === camera).slice().sort((a, b) => b.ts.localeCompare(a.ts)).slice(0, limit),
+    during: (camera: Capture['camera'], start: string, end: string | null, limit: number, oldest = false) => this.captureRows
+      .filter(c => c.camera === camera && c.ts >= start && (!end || c.ts < end))
+      .sort((a, b) => (oldest ? 1 : -1) * (a.ts.localeCompare(b.ts) || a.id.localeCompare(b.id))).slice(0, limit),
     totals: (from: string, to: string) => {
       let count = 0
       let bytes = 0
@@ -306,6 +336,10 @@ export class MemoryStore implements Store {
   sensorQuality = {
     add: (samples: QualitySample[]): void => {
       this.qualityRows.push(...samples)
+    },
+    at: (sensor: string, timestamps: string[]): QualitySample[] => {
+      const wanted = new Set(timestamps)
+      return this.qualityRows.filter(s => s.sensor === sensor && wanted.has(s.ts))
     },
     range: (sensor: string, fromTs: string, toTs: string): QualitySample[] =>
       this.qualityRows.filter(s => s.sensor === sensor && s.ts >= fromTs && s.ts <= toTs),

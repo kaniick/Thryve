@@ -120,5 +120,5 @@ export function swapPodRecords(store: Pick<Store, 'pods'>, a: number, b: number,
   if (!pa || !pb) throw new Error(`no pod ${pa ? b : a}`)
   if (a === b) return [pa, pb]
   const holds = (p: Pod) => ({ plant: p.plant, plantedAt: p.plantedAt, status: p.status, notes: p.notes, lastHarvestAt: p.lastHarvestAt })
-  return [store.pods.update(a, holds(pb), ts), store.pods.update(b, holds(pa), ts)]
+  return store.pods.apply([{ slot: a, patch: holds(pb), fromSlot: b }, { slot: b, patch: holds(pa), fromSlot: a }], ts)
 }

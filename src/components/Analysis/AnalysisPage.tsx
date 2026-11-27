@@ -1,4 +1,5 @@
 import { Check, Download, TriangleAlert } from 'lucide-react'
+import { Link } from '@tanstack/react-router'
 import type { inferRouterOutputs } from '@trpc/server'
 import { useState, type ReactNode } from 'react'
 import { cn } from '@/lib/utils'
@@ -242,6 +243,7 @@ export function AnalysisPage({ tab: asked }: { tab?: AnalysisTab } = {}) {
       {tab === 'methods' && (
         <div role="tabpanel" id="analysis-methods" aria-labelledby="analysis-tab-methods" className="flex flex-col gap-6">
           {latestGap && <p className="text-xs text-fg-3">{latestGap}</p>}
+          <Link to="/garden" search={{ tab: 'vision' }} className="self-start text-sm text-fg-2 underline">Review off-device comparisons</Link>
           <MethodsTab analyzers={list} colorOf={colorOf} busy={!!st?.backfill} slot={slot} onSlot={setSlot} pods={pods.data ?? []} trends={trends.data ?? []} boxes={calibration.boxes} />
         </div>
       )}

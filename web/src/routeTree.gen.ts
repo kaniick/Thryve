@@ -16,6 +16,7 @@ import { Route as AutopilotRouteImport } from './routes/autopilot'
 import { Route as CamerasRouteImport } from './routes/cameras'
 import { Route as CareRouteImport } from './routes/care'
 import { Route as DatabaseRouteImport } from './routes/database'
+import { Route as GardenRouteImport } from './routes/garden'
 import { Route as GrowRouteImport } from './routes/grow'
 import { Route as KioskRouteImport } from './routes/kiosk'
 import { Route as LightRouteImport } from './routes/light'
@@ -63,6 +64,11 @@ const CareRoute = CareRouteImport.update({
 const DatabaseRoute = DatabaseRouteImport.update({
   id: '/database',
   path: '/database',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const GardenRoute = GardenRouteImport.update({
+  id: '/garden',
+  path: '/garden',
   getParentRoute: () => rootRouteImport,
 } as any)
 const GrowRoute = GrowRouteImport.update({
@@ -139,6 +145,7 @@ export interface FileRoutesByFullPath {
   '/cameras': typeof CamerasRoute
   '/care': typeof CareRoute
   '/database': typeof DatabaseRoute
+  '/garden': typeof GardenRoute
   '/grow': typeof GrowRoute
   '/kiosk': typeof KioskRoute
   '/light': typeof LightRoute
@@ -161,6 +168,7 @@ export interface FileRoutesByTo {
   '/cameras': typeof CamerasRoute
   '/care': typeof CareRoute
   '/database': typeof DatabaseRoute
+  '/garden': typeof GardenRoute
   '/grow': typeof GrowRoute
   '/kiosk': typeof KioskRoute
   '/light': typeof LightRoute
@@ -183,6 +191,7 @@ export interface FileRoutesById {
   '/cameras': typeof CamerasRoute
   '/care': typeof CareRoute
   '/database': typeof DatabaseRoute
+  '/garden': typeof GardenRoute
   '/grow': typeof GrowRoute
   '/kiosk': typeof KioskRoute
   '/light': typeof LightRoute
@@ -207,6 +216,7 @@ export interface FileRouteTypes {
     | '/cameras'
     | '/care'
     | '/database'
+    | '/garden'
     | '/grow'
     | '/kiosk'
     | '/light'
@@ -229,6 +239,7 @@ export interface FileRouteTypes {
     | '/cameras'
     | '/care'
     | '/database'
+    | '/garden'
     | '/grow'
     | '/kiosk'
     | '/light'
@@ -250,6 +261,7 @@ export interface FileRouteTypes {
     | '/cameras'
     | '/care'
     | '/database'
+    | '/garden'
     | '/grow'
     | '/kiosk'
     | '/light'
@@ -273,6 +285,7 @@ export interface RootRouteChildren {
   CamerasRoute: typeof CamerasRoute
   CareRoute: typeof CareRoute
   DatabaseRoute: typeof DatabaseRoute
+  GardenRoute: typeof GardenRoute
   GrowRoute: typeof GrowRoute
   KioskRoute: typeof KioskRoute
   LightRoute: typeof LightRoute
@@ -335,6 +348,13 @@ declare module '@tanstack/react-router' {
       path: '/database'
       fullPath: '/database'
       preLoaderRoute: typeof DatabaseRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/garden': {
+      id: '/garden'
+      path: '/garden'
+      fullPath: '/garden'
+      preLoaderRoute: typeof GardenRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/grow': {
@@ -452,6 +472,7 @@ const rootRouteChildren: RootRouteChildren = {
   CamerasRoute: CamerasRoute,
   CareRoute: CareRoute,
   DatabaseRoute: DatabaseRoute,
+  GardenRoute: GardenRoute,
   GrowRoute: GrowRoute,
   KioskRoute: KioskRoute,
   LightRoute: LightRoute,

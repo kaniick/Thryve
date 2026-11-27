@@ -1,0 +1,26 @@
+[Unit]
+Description=Thryve LAN camera analysis worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=thryve-worker
+Group=thryve-worker
+WorkingDirectory=/opt/thryve
+EnvironmentFile=/etc/thryve/vision-worker.env
+Environment=THRYVE_WORKER_STATE=/var/lib/thryve-vision-worker/state.json
+ExecStart=/usr/bin/env node /opt/thryve/scripts/analysis-worker.mjs --watch --limit 96 --batch 8 --interval 180
+Restart=on-failure
+RestartSec=15s
+Nice=10
+StateDirectory=thryve-vision-worker
+StateDirectoryMode=0750
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

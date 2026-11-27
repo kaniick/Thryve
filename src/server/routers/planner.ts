@@ -231,6 +231,7 @@ export const plannerRouter = router({
       const before = ctx.store.pods.list()
       const podCount = before.length
       const seeded: number[] = []
+      const changes: Parameters<typeof ctx.store.pods.apply>[0] = []
       const scheduled: { slot: number, plantName: string, sowOn: string }[] = []
       // A replant moves what's planted: each plant keeps its sow date and status in its new pod.
       const catalog = catalogFor(ctx.store)
@@ -249,24 +250,26 @@ export const plannerRouter = router({
         const from = moving.get(a.plantId)?.shift()
         const sowOn = a.wave?.sowOn ?? today
         if (from) {
-          ctx.store.pods.update(a.slot, { plant: a.plantName, plantedAt: from.plantedAt, status: from.status, notes: `${a.reason}${from.slot === a.slot ? '' : ` (moved from pod ${from.slot})`}` }, now.toISOString())
+          const notes = (from.notes || a.reason) + (from.slot === a.slot ? '' : ` (moved from pod ${from.slot})`)
+          changes.push({ slot: a.slot, fromSlot: from.slot, patch: { plant: a.plantName, plantedAt: from.plantedAt, status: from.status, notes, lastHarvestAt: from.lastHarvestAt } })
           seeded.push(a.slot)
         }
         else if (sowOn <= today) {
-          ctx.store.pods.update(a.slot, { plant: a.plantName, plantedAt: today, status: 'seeded', notes: `${a.reason}${a.fallback ? ' (zone fallback)' : ''}` }, now.toISOString())
+          changes.push({ slot: a.slot, patch: { plant: a.plantName, plantedAt: today, status: 'seeded', notes: `${a.reason}${a.fallback ? ' (zone fallback)' : ''}` } })
           seeded.push(a.slot)
         }
         else {
-          ctx.store.pods.update(a.slot, { plant: a.plantName, plantedAt: null, status: 'empty', notes: `planned: sow ${a.plantName} on ${sowOn}` }, now.toISOString())
+          changes.push({ slot: a.slot, patch: { plant: a.plantName, plantedAt: null, status: 'empty', notes: `planned: sow ${a.plantName} on ${sowOn}` } })
           scheduled.push({ slot: a.slot, plantName: a.plantName, sowOn })
         }
       }
       // What a replant doesn't place is empty now: it was moved, or isn't in the plan.
       if (replant) {
         for (const p of before) {
-          if (!used.has(p.slot) && p.status !== 'empty') ctx.store.pods.update(p.slot, { plant: null, plantedAt: null, status: 'empty', notes: '' }, now.toISOString())
+          if (!used.has(p.slot) && p.status !== 'empty') changes.push({ slot: p.slot, patch: { plant: null, plantedAt: null, status: 'empty', notes: '', lastHarvestAt: null } })
         }
       }
+      ctx.store.pods.apply(changes, now.toISOString())
       ctx.store.plans.markApplied(plan.id, now.toISOString())
       if (!ctx.store.grow.current()) ctx.store.grow.start(now.toISOString(), plan.name)
       ctx.events.emit({ kind: 'mutation', path: 'pods' })

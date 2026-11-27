@@ -173,6 +173,31 @@ export const pods = sqliteTable('pods', {
   lastHarvestAt: text(),
 })
 
+export const plantLives = sqliteTable('plant_lives', {
+  id: integer().primaryKey({ autoIncrement: true }),
+  plant: text().notNull(),
+  plantedAt: text(),
+  slot: integer(),
+  startedAt: text().notNull(),
+  endedAt: text(),
+}, t => [index('plant_lives_slot').on(t.slot)])
+
+export const plantJournal = sqliteTable('plant_journal', {
+  id: integer().primaryKey({ autoIncrement: true }),
+  lifeId: integer().notNull(),
+  at: text().notNull(),
+  kind: text({ enum: ['sowed', 'recorded', 'moved', 'note', 'harvested', 'removed'] }).notNull(),
+  slot: integer().notNull(),
+  fromSlot: integer(),
+  note: text(),
+}, t => [index('plant_journal_life').on(t.lifeId, t.id)])
+
+export const coreStarts = sqliteTable('core_starts', {
+  id: integer().primaryKey({ autoIncrement: true }),
+  at: text().notNull(),
+  version: text().notNull(),
+})
+
 /**
  * Optional per-crop harvest knowledge (ADR-0022), keyed by the plant's name in
  * lower case. Entered by hand or filled in by an agent over MCP; the camera's

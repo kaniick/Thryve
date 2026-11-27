@@ -2,10 +2,11 @@
 """Read-only gateway probes, run on a second device on the Pi's LAN."""
 import argparse
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from http.client import HTTPConnection, HTTPException
 from ipaddress import IPv4Address
 import json
+from pathlib import Path
 import socket
 import time
 
@@ -73,7 +74,32 @@ def probe_ssh(host, timeout, port=22):
         return finish(start, type(error).__name__)
 
 
-def observe(host, interval, duration):
+def print_row(row):
+    print(json.dumps(row, separators=(",", ":")), flush=True)
+
+
+class DailyLogs:
+    """One file per UTC day and target; cleanup never touches another target."""
+    def __init__(self, directory, host, keep_days=7):
+        self.directory = Path(directory)
+        self.directory.mkdir(parents=True, exist_ok=True)
+        self.prefix = f"thryve-observer-{host}-"
+        self.keep_days = keep_days
+        self.day = None
+
+    def __call__(self, row):
+        day = datetime.fromisoformat(row["ts"]).date()
+        if day != self.day:
+            cutoff = (day - timedelta(days=self.keep_days - 1)).isoformat()
+            for path in self.directory.glob(f"{self.prefix}????-??-??.jsonl"):
+                if path.name[len(self.prefix):-6] < cutoff:
+                    path.unlink(missing_ok=True)
+            self.day = day
+        with (self.directory / f"{self.prefix}{day.isoformat()}.jsonl").open("a", encoding="utf-8") as log:
+            log.write(json.dumps(row, separators=(",", ":")) + "\n")
+
+
+def observe(host, interval, duration, emit=print_row):
     # Default to <= one SSH connection each 30s when healthy so the Pi's
     # journal is not filled with banner-only connections. Probe on symptoms too.
     started = time.monotonic()
@@ -81,7 +107,7 @@ def observe(host, interval, duration):
     with ThreadPoolExecutor(max_workers=3) as pool:
         while True:
             now = time.monotonic()
-            if now - started >= duration:
+            if duration is not None and now - started >= duration:
                 break
             ts = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
             core = pool.submit(probe_http, host, 3000, "/api/healthcheck", 2)
@@ -93,8 +119,9 @@ def observe(host, interval, duration):
             row["ssh"] = None if ssh is None else ssh.result()
             if ssh is not None:
                 next_ssh = time.monotonic() + 30
-            print(json.dumps(row, separators=(",", ":")), flush=True)
-            pause = min(now + interval, started + duration) - time.monotonic()
+            emit(row)
+            deadline = now + interval if duration is None else min(now + interval, started + duration)
+            pause = deadline - time.monotonic()
             if pause > 0:
                 time.sleep(pause)
 
@@ -103,12 +130,20 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("ip", type=IPv4Address, help="Pi's numeric IPv4 on the same LAN, not .local")
     parser.add_argument("--interval", type=int, default=10, help="seconds between samples (5–300)")
-    parser.add_argument("--duration", type=int, default=900, help="seconds to run (5–86400)")
+    lifetime = parser.add_mutually_exclusive_group()
+    lifetime.add_argument("--duration", type=int, help="seconds to run (5–86400, default 900)")
+    lifetime.add_argument("--continuous", action="store_true", help="run until stopped")
+    parser.add_argument("--output-dir", type=Path, help="write daily JSONL files instead of stdout")
+    parser.add_argument("--keep-days", type=int, default=7, help="UTC days of logs to keep (1–30)")
     args = parser.parse_args()
-    if not 5 <= args.interval <= 300 or not 5 <= args.duration <= 86400:
+    if not 5 <= args.interval <= 300 or (args.duration is not None and not 5 <= args.duration <= 86400):
         parser.error("interval must be 5–300 seconds and duration must be 5–86400 seconds")
+    if not 1 <= args.keep_days <= 30:
+        parser.error("keep-days must be 1–30")
     try:
-        observe(str(args.ip), args.interval, args.duration)
+        host = str(args.ip)
+        emit = DailyLogs(args.output_dir, host, args.keep_days) if args.output_dir else print_row
+        observe(host, args.interval, None if args.continuous else (args.duration or 900), emit)
     except KeyboardInterrupt:
         pass
 

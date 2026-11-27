@@ -121,6 +121,11 @@ export function createMcpServer(ctx: Context): McpServer {
     inputSchema: {},
   }, async () => text(await caller.care.setup()))
 
+  server.registerTool('garden_readiness', {
+    description: 'Read-only pre-trip garden report. Optionally pass the planned return time (ISO 8601 with timezone, in the next seven days). Defaults to 72 hours. Tank runway is an estimate to the care threshold, not an empty-tank or safety prediction. A null estimate means unknown. A completed pump run means HAL observed a start and stop, not proof of water flow. Respond with checks and limitations; this tool never changes schedules or hardware.',
+    inputSchema: { until: z.string().datetime({ offset: true }).optional() },
+  }, async i => text(await caller.garden.readiness({ until: i.until })))
+
   server.registerTool('list_chores', {
     description: 'Chores the tower needs (ADR-0029): thin, trim_roots, top_off, refresh, feed, clean, each with state due | soon | ok | unknown and basis: reading (derived from a sensor the unit trusts now: tank level and how fast it falls, an EC probe, camera leaf cover on young pods) or timeline (a calendar guess; the reason says why, e.g. "Calendar guess, no EC probe"). A reading counts only when its quality is good and it is under 15 min old, so a top-off is never advised from a suspect tank level. Also the readings used, when it falls due, when it was last done (from the tank log), citations (the knowledge note and section behind every dose and target; quote only those, never a dose of your own) and doneKind: log a tank action of that kind with log_tank_action once the person has done it.',
     inputSchema: {},

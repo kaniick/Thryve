@@ -3,6 +3,7 @@ from importlib.util import module_from_spec, spec_from_file_location
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from socketserver import BaseRequestHandler, TCPServer
+from tempfile import TemporaryDirectory
 import time
 from threading import Thread
 import unittest
@@ -67,3 +68,20 @@ class ProbeTests(unittest.TestCase):
         with serving(TCPServer, Ssh) as port:
             self.assertEqual(observe.probe_ssh("127.0.0.1", 1, port)["result"], "ok")
         self.assertEqual(observe.probe_ssh("127.0.0.1", 1, port)["result"], "refused")
+
+    def test_continuous_output_rotates_at_utc_midnight_and_leaves_other_targets_alone(self):
+        with TemporaryDirectory() as root:
+            primary = observe.DailyLogs(root, "10.10.20.202", keep_days=2)
+            other = observe.DailyLogs(root, "10.10.20.203", keep_days=2)
+            for day in (25, 26, 27):
+                row = {"ts": f"2026-11-{day}T00:00:00.000+00:00", "core": {"result": "ok"}}
+                primary(row)
+                if day == 25:
+                    other(row)
+            files = sorted(p.name for p in Path(root).iterdir())
+            self.assertEqual(files, [
+                "thryve-observer-10.10.20.202-2026-11-26.jsonl",
+                "thryve-observer-10.10.20.202-2026-11-27.jsonl",
+                "thryve-observer-10.10.20.203-2026-11-25.jsonl",
+            ])
+            self.assertIn('"result":"ok"', (Path(root) / files[0]).read_text(encoding="utf-8"))

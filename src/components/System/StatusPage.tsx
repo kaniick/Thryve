@@ -1,4 +1,5 @@
 import { TriangleAlert } from 'lucide-react'
+import { Link } from '@tanstack/react-router'
 import { useState, type ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 import { alertActions, describeAlert } from '@/src/components/Alerts/AlertsPage'
@@ -27,6 +28,7 @@ export function StatusPage() {
       <AlertCard />
       <TodayTimeline />
       <ScheduleReceipts />
+      <Link to="/garden" className="self-start text-sm text-fg-2 underline">Open Garden Activity</Link>
       <StatusCards />
     </div>
   )

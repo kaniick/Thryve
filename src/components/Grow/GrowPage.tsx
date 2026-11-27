@@ -509,6 +509,7 @@ function PodPanel({ pod, tower, coverPerDay, light, plantedAt, draft, dirty, sav
       </div>
 
       {pod.plant && pod.status !== 'empty' && <PlantCare plant={pod.plant} />}
+      {pod.plant && pod.status !== 'empty' && <Link to="/garden" search={{ tab: 'plants', slot: pod.slot }} className="text-sm text-fg-2 underline">Open plant history</Link>}
 
       {dirty
         ? (

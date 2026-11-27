@@ -207,6 +207,30 @@ export interface Pod {
   lastHarvestAt: string | null
 }
 
+export type PodPatch = Partial<Omit<Pod, 'slot' | 'updatedAt' | 'statusSince'>>
+/** fromSlot means an owner-confirmed physical move, never an inference. */
+export interface PodChange { slot: number, patch: PodPatch, fromSlot?: number }
+export interface PlantLife {
+  id: number
+  plant: string
+  plantedAt: string | null
+  slot: number | null
+  startedAt: string
+  endedAt: string | null
+}
+export const PLANT_EVENT_KINDS = ['sowed', 'recorded', 'moved', 'note', 'harvested', 'removed'] as const
+export interface PlantEvent {
+  id: number
+  lifeId: number
+  at: string
+  kind: typeof PLANT_EVENT_KINDS[number]
+  slot: number
+  fromSlot: number | null
+  note: string | null
+}
+export const MAX_CORE_STARTS = 100
+export interface CoreStart { at: string, version: string }
+
 /** A plant profile's key: its name trimmed and in lower case, so "Basil " and "basil" are one profile. */
 export const profileKey = (name: string): string => name.trim().toLowerCase()
 
@@ -421,6 +445,9 @@ export interface Store {
     lights(limit: number): LightReceipt[]
     markFrame(id: string, check: FrameCheck): void
     frame(id: string): FrameCheck | null
+    frameProblems(since: string, limit: number): Array<{ captureId: string, camera: Capture['camera'], ts: string, check: FrameCheck }>
+    recordCoreStart(start: CoreStart): void
+    coreStarts(limit: number): CoreStart[]
   }
   settings: {
     get(): DeviceSettings
@@ -464,7 +491,14 @@ export interface Store {
   pods: {
     list(): Pod[]
     /** A changed status also moves `statusSince` to `ts`. */
-    update(slot: number, patch: Partial<Omit<Pod, 'slot' | 'updatedAt' | 'statusSince'>>, ts: string): Pod
+    update(slot: number, patch: PodPatch, ts: string): Pod
+    apply(changes: PodChange[], ts: string): Pod[]
+  }
+  plantJournal: {
+    active(): PlantLife[]
+    archive(limit: number, before?: number): PlantLife[]
+    get(id: number): PlantLife | null
+    events(id: number): PlantEvent[]
   }
   plants: {
     list(): PlantProfile[]
@@ -489,6 +523,8 @@ export interface Store {
   captures: {
     add(c: Capture): void
     list(camera?: 'upper' | 'lower', limit?: number): Capture[]
+    /** Earliest or latest entries in a half-open occupancy window. */
+    during(camera: 'upper' | 'lower', start: string, end: string | null, limit: number, oldest?: boolean): Capture[]
     /** Capture count and recorded bytes in the inclusive timestamp window. */
     totals(fromTs: string, toTs: string): { count: number, bytes: number }
     get(id: string): Capture | null
@@ -510,6 +546,7 @@ export interface Store {
   }
   sensorQuality: {
     add(samples: QualitySample[]): void
+    at(sensor: string, timestamps: string[]): QualitySample[]
     range(sensor: string, fromTs: string, toTs: string): QualitySample[]
     counts(sensor: string, fromTs: string, toTs: string): QualityCounts
     trustedShare(sensor: string, nowTs: string, windowS: number): TrustedShare

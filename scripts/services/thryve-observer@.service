@@ -1,0 +1,22 @@
+[Unit]
+Description=Read-only Thryve LAN observer for %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=thryve-worker
+Group=thryve-worker
+ExecStart=/usr/bin/python3 /opt/thryve/scripts/thryve-observe.py %i --continuous --interval 10 --output-dir /var/lib/thryve-observer --keep-days 7
+Restart=on-failure
+RestartSec=10s
+StateDirectory=thryve-observer
+StateDirectoryMode=0750
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

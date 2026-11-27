@@ -42,6 +42,7 @@ const PAGES: Record<string, { description: string, keywords: string }> = {
   '/autopilot': { description: 'Rules that react to readings, with backtests', keywords: 'automation automations rules backtest dry run kill switch' },
   '/notifications': { description: 'Push rules for Pushover, Pushbullet and Apprise', keywords: 'notifications notify pushover pushbullet apprise push alerts ifttt rules quiet hours cooldown' },
   '/grow': { description: 'Grow cycle, stages, reminders and the 30 pods', keywords: 'grow cycle pods plants harvest seedling stage tower' },
+  '/garden': { description: 'Activity and outage timeline, plant history, trip readiness, and local vision review', keywords: 'journal history observation incident reboot offline diagnostics harvest vacation away weekend trip worker' },
   '/plan': { description: 'Lay out pods by light zone and stagger sowing dates', keywords: 'plan planner layout light zone placement sow sowing succession catalog ycube seed' },
   '/cameras': { description: 'Stills from both cameras and the timelapse', keywords: 'camera photo picture still timelapse capture' },
   '/analysis': { description: 'Growth per pod from the photos, analysers and dataset export', keywords: 'analysis vision green growth dataset export analyser analyzer' },
