@@ -16,6 +16,7 @@ import type { Store } from '../store/types'
 import { currentFeedAlert, FEED_ALERT, LEGACY_FEED_ALERT } from '../care/feedAlerts'
 import { cycleDay } from '../grow/grow'
 import { LIGHT_HOURS_KEY } from '../telemetry/recorder'
+import { readiness } from '../garden/readiness'
 
 export interface BridgeOptions {
   mqtt: MqttLike
@@ -31,6 +32,7 @@ export interface BridgeOptions {
 
 type Camera = 'upper' | 'lower'
 const CAMERA_NAMES: Record<Camera, string> = { upper: 'Upper camera', lower: 'Lower camera' }
+const READINESS_PUBLISH_MS = 15 * 60_000
 
 const REMINDERS = [
   ['reminder_thinning', 'Thin seedlings', 'mdi:content-cut'],
@@ -68,6 +70,7 @@ export function bridgeStatus(mqttUrl: string | null, bridge: HaBridge | null, er
 
 export class HaBridge {
   private unsub: (() => void) | null = null
+  private readinessTimer: ReturnType<typeof setInterval> | null = null
   private readonly p: string
   private readonly now: () => Date
   private linkState: { connected: boolean, since: string }
@@ -95,10 +98,13 @@ export class HaBridge {
 
   start(): void {
     this.unsub = this.o.events.subscribe(e => this.onEvent(e))
+    if (!this.readinessTimer) this.readinessTimer = setInterval(() => this.publishReadiness(), READINESS_PUBLISH_MS).unref()
   }
 
   stop(): void {
     this.unsub?.()
+    if (this.readinessTimer) clearInterval(this.readinessTimer)
+    this.readinessTimer = null
     this.o.mqtt.publish(`${this.p}/availability`, 'offline', { retain: true })
     this.o.mqtt.end()
   }
@@ -108,6 +114,7 @@ export class HaBridge {
     return {
       availability: `${this.p}/availability`,
       state: `${this.p}/state`,
+      readiness: `${this.p}/readiness`,
       waterNow: `${this.p}/water_now`,
       done: (kind: string) => `${this.p}/done/${kind}`,
       camera: (camera: Camera) => `${this.p}/camera/${camera}`,
@@ -140,12 +147,14 @@ export class HaBridge {
     pub('sensor', 'grow_stage', { name: 'Grow stage', icon: 'mdi:sprout', state_topic: t.state, value_template: '{{ value_json.grow.stage or "none" }}' })
     pub('sensor', 'light_hours', { name: 'Grow light hours', icon: 'mdi:lightbulb-on', state_topic: t.state, value_template: '{{ value_json.lightHours }}', unit_of_measurement: 'h', state_class: 'total_increasing' })
     pub('binary_sensor', 'backup_stale', { name: 'Backup overdue', icon: 'mdi:backup-restore', state_topic: t.state, value_template: '{{ \'ON\' if value_json.backupStale else \'OFF\' }}', device_class: 'problem', entity_category: 'diagnostic' })
+    pub('sensor', 'garden_readiness', { name: 'Garden readiness (72 hours)', icon: 'mdi:calendar-check', state_topic: t.readiness, value_template: '{{ value_json.state }}', json_attributes_topic: t.readiness, expire_after: 1800 })
     pub('button', 'water_now', { name: 'Water now (5 min)', icon: 'mdi:watering-can', command_topic: t.waterNow, payload_press: '300' })
     if (this.o.stills) {
       // An MQTT camera shows the last image on its topic: the newest stored still, retained (ADR 0027).
       for (const cam of this.cameras()) pub('camera', `camera_${cam}`, { name: CAMERA_NAMES[cam], icon: 'mdi:camera', topic: t.camera(cam) })
     }
     this.publishState()
+    this.publishReadiness()
     this.sentStill.clear()
     void this.publishStills()
   }
@@ -173,6 +182,19 @@ export class HaBridge {
       ts: this.now().toISOString(),
     }
     this.o.mqtt.publish(this.topics().state, JSON.stringify(state), { retain: true })
+  }
+
+  private publishReadiness(): void {
+    if (!this.linkState.connected) return
+    try {
+      const now = this.now()
+      const report = readiness(this.o.store, this.o.hal.snapshot(), now, new Date(now.getTime() + 72 * 3_600_000))
+      this.o.mqtt.publish(this.topics().readiness, JSON.stringify(report), { retain: true })
+    }
+    catch (error) {
+      // Optional telemetry can't interrupt the existing bridge or legacy entities.
+      console.warn('could not publish garden readiness:', error)
+    }
   }
 
   onEvent(e: CoreEvent): void {

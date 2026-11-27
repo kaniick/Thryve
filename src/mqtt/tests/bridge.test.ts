@@ -40,6 +40,21 @@ function setup() {
 }
 
 describe('HaBridge', () => {
+  it('publishes a separate, expiring, read-only 72-hour garden report', () => {
+    const { mqtt, bridge } = setup()
+    try {
+      mqtt.fire('connect')
+      const config = mqtt.published.find(p => p.topic === 'homeassistant/sensor/u1_core_garden_readiness/config')
+      expect(JSON.parse(config?.payload ?? '{}')).toMatchObject({ state_topic: bridge.topics().readiness, expire_after: 1800 })
+      expect(JSON.parse(config?.payload ?? '{}')).not.toHaveProperty('command_topic')
+      const state = mqtt.published.find(p => p.topic === bridge.topics().readiness)
+      expect(JSON.parse(state?.payload ?? '{}')).toMatchObject({ state: 'review', checkedAt: '2026-10-31T00:00:00.000Z', until: '2026-11-03T00:00:00.000Z' })
+    }
+    finally {
+      bridge.stop()
+    }
+  })
+
   it('publishes discovery for reminders, grow sensors, light hours and the water button', () => {
     const { mqtt } = setup()
     mqtt.fire('connect')

@@ -12,7 +12,7 @@ import { podTrends } from '../../vision/analyze'
 import { POD_STATE_ID } from '../../vision/podState'
 import { boxesOff } from '../../vision/boxesOff'
 import { seenEmpty } from '../../vision/seenEmpty'
-import { suggestLabel, type Suggestion } from '../../vision/suggestLabel'
+import { suggestLabel, SUGGEST_CONFIDENCE, type Suggestion } from '../../vision/suggestLabel'
 import { CAMERAS, cameraOf, cameraSlots, clampRegion, DEFAULT_REGIONS, podRegions, type Camera, type PodRegions, type RegionCalibration } from '../../vision/regions'
 import type { Context } from '../context'
 import { publicProcedure, router } from '../trpc'
@@ -73,6 +73,7 @@ const Analyzer = z.object({
 })
 const Status = z.object({
   running: z.string().nullable(),
+  runningKind: z.enum(['live', 'backfill']).nullable(),
   waiting: z.array(z.string()),
   dropped: z.number(),
   failed: z.number(),
@@ -268,6 +269,33 @@ export const visionRouter = router({
     .input(z.object({ captureId: z.string() }))
     .output(z.array(Result))
     .query(({ ctx, input }) => ctx.store.analyses.forCapture(input.captureId)),
+  frameQuality: publicProcedure
+    .meta({ openapi: { method: 'GET', path: '/vision/quality/{captureId}', tags: ['vision'], summary: 'Frame freshness, scoring quality, calibration gaps and uncertain pod states' } })
+    .input(z.object({ captureId: z.string() }))
+    .output(z.object({
+      status: z.enum(['scored', 'dark', 'damaged', 'unreadable', 'failed', 'no-result', 'unchecked', 'missing']),
+      stale: z.boolean(), missingBoxes: z.array(z.number()), uncertain: z.array(z.number()),
+    }))
+    .query(({ ctx, input }) => {
+      const { store } = ctx
+      const c = store.captures.get(input.captureId)
+      if (!c) return { status: 'missing' as const, stale: false, missingBoxes: [], uncertain: [] }
+      const settings = store.settings.get()
+      const boxes = podRegions(c.camera, settings.podRegions)
+      const rows = store.analyses.forCapture(c.id)
+      const states = rows.filter(r => r.analyzer === POD_STATE_ID && r.metric === 'pod_state')
+      const newest = states.reduce((v, r) => Math.max(v, r.version), 0)
+      const uncertain = states.filter(r => r.version === newest && boxes[r.slot] && typeof r.detail?.confidence === 'number' && r.detail.confidence < SUGGEST_CONFIDENCE).map(r => r.slot)
+      const spacing = settings.captureIntervalMin
+      const maxAge = (spacing > 0 ? Math.max(120, spacing * 2) : 24 * 60) * 60_000
+      const now = (ctx.now?.() ?? new Date()).getTime()
+      return {
+        status: store.diagnostics.frame(c.id) ?? (rows.length ? 'scored' : 'unchecked'),
+        stale: now - Date.parse(c.ts) > maxAge,
+        missingBoxes: cameraSlots(c.camera).filter(s => !boxes[s]),
+        uncertain: [...new Set(uncertain)],
+      }
+    }),
   setPrimary: publicProcedure
     .meta({ openapi: { method: 'PUT', path: '/vision/primary', tags: ['vision'], summary: 'Choose the analyser that drives pod trends' } })
     .input(z.object({ analyzer: z.string() }))

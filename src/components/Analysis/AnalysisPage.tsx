@@ -1,13 +1,12 @@
 import { Check, Download, TriangleAlert } from 'lucide-react'
+import { Link } from '@tanstack/react-router'
 import type { inferRouterOutputs } from '@trpc/server'
 import { useState, type ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 import { Button, InlineError } from '@/src/components/ds/core'
 import { Modal } from '@/src/components/ds/feedback'
 import { useToast } from '@/src/components/ds/toast'
-import { SegmentedControl, Toggle } from '@/src/components/ds/forms'
-import { SettingRow } from '@/src/components/ds/layout'
-import { isDemo } from '@/src/demo/mode'
+import { SegmentedControl } from '@/src/components/ds/forms'
 import { fmtStamp } from '@/src/lib/timeAgo'
 import type { AppRouter } from '@/src/server/routers/app'
 import { apiBase, trpc } from '@/src/utils/trpc'
@@ -15,6 +14,8 @@ import type { PodRect } from '@/src/vision/greenArea'
 import { POD_STATES } from '@/src/vision/podState'
 import { cameraSlots, podRegions, type PodRegions } from '@/src/vision/regions'
 import { LabelPods } from './LabelPods'
+import { DatasetExport } from './DatasetExport'
+import { FrameQualityNote } from './FrameQualityNote'
 import { LeafCover } from './LeafCover'
 import { MethodsTab } from './MethodsTab'
 import { PodBounds } from './PodBounds'
@@ -161,11 +162,13 @@ export function AnalysisPage({ tab: asked }: { tab?: AnalysisTab } = {}) {
         </div>
         {tab === 'teach' && <Button icon={Download} className="px-3 py-[7px]" onClick={() => setExporting(true)}>Export dataset</Button>}
       </div>
-      {st && (st.backfill || st.running || st.failed > 0) && (
-        <p className="-mt-3 text-[13px] text-fg-2">
+      {st && (st.backfill || st.running || st.waiting.length || st.dropped > 0 || st.failed > 0) && (
+        <p role="status" className="-mt-3 text-[13px] text-fg-2">
           {[
             st.backfill && `Re-running ${st.backfill.analyzer}: ${st.backfill.done} of ${st.backfill.total} captures`,
-            st.running && !st.backfill && `Scoring ${st.running}`,
+            st.running && (!st.backfill || st.runningKind === 'live') && `Scoring ${st.running}`,
+            st.waiting.length > 0 && `${st.waiting.length} fresh frame${st.waiting.length === 1 ? '' : 's'} waiting`,
+            st.dropped > 0 && `${st.dropped} older frame${st.dropped === 1 ? '' : 's'} replaced`,
             st.failed > 0 && `${st.failed} capture${st.failed === 1 ? '' : 's'} could not be scored`,
           ].filter(Boolean).join(' · ')}
         </p>
@@ -240,6 +243,7 @@ export function AnalysisPage({ tab: asked }: { tab?: AnalysisTab } = {}) {
       {tab === 'methods' && (
         <div role="tabpanel" id="analysis-methods" aria-labelledby="analysis-tab-methods" className="flex flex-col gap-6">
           {latestGap && <p className="text-xs text-fg-3">{latestGap}</p>}
+          <Link to="/garden" search={{ tab: 'vision' }} className="self-start text-sm text-fg-2 underline">Review off-device comparisons</Link>
           <MethodsTab analyzers={list} colorOf={colorOf} busy={!!st?.backfill} slot={slot} onSlot={setSlot} pods={pods.data ?? []} trends={trends.data ?? []} boxes={calibration.boxes} />
         </div>
       )}
@@ -350,6 +354,7 @@ function Still({ latest, view, analyzer, empty, pod, trend, analyzers, colorOf, 
         <span className="text-fg-2">{title(camera)}</span>
         <span>{camera === 'upper' ? 'pods 1–15' : 'pods 16–30'}</span>
         {view === 'bounds' && <span>{calibrated ? '· calibrated boxes' : '· measured boxes'}</span>}
+        {frame && <FrameQualityNote id={frame.id} />}
         {frame && <span className="ml-auto font-mono text-[11px]">{fmtStamp(frame.ts)}</span>}
       </figcaption>
     </figure>
@@ -472,33 +477,6 @@ function Calibrate({ c, cameras }: { c: Calibration, cameras: Camera[] }) {
       )}
       {c.done && !c.draft && <span>Saved. New photos use these boxes; Re-run an analyser to rescore stored ones.</span>}
       {c.error && <InlineError>{c.error}</InlineError>}
-    </div>
-  )
-}
-
-const WINDOWS = [{ value: '7', label: '7 days' }, { value: '30', label: '30 days' }, { value: '90', label: '90 days' }] as const
-const mb = (b: number) => `${(b / 1_000_000).toFixed(b < 10_000_000 ? 1 : 0)} MB`
-
-/** Export the photos, results, pods and telemetry for off-device analysis or training (ADR-0019 phase 2). */
-function DatasetExport() {
-  const [days, setDays] = useState<'7' | '30' | '90'>('30')
-  const [images, setImages] = useState(true)
-  const [to] = useState(() => new Date())
-  const from = new Date(to.getTime() - Number(days) * 86_400_000).toISOString()
-  const summary = trpc.datasets.summary.useQuery({ from, to: to.toISOString(), images })
-  const s = summary.data
-  const href = `${apiBase()}/api/datasets/export?${new URLSearchParams({ from, to: to.toISOString(), images: images ? '1' : '0' }).toString()}`
-  return (
-    <div className="flex flex-col">
-      <p className="text-[13px] text-fg-2">Photos, every analyser&apos;s results, your pod labels, pods and sensor history as a tar.</p>
-      <SettingRow label="Window"><SegmentedControl ariaLabel="Window" size="sm" options={WINDOWS} value={days} onChange={setDays} /></SettingRow>
-      <SettingRow label="Include photos" sub="The bulk of the size" divider={false}><Toggle label="Include photos" on={images} onChange={setImages} /></SettingRow>
-      {s && <p className="mt-2 font-mono text-[12px] text-fg-3">{`${s.captures} photos · ${s.analyses} results · ${s.labels} labels · ${s.telemetry} readings${images ? ` · about ${mb(s.imageBytes)}` : ''}`}</p>}
-      <div className="mt-3">
-        {isDemo()
-          ? <p className="text-[13px] text-fg-2">Downloads need a real unit; the demo has no server.</p>
-          : <a href={href} download className="inline-flex"><Button size="sm" icon={Download} tabIndex={-1}>Download</Button></a>}
-      </div>
     </div>
   )
 }

@@ -14,7 +14,12 @@ import type { Context } from '../server/context'
 import type { PodLabel } from '../store/types'
 import { jpegSize } from '../vision/jpegSize'
 import { CAMERAS, cropPixels, podRegions, type Camera, type PodRegions } from '../vision/regions'
-import type { TarEntry } from './tar'
+import type { StreamedTarEntry, TarEntry } from './tar'
+
+export interface DatasetSpool {
+  stage(name: string, rows: Iterable<unknown>): Promise<Pick<StreamedTarEntry, 'size' | 'chunks'> & { count: number }>
+  close(): Promise<void>
+}
 
 export interface ExportWindow {
   from: string
@@ -55,10 +60,6 @@ export function resolveWindow(now: Date, q: { from?: string, to?: string, images
 
 function capturesIn(ctx: Context, w: ExportWindow) {
   return ctx.store.captures.list(undefined, Number.MAX_SAFE_INTEGER).filter(c => c.ts >= w.from && c.ts <= w.to).reverse()
-}
-
-function telemetryIn(ctx: Context, w: ExportWindow) {
-  return SensorId.options.flatMap(s => ctx.store.telemetry.range(s, w.from, w.to, Number.MAX_SAFE_INTEGER))
 }
 
 export function summarize(ctx: Context, w: ExportWindow): DatasetSummary {
@@ -125,20 +126,33 @@ export function datasetName(unit: string, w: ExportWindow): string {
 }
 
 /** The archive's files, produced lazily so stills are read one at a time. */
-export async function* datasetEntries(ctx: Context, w: ExportWindow): AsyncGenerator<TarEntry> {
+export async function* datasetEntries(ctx: Context, w: ExportWindow, spool: DatasetSpool): AsyncGenerator<TarEntry> {
+  try {
+    yield* buildEntries(ctx, w, spool)
+  }
+  finally {
+    await spool.close()
+  }
+}
+
+async function* buildEntries(ctx: Context, w: ExportWindow, spool: DatasetSpool): AsyncGenerator<TarEntry> {
   const settings = ctx.store.settings.get()
   const root = datasetName(settings.unitName, w)
   const mtime = (ctx.now?.() ?? new Date()).getTime() / 1000
   const file = (name: string, bytes: Uint8Array): TarEntry => ({ name: `${root}/${name}`, bytes, mtime })
 
   const captures = capturesIn(ctx, w)
-  const analyses = ctx.store.analyses.range(w.from, w.to)
-  const telemetry = telemetryIn(ctx, w)
+  const scans = SensorId.options.map(s => ctx.store.telemetry.scan(s, w.from, w.to))
+  function* telemetryRows() {
+    for (const scan of scans) yield* scan
+  }
   const labels = ctx.store.podLabels.range(w.from, w.to)
   const regions = regionsOf(ctx)
   const podCodes = ctx.store.podCodes.pairs()
   const dismissals = ctx.store.dismissals.range(w.from, w.to)
   const system = ctx.hal.snapshot().system
+  const analyses = await spool.stage('analyses.jsonl', ctx.store.analyses.scan(w.from, w.to))
+  const telemetry = await spool.stage('telemetry.jsonl', telemetryRows())
 
   yield file('manifest.json', json({
     format: DATASET_FORMAT,
@@ -148,13 +162,13 @@ export async function* datasetEntries(ctx: Context, w: ExportWindow): AsyncGener
     core: ctx.version,
     primaryAnalyzer: settings.primaryAnalyzer,
     analyzers: ctx.analysis.list().map(({ primary, ...a }) => ({ ...a, primary })),
-    counts: { captures: captures.length, analyses: analyses.length, telemetry: telemetry.length, labels: labels.length, podCodes: podCodes.length, dismissals: dismissals.length },
+    counts: { captures: captures.length, analyses: analyses.count, telemetry: telemetry.count, labels: labels.length, podCodes: podCodes.length, dismissals: dismissals.length },
     images: w.images,
   }))
   yield file('README.md', enc.encode(README))
   yield file('captures.jsonl', jsonl(captures.map(c => ({ id: c.id, camera: c.camera, ts: c.ts, bytes: c.bytes, image: w.images && !c.path.startsWith('data:') ? `images/${c.id}.jpg` : null }))))
-  yield file('analyses.jsonl', jsonl(analyses))
-  yield file('telemetry.jsonl', jsonl(telemetry))
+  yield { name: `${root}/analyses.jsonl`, size: analyses.size, chunks: analyses.chunks, mtime }
+  yield { name: `${root}/telemetry.jsonl`, size: telemetry.size, chunks: telemetry.chunks, mtime }
   const stills = new Set(captures.filter(c => !c.path.startsWith('data:')).map(c => c.id))
   yield file('labels.jsonl', jsonl(await labelRows(ctx, w, labels, regions, stills)))
   yield file('regions.json', json(regions))

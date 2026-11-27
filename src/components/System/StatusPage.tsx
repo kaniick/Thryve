@@ -1,9 +1,11 @@
 import { TriangleAlert } from 'lucide-react'
+import { Link } from '@tanstack/react-router'
 import { useState, type ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 import { alertActions, describeAlert } from '@/src/components/Alerts/AlertsPage'
 import { apiBase, trpc } from '@/src/utils/trpc'
 import { checkSummary, worstState } from './checkState'
+import { ScheduleReceipts } from './ScheduleReceipts'
 import { StatusCards } from './StatusCards'
 import { coreBuild, fmtAgo, fmtUptime, healthHeadline, wifiBars } from './statusData'
 import { TodayTimeline } from './TodayTimeline'
@@ -25,6 +27,8 @@ export function StatusPage() {
       <HealthStrip />
       <AlertCard />
       <TodayTimeline />
+      <ScheduleReceipts />
+      <Link to="/garden" className="self-start text-sm text-fg-2 underline">Open Garden Activity</Link>
       <StatusCards />
     </div>
   )

@@ -17,6 +17,8 @@ import { IngestBatch, IngestRefused, ingestResults } from '../src/vision/ingest'
 import { MAX_MODEL_BYTES, ModelRefused } from '../src/vision/registry'
 import { podCrop } from '../src/vision/shareCodes'
 import { apiKeyGuard, timingSafeEqual } from './auth'
+import { datasetSpool } from './datasetSpool'
+import { datasetDownloads, datasetError, includeFirst } from './datasetDownloads'
 import type { CorePerformanceWindow } from './performance'
 import { mountMaintenance, type MaintenanceOptions } from './maintenance'
 
@@ -24,6 +26,8 @@ export interface CreateAppOptions {
   ctx: Context
   /** Directory of the built SPA; omit to skip static serving (tests). */
   staticRoot?: string
+  /** Data volume for large JSONL files staged while building a dataset download. */
+  datasetSpoolDir?: string
   performanceWindow?: () => CorePerformanceWindow | null
   maintenance?: MaintenanceOptions
 }
@@ -45,8 +49,9 @@ export function staticCacheControl(path: string, contentType: string | null): st
  * mount it on an ephemeral port without touching process signals.
  */
 
-export function createApp({ ctx, staticRoot, performanceWindow, maintenance }: CreateAppOptions) {
+export function createApp({ ctx, staticRoot, datasetSpoolDir, performanceWindow, maintenance }: CreateAppOptions) {
   const app = new Hono()
+  const exports = datasetDownloads(ctx, datasetSpoolDir)
   const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app })
 
   // Off-device results (ADR-0019) authenticate with their own ingest token, independent of the MCP access key.
@@ -162,7 +167,27 @@ export function createApp({ ctx, staticRoot, performanceWindow, maintenance }: C
     return c.body(telemetryExportStream(ctx.store, opts), 200, { 'content-type': type, 'content-disposition': `attachment; filename="${name}"` })
   })
 
-  app.get('/api/datasets/export', (c) => {
+  app.post('/api/datasets/jobs', (c) => {
+    try {
+      const w = resolveWindow(ctx.now?.() ?? new Date(), { from: c.req.query('from'), to: c.req.query('to'), images: c.req.query('images') !== '0' })
+      const job = exports.start(w)
+      return job ? c.json(job, 202) : c.json({ error: 'Another dataset export is active. Finish or cancel it, then try again.' }, 409)
+    }
+    catch (e) {
+      return c.json({ error: (e as Error).message }, 400)
+    }
+  })
+  app.get('/api/datasets/jobs/:id', (c) => {
+    const job = exports.status(c.req.param('id'))
+    return job ? c.json(job, 200, { 'cache-control': 'no-store' }) : c.json({ error: 'This export is no longer available.' }, 404)
+  })
+  app.delete('/api/datasets/jobs/:id', c => exports.cancel(c.req.param('id')) ? c.body(null, 204) : c.json({ error: 'This export is no longer available.' }, 404))
+  app.get('/api/datasets/jobs/:id/download', (c) => {
+    const download = exports.download(c.req.param('id'), c.req.raw.signal)
+    if (!download) return c.json({ error: 'This export is not ready or is no longer available.' }, 409)
+    return c.body(download.stream, 200, { 'content-type': 'application/x-tar', 'content-disposition': `attachment; filename="${download.name}.tar"` })
+  })
+  app.get('/api/datasets/export', async (c) => {
     let w
     try {
       w = resolveWindow(ctx.now?.() ?? new Date(), { from: c.req.query('from'), to: c.req.query('to'), images: c.req.query('images') !== '0' })
@@ -171,7 +196,27 @@ export function createApp({ ctx, staticRoot, performanceWindow, maintenance }: C
       return c.json({ error: (e as Error).message }, 400)
     }
     const name = datasetName(ctx.store.settings.get().unitName, w)
-    return c.body(tarStream(datasetEntries(ctx, w)), 200, { 'content-type': 'application/x-tar', 'content-disposition': `attachment; filename="${name}.tar"` })
+    const abort = new AbortController()
+    const signal = AbortSignal.any([abort.signal, c.req.raw.signal])
+    const entries = datasetEntries(ctx, w, datasetSpool(signal, datasetSpoolDir))
+    // Staging errors must produce an HTTP error, not a corrupt 200 response.
+    try {
+      const first = await entries.next()
+      if (first.done) return c.json({ error: 'No archive was produced.' }, 500)
+      if (signal.aborted) {
+        await entries.return(undefined)
+        throw signal.reason
+      }
+      const stream = tarStream(includeFirst(first.value, entries), {
+        signal,
+        onCancel: () => abort.abort(),
+      })
+      return c.body(stream, 200, { 'content-type': 'application/x-tar', 'content-disposition': `attachment; filename="${name}.tar"` })
+    }
+    catch (e) {
+      const error = datasetError(e)
+      return c.json({ error: error.detail }, error.status)
+    }
   })
 
   // A line per boot from hald, for reading away from the unit. Read-only: nothing in it is secret.

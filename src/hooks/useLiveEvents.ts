@@ -50,6 +50,7 @@ const TOUCHES = new Map<string, readonly Area[]>([
   ['schedules', ['schedules', 'protocol']],
   ['sensors', ['sensors', 'devices']],
   ['update', ['update']],
+  ['vision.frameQuality', ['vision']],
 ])
 
 /** What an event makes stale. */

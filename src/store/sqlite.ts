@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3'
-import { and, asc, between, count, desc, eq, gt, gte, inArray, isNull, lt, lte, notInArray, or, sql } from 'drizzle-orm'
+import { and, asc, between, count, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, lte, notInArray, or, sql } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { migrate } from 'drizzle-orm/better-sqlite3/migrator'
 import { existsSync, mkdirSync } from 'node:fs'
@@ -10,11 +10,12 @@ import type { AutomationRule, Condition } from '../autopilot/types'
 import type { ChannelConfig, ChannelSecrets, NotificationChannel, NotificationRule, NotificationRun, NotifyPriority, NotifyTrigger } from '../notify/types'
 import type { ActivityToken, ApnsEnvironment, FeedItem, FeedLevel, IosDevice } from '../notify/ios/types'
 import * as t from '../db/schema'
+import { applyPodChanges } from '../grow/plantJournal'
 import { qualityCounts, trustedShareOf } from './memory'
 import { SqliteTelemetryReader } from './sqliteTelemetry'
 import type { AgreementReading, LatestAnalysisQuery, OmittedAnalysisSlots } from './types'
 import type { AlertQuery, AlertRow, Automation, AutomationRun, AnalysisPoint, AnalysisRow, AnalyzerStats, BackupRecord, Capture, CustomPlant, DeviceSettings, FlashSample, GrowCycle, GrowProtocolState, GrowStage, LightSpec, PlanRow, PlantProfile, Pod, PodCodePair, PodCodeRead, PodLabel, PodLabelCursor, PodLabelInput, PodLabelSource, PodLabelValue, PumpSpec, SavedCycle, SavedSchedule, Schedule, ScheduleRun, Store, SuggestionDismissal, TankAction, TankActionKind, TelemetryPoint, QualityCounts, QualitySample, PumpRun } from './types'
-import { DEFAULT_SETTINGS, POD_LABELS, profileKey } from './types'
+import { DEFAULT_SETTINGS, MAX_CORE_STARTS, MAX_LIGHT_RECEIPTS, POD_LABELS, profileKey } from './types'
 
 export interface SqliteStoreOptions {
   /** File path or ':memory:'. */
@@ -232,16 +233,29 @@ export class SqliteStore implements Store {
     history: (): GrowCycle[] => this.db.select().from(t.growCycles).orderBy(desc(t.growCycles.startedAt)).all().map(rowToCycle),
   }
 
-  pods = {
+  pods: Store['pods'] = {
     list: (): Pod[] => this.db.select().from(t.pods).orderBy(asc(t.pods.slot)).all(),
-    update: (slot: number, patch: Partial<Omit<Pod, 'slot' | 'updatedAt' | 'statusSince'>>, ts: string): Pod => {
-      const prev = this.db.select().from(t.pods).where(eq(t.pods.slot, slot)).get()
-      if (!prev) throw new Error(`no pod ${slot}`)
-      const moved = patch.status !== undefined && patch.status !== prev.status
-      const r = this.db.update(t.pods).set({ ...patch, updatedAt: ts, ...(moved ? { statusSince: ts } : {}) }).where(eq(t.pods.slot, slot)).returning().get()
-      if (!r) throw new Error(`no pod ${slot}`)
-      return r
-    },
+    update: (slot, patch, ts) => this.pods.apply([{ slot, patch }], ts)[0] as Pod,
+    apply: (changes, ts) => this.sqlite.transaction(() => {
+      if (!changes.length) return []
+      const slots = changes.map(c => c.slot)
+      const pods = this.db.select().from(t.pods).where(inArray(t.pods.slot, slots)).all()
+      const lives = this.db.select().from(t.plantLives).where(inArray(t.plantLives.slot, slots)).all()
+      const rows = applyPodChanges(pods, lives, changes, ts, {
+        create: life => this.db.insert(t.plantLives).values(life).returning().get(),
+        save: ({ id, ...life }) => { this.db.update(t.plantLives).set(life).where(eq(t.plantLives.id, id)).run() },
+        append: (event) => { this.db.insert(t.plantJournal).values(event).run() },
+      })
+      for (const { slot, ...row } of rows) this.db.update(t.pods).set(row).where(eq(t.pods.slot, slot)).run()
+      return rows
+    })(),
+  }
+
+  plantJournal: Store['plantJournal'] = {
+    active: () => this.db.select().from(t.plantLives).where(isNotNull(t.plantLives.slot)).all(),
+    archive: (limit, before) => this.db.select().from(t.plantLives).where(and(isNull(t.plantLives.slot), before === undefined ? undefined : lt(t.plantLives.id, before))).orderBy(desc(t.plantLives.id)).limit(limit).all(),
+    get: id => this.db.select().from(t.plantLives).where(eq(t.plantLives.id, id)).get() ?? null,
+    events: id => this.db.select().from(t.plantJournal).where(eq(t.plantJournal.lifeId, id)).orderBy(asc(t.plantJournal.id)).all(),
   }
 
   plants = {
@@ -285,6 +299,42 @@ export class SqliteStore implements Store {
     remove: (id: string): boolean => this.db.delete(t.scheduleLibrary).where(eq(t.scheduleLibrary.id, id)).run().changes > 0,
   }
 
+  diagnostics: Store['diagnostics'] = {
+    recordAttempt: (a) => {
+      this.db.insert(t.pumpAttempts).values(a).onConflictDoUpdate({
+        target: [t.pumpAttempts.runKey, t.pumpAttempts.attempt], set: a,
+      }).run()
+    },
+    attempts: keys => keys.length ? this.db.select().from(t.pumpAttempts).where(inArray(t.pumpAttempts.runKey, keys)).orderBy(asc(t.pumpAttempts.attempt)).all() : [],
+    recordLight: (light) => {
+      const { id } = t.lightReceipts
+      const table = t.lightReceipts
+      this.sqlite.transaction(() => {
+        this.db.insert(table).values(light).run()
+        const oldest = this.db.select({ id }).from(table).orderBy(desc(id)).limit(1).offset(MAX_LIGHT_RECEIPTS - 1).get()
+        if (oldest) this.db.delete(table).where(lt(id, oldest.id)).run()
+      })()
+    },
+    lights: (limit) => {
+      const { id, at, target, reported, source, outcome, fault } = t.lightReceipts
+      return this.db.select({ at, target, reported, source, outcome, fault }).from(t.lightReceipts).orderBy(desc(id)).limit(limit).all()
+    },
+    markFrame: (captureId, check) => {
+      if (!this.captures.get(captureId)) return
+      this.db.insert(t.frameChecks).values({ captureId, check }).onConflictDoUpdate({ target: t.frameChecks.captureId, set: { check } }).run()
+    },
+    frame: id => this.db.select({ check: t.frameChecks.check }).from(t.frameChecks).where(eq(t.frameChecks.captureId, id)).get()?.check ?? null,
+    frameProblems: (since, limit) => this.db.select({ captureId: t.captures.id, camera: t.captures.camera, ts: t.captures.ts, check: t.frameChecks.check })
+      .from(t.captures).innerJoin(t.frameChecks, eq(t.frameChecks.captureId, t.captures.id)).where(and(gte(t.captures.ts, since), notInArray(t.frameChecks.check, ['scored'])))
+      .orderBy(desc(t.captures.ts)).limit(limit).all(),
+    recordCoreStart: start => this.sqlite.transaction(() => {
+      this.db.insert(t.coreStarts).values(start).run()
+      const cutoff = this.db.select({ id: t.coreStarts.id }).from(t.coreStarts).orderBy(desc(t.coreStarts.id)).limit(1).offset(MAX_CORE_STARTS - 1).get()
+      if (cutoff) this.db.delete(t.coreStarts).where(lt(t.coreStarts.id, cutoff.id)).run()
+    })(),
+    coreStarts: limit => this.db.select({ at: t.coreStarts.at, version: t.coreStarts.version }).from(t.coreStarts).orderBy(desc(t.coreStarts.id)).limit(limit).all(),
+  }
+
   captures = {
     add: (c: Capture): void => {
       this.db.insert(t.captures).values(c).run()
@@ -294,13 +344,21 @@ export class SqliteStore implements Store {
       const rows = camera ? q.where(eq(t.captures.camera, camera)).orderBy(desc(t.captures.ts)).limit(limit).all() : q.orderBy(desc(t.captures.ts)).limit(limit).all()
       return rows
     },
+    during: (camera: Capture['camera'], start: string, end: string | null, limit: number, oldest = false) => {
+      const order = oldest ? asc : desc
+      return this.db.select().from(t.captures).where(and(eq(t.captures.camera, camera), gte(t.captures.ts, start), end ? lt(t.captures.ts, end) : undefined))
+        .orderBy(order(t.captures.ts), order(t.captures.id)).limit(limit).all()
+    },
     get: (id: string): Capture | null => this.db.select().from(t.captures).where(eq(t.captures.id, id)).get() ?? null,
     totals: (from: string, to: string) => this.db.select({ count: count(), bytes: sql<number>`coalesce(sum(${t.captures.bytes}), 0)` })
       .from(t.captures).where(between(t.captures.ts, from, to)).get() ?? { count: 0, bytes: 0 },
     prune: (camera: 'upper' | 'lower', keep: number): Capture[] => {
       const rows = this.db.select().from(t.captures).where(eq(t.captures.camera, camera)).orderBy(desc(t.captures.ts)).all()
       const drop = rows.slice(keep)
-      for (const d of drop) this.db.delete(t.captures).where(eq(t.captures.id, d.id)).run()
+      for (const d of drop) {
+        this.db.delete(t.captures).where(eq(t.captures.id, d.id)).run()
+        this.db.delete(t.frameChecks).where(eq(t.frameChecks.captureId, d.id)).run()
+      }
       return drop
     },
   }
@@ -362,6 +420,12 @@ export class SqliteStore implements Store {
       if (samples.length === 0) return
       for (const sample of samples) this.heldQuality.push(sample)
       this.flushAtCapacity()
+    },
+    at: (sensor: string, timestamps: string[]): QualitySample[] => {
+      if (!timestamps.length) return []
+      const wanted = new Set(timestamps)
+      const rows = this.db.select().from(t.sensorQuality).where(and(eq(t.sensorQuality.sensor, sensor), inArray(t.sensorQuality.ts, timestamps))).all()
+      return [...rows, ...this.heldQuality.filter(s => s.sensor === sensor && wanted.has(s.ts))].map(({ ts, sensor, quality }) => ({ ts, sensor, quality: quality as QualitySample['quality'] }))
     },
     range: (sensor: string, fromTs: string, toTs: string): QualitySample[] => {
       const rows = this.db.select({ ts: t.sensorQuality.ts, sensor: t.sensorQuality.sensor, quality: t.sensorQuality.quality })
@@ -533,6 +597,23 @@ export class SqliteStore implements Store {
     range: (fromTs: string, toTs: string): AnalysisRow[] =>
       this.db.select().from(t.analysisResults).where(and(gte(t.analysisResults.ts, fromTs), lte(t.analysisResults.ts, toTs)))
         .orderBy(asc(t.analysisResults.ts), asc(t.analysisResults.id)).all().map(rowToAnalysis),
+    scan: (from: string, to: string): Iterable<AnalysisRow> => {
+      const a = t.analysisResults
+      const lastId = this.db.select({ id: sql<number>`coalesce(max(${a.id}), 0)` }).from(a).get()?.id ?? 0
+      const db = this.db
+      return (function* () {
+        let after: { ts: string, id: number } | undefined
+        for (;;) {
+          const page: (typeof a.$inferSelect)[] = db.select().from(a).where(and(
+            between(a.ts, after?.ts ?? from, to), lte(a.id, lastId),
+            after && sql`(${a.ts}, ${a.id}) > (${after.ts}, ${after.id})`,
+          )).orderBy(asc(a.ts), asc(a.id)).limit(128).all()
+          for (const row of page) yield rowToAnalysis(row)
+          if (page.length < 128) return
+          after = page.at(-1)
+        }
+      })()
+    },
     count: (from: string, to: string): number => this.db.select({ n: count() }).from(t.analysisResults).where(between(t.analysisResults.ts, from, to)).get()?.n ?? 0,
     stats: (): AnalyzerStats[] =>
       this.db.all<AnalyzerStats>(sql`SELECT analyzer, version, source, count(*) AS rows, count(DISTINCT captureId) AS captures, min(ts) AS firstTs, max(ts) AS lastTs

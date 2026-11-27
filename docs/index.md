@@ -13,6 +13,7 @@ profile as `knowledge/`). Concepts carry frontmatter with `status`,
 - [Implementation plan](implementation-plan.md) — Phase 0 → 1.0 with parallelism markers.
 - [Installation](INSTALLATION.md) · [Adding a probe](SENSORS.md) · [Feeding and water quality](FEEDING.md) · [Capture analysis](ANALYSIS.md) · [Autopilot](AUTOPILOT.md) · [Maintenance](MAINTENANCE.md) · [Deployment](DEPLOYMENT.md) · [Debugging](DEBUGGING.md) · [Privacy](PRIVACY.md) · [MCP](MCP.md)
 - [Hardware](hardware/index.md) — Pin map and verification checklist.
+- [Garden journal](GARDEN-JOURNAL.md) — Activity, plant history, trip check and the optional Proxmox services.
 - [Testing](testing/index.md) — What runs where.
 
 Facts and evidence (hardware measurements, horticulture targets, calibration) live

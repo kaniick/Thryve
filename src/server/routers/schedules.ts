@@ -5,6 +5,7 @@ import { autoLight, setAuto } from '../../care/lightAuto'
 import { readTower } from '../../care/tower'
 import { plantSlug } from '../../plants/custom'
 import { LIGHT_PRESETS } from '../../scheduler/lightPlan'
+import { LIGHT_OUTCOMES, pumpReceipt, PUMP_OUTCOMES } from '../../scheduler/receipts'
 import { curveTarget, lightLevelAt } from '../../scheduler/scheduler'
 import { dayEnabled, localTime } from '../../scheduler/time'
 import { followSun } from '../../scheduler/sun'
@@ -182,4 +183,31 @@ export const schedulesRouter = router({
     .meta({ openapi: { method: 'GET', path: '/schedules/runs', tags: ['schedules'] } })
     .output(z.array(z.object({ scheduleId: z.string(), key: z.string(), firedAt: z.string(), result: z.string() })))
     .query(({ ctx }) => ctx.store.schedules.recentRuns()),
+  receipts: publicProcedure
+    .meta({ openapi: { method: 'GET', path: '/schedules/receipts', tags: ['schedules'], summary: 'Recent recorded watering attempts and light observations' } })
+    .output(z.object({
+      timezone: z.string(),
+      watering: z.array(z.object({
+        key: z.string(), at: z.string(), name: z.string(), outcome: z.enum(PUMP_OUTCOMES),
+        reason: z.string().nullable(), fault: z.string().nullable(), durationS: z.number().nullable(), reportedStart: z.string().nullable(),
+        attempts: z.array(z.object({ runKey: z.string(), attempt: z.number(), at: z.string(), result: z.enum(['accepted', 'refused']), reason: z.string().nullable(), reportedStart: z.string().nullable(), requestedS: z.number() })),
+      })),
+      lights: z.array(z.object({
+        at: z.string(), target: z.number().nullable(), reported: z.number().nullable(),
+        outcome: z.enum(LIGHT_OUTCOMES), source: z.enum(['schedule', 'manual', 'autopilot']).nullable(), fault: z.string().nullable(),
+      })),
+    }))
+    .query(({ ctx }) => {
+      const { store } = ctx
+      const activity = ctx.scheduleActivity?.()
+      const runs = store.schedules.recentRuns(12)
+      const history = runs.length ? store.pumpRuns.list({ limit: 100 }) : []
+      const names = new Map(store.schedules.list().map(s => [s.id, s.name]))
+      const attempts = store.diagnostics.attempts(runs.map(r => r.key))
+      return {
+        timezone: store.settings.get().timezone,
+        watering: runs.map(run => pumpReceipt(run, names.get(run.scheduleId) ?? run.scheduleId, history, activity?.retrying.includes(run.key) ?? false, attempts.filter(a => a.runKey === run.key))),
+        lights: activity?.lights ?? store.diagnostics.lights(12),
+      }
+    }),
 })

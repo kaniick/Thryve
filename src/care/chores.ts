@@ -13,7 +13,7 @@ import type { HalSnapshot } from '../hardware/types'
 import { systemFor, toDisplay } from '../lib/units'
 import { type Catalog, findPlant, plantFacts } from '../plants/catalog'
 import { catalogFor } from '../plants/custom'
-import type { Pod, Store, TankActionKind } from '../store/types'
+import type { Pod, Store, TankActionKind, TelemetryPoint } from '../store/types'
 import { CITE, type Citation, type CropGroup, EC_TARGETS, FRUITING_FOR_FAST_REFRESH, REFRESH_DAYS, REFRESH_FRUITING_DAYS, SPROUT_DOSE_DAYS, TANK_MIN_PCT, TOP_OFF_DAYS } from './knowledge'
 
 export const CHORE_IDS = ['thin', 'trim_roots', 'top_off', 'refresh', 'feed', 'clean'] as const
@@ -114,7 +114,11 @@ function onCalendar(c: Omit<Chore, 'state' | 'basis' | 'dueAt' | 'readings' | 'r
 
 /** % a day the tank is falling since its last top-up, over up to 3 days; null without enough to go on. */
 export function tankDropPerDay(store: Store, now: Date): number | null {
-  const pts = store.telemetry.range('water_level_pct', iso(now.getTime() - 3 * DAY_MS), now.toISOString(), 500)
+  return dropPerDay(store.telemetry.range('water_level_pct', iso(now.getTime() - 3 * DAY_MS), now.toISOString(), 500))
+}
+
+export function dropPerDay(points: TelemetryPoint[]): number | null {
+  const pts = points
     .map(p => ({ t: Date.parse(p.ts) / DAY_MS, v: p.value }))
     .sort((a, b) => a.t - b.t)
   let start = 0
@@ -153,7 +157,7 @@ function settle(c: Chore, done: { at: number, kind: TankActionKind } | null, now
   return { ...c, state: 'ok', dueAt: null, reason: `${c.reason.split(':')[0]}, but a ${DONE_LABEL[done.kind]} was logged ${Math.max(1, Math.round(ago / 60_000))} min ago: waiting for the reading to settle.` }
 }
 
-function topOff(store: Store, snap: HalSnapshot, now: Date, planted: Pod[], forecast = true): Chore {
+function topOff(store: Store, snap: HalSnapshot, now: Date, planted: Pod[], forecast = true, knownDrop?: number | null): Chore {
   const kinds: TankActionKind[] = ['top_off', 'refresh']
   const done = lastDone(store, kinds)
   const c = { id: 'top_off' as const, title: TITLE.top_off, lastDoneAt: done ? iso(done.at) : null, doneKind: 'top_off' as const }
@@ -162,7 +166,7 @@ function topOff(store: Store, snap: HalSnapshot, now: Date, planted: Pod[], fore
     return onCalendar({ ...c, citations: [CITE.tankCadence] }, { every: TOP_OFF_DAYS, from: anchor(store, kinds, planted), now, why: `Calendar guess, ${why}`, rule: `Gardyn tops off every ${TOP_OFF_DAYS} d.`, none: 'nothing logged or planted to count from.' })
   }
   const level = reading.value
-  const drop = forecast ? tankDropPerDay(store, now) : null
+  const drop = forecast && knownDrop === undefined ? tankDropPerDay(store, now) : knownDrop ?? null
   const falling = drop ? `, falling ${drop}% a day` : ''
   const base = { ...c, basis: 'reading' as const, readings: [asReading('water_level_pct', reading)], citations: [CITE.tankHalfFull] }
   if (level < TANK_MIN_PCT) {
@@ -287,10 +291,10 @@ function thin(store: Store, now: Date, planted: Pod[]): Chore {
 }
 
 /** Every chore for the unit as it is now, in a fixed order. */
-export function chores(store: Store, snap: HalSnapshot, now: Date, mode: 'all' | 'alerts' = 'all'): Chore[] {
+export function chores(store: Store, snap: HalSnapshot, now: Date, mode: 'all' | 'alerts' = 'all', knownDrop?: number | null): Chore[] {
   const planted = store.pods.list().filter(p => p.status !== 'empty')
   if (mode === 'alerts') return choresForAlerts(store, snap, now, planted)
-  const all = [thin(store, now, planted), trimRoots(store, now, planted), topOff(store, snap, now, planted), refresh(store, now, planted), feed(store, snap, now, planted), clean(store, now, planted)]
+  const all = [thin(store, now, planted), trimRoots(store, now, planted), topOff(store, snap, now, planted, true, knownDrop), refresh(store, now, planted), feed(store, snap, now, planted), clean(store, now, planted)]
   // An empty tower needs no feeding or topping off; cleaning between grows still counts.
   return planted.length ? all : all.map(c => (c.id === 'clean' ? c : { ...c, state: 'ok', dueAt: null, reason: 'Nothing planted.' }))
 }

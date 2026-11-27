@@ -96,6 +96,31 @@ export const scheduleRuns = sqliteTable('schedule_runs', {
   result: text().notNull(),
 })
 
+export const pumpAttempts = sqliteTable('pump_attempts', {
+  runKey: text().notNull(),
+  attempt: integer().notNull(),
+  at: text().notNull(),
+  result: text({ enum: ['accepted', 'refused'] }).notNull(),
+  reason: text(),
+  reportedStart: text(),
+  requestedS: integer().notNull(),
+}, t => [uniqueIndex('pump_attempt_key').on(t.runKey, t.attempt)])
+
+export const lightReceipts = sqliteTable('light_receipts', {
+  id: integer().primaryKey({ autoIncrement: true }),
+  at: text().notNull(),
+  target: real(),
+  reported: real(),
+  outcome: text({ enum: ['matched', 'held', 'not-matched', 'unconfirmed', 'no-target'] }).notNull(),
+  source: text({ enum: ['manual', 'autopilot', 'schedule'] }),
+  fault: text(),
+})
+
+export const frameChecks = sqliteTable('frame_checks', {
+  captureId: text().primaryKey(),
+  check: text({ enum: ['scored', 'dark', 'damaged', 'unreadable', 'failed', 'no-result'] }).notNull(),
+})
+
 export const alerts = sqliteTable('alerts', {
   id: integer().primaryKey({ autoIncrement: true }),
   /** HAL kinds (water_low, pump_fault, …) or core kinds (reminder_thinning, hal_offline, …). */
@@ -146,6 +171,31 @@ export const pods = sqliteTable('pods', {
   statusSince: text(),
   /** The last cut (ADR-0022): camera readiness counts only photos after it. */
   lastHarvestAt: text(),
+})
+
+export const plantLives = sqliteTable('plant_lives', {
+  id: integer().primaryKey({ autoIncrement: true }),
+  plant: text().notNull(),
+  plantedAt: text(),
+  slot: integer(),
+  startedAt: text().notNull(),
+  endedAt: text(),
+}, t => [index('plant_lives_slot').on(t.slot)])
+
+export const plantJournal = sqliteTable('plant_journal', {
+  id: integer().primaryKey({ autoIncrement: true }),
+  lifeId: integer().notNull(),
+  at: text().notNull(),
+  kind: text({ enum: ['sowed', 'recorded', 'moved', 'note', 'harvested', 'removed'] }).notNull(),
+  slot: integer().notNull(),
+  fromSlot: integer(),
+  note: text(),
+}, t => [index('plant_journal_life').on(t.lifeId, t.id)])
+
+export const coreStarts = sqliteTable('core_starts', {
+  id: integer().primaryKey({ autoIncrement: true }),
+  at: text().notNull(),
+  version: text().notNull(),
 })
 
 /**
@@ -250,6 +300,7 @@ export const analysisResults = sqliteTable('analysis_results', {
   uniqueIndex('analysis_results_key').on(t.captureId, t.analyzer, t.version, t.slot, t.metric),
   index('analysis_results_series').on(t.analyzer, t.metric, t.slot, t.ts),
   index('analysis_results_analyzer_version').on(t.analyzer, t.version),
+  index('analysis_results_ts').on(t.ts),
 ])
 
 /**
